@@ -4,7 +4,7 @@ import numpy as np
 import logging
 from aiogram import Bot, Dispatcher, types
 
-API_TOKEN = 'YOUR_BOT_TOKEN_HERE'
+API_TOKEN = '8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA'
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
