@@ -11,7 +11,7 @@ dp = Dispatcher(bot)
 user_id = 632886964  # MasoudPordel
 
 def get_signal(symbol='BTC/USDT', timeframe='5m'):
-    exchange = ccxt.binance()
+    exchange = ccxt.mexc()
     ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=150)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 
