@@ -1,10 +1,8 @@
 import requests
 import pandas as pd
 
-# === Alpha Vantage API Key ===
 ALPHA_VANTAGE_API_KEY = "8VL54YT3N656MW5T"
 
-# ---------- کریپتو ----------
 def get_all_symbols():
     url = "https://api.mexc.com/api/v3/exchangeInfo"
     response = requests.get(url)
@@ -17,21 +15,20 @@ def fetch_ohlcv(symbol, interval="5m", limit=100):
     if response.status_code != 200:
         return None
     raw_data = response.json()
-    if len(raw_data) == 0 or len(raw_data[0]) < 6:
+    if len(raw_data) == 0:
         return None
-    df = pd.DataFrame(raw_data, columns=[
+    num_cols = len(raw_data[0])
+    columns = [
         "timestamp", "open", "high", "low", "close", "volume",
         "close_time", "quote_asset_volume", "trades",
         "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
-    ][:len(raw_data[0])])  # Truncate to match actual column count
-    df["open"] = df["open"].astype(float)
-    df["high"] = df["high"].astype(float)
-    df["low"] = df["low"].astype(float)
-    df["close"] = df["close"].astype(float)
-    df["volume"] = df["volume"].astype(float)
+    ][:num_cols]
+    df = pd.DataFrame(raw_data, columns=columns)
+    for col in ["open", "high", "low", "close", "volume"]:
+        if col in df.columns:
+            df[col] = df[col].astype(float)
     return df
 
-# ---------- فارکس ----------
 def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min", outputsize="compact"):
     url = (
         f"https://www.alphavantage.co/query"
@@ -45,7 +42,7 @@ def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min", outputsize=
     response = requests.get(url)
     data = response.json()
     if not any("Time Series" in k for k in data):
-        print(f"داده‌ای برای {from_symbol}/{to_symbol} دریافت نشد.")
+        print(f"No data for {from_symbol}/{to_symbol}.")
         return None
     ts_key = [k for k in data if "Time Series" in k][0]
     df = pd.DataFrame.from_dict(data[ts_key], orient="index").sort_index()
@@ -57,7 +54,6 @@ def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min", outputsize=
     }).astype(float)
     return df
 
-# ---------- تحلیل ----------
 def compute_indicators(df):
     df["EMA20"] = df["close"].ewm(span=20).mean()
     df["EMA50"] = df["close"].ewm(span=50).mean()
@@ -68,8 +64,8 @@ def compute_indicators(df):
 
 def compute_rsi(df, period=14):
     delta = df["close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=period).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
@@ -77,15 +73,14 @@ def detect_price_action(df):
     last = df.iloc[-1]
     prev = df.iloc[-2]
     if last["close"] > last["open"] and prev["close"] < prev["open"] and last["open"] < prev["close"]:
-        return "الگوی انگالف صعودی"
+        return "Ø§ÙÚ¯ÙÛ Ø§ÙÚ¯Ø§ÙÙ ØµØ¹ÙØ¯Û"
     elif last["close"] < last["open"] and prev["close"] > prev["open"] and last["open"] > prev["close"]:
-        return "الگوی انگالف نزولی"
+        return "Ø§ÙÚ¯ÙÛ Ø§ÙÚ¯Ø§ÙÙ ÙØ²ÙÙÛ"
     return None
 
 def dummy_elliott_wave_check(df):
-    return "موج الیوت شناسایی شد (فرضی)"
+    return "ÙÙØ¬ Ø§ÙÛÙØª Ø´ÙØ§Ø³Ø§ÛÛ Ø´Ø¯ (ÙØ±Ø¶Û)"
 
-# ---------- استراتژی ساده ----------
 def simple_signal_strategy(df):
     if df is None or len(df) < 2:
         return None
@@ -95,7 +90,6 @@ def simple_signal_strategy(df):
         return "sell"
     return None
 
-# ---------- تولید سیگنال ----------
 def generate_signal(symbol, df, interval="--"):
     if df is None or len(df) < 50:
         return None
@@ -124,19 +118,18 @@ def generate_signal(symbol, df, interval="--"):
             "sl": round(close_price * 0.97, 5),
             "confidence": confidence,
             "volatility": round(abs(df["close"].iloc[-1] - df["close"].iloc[-2]) / df["close"].iloc[-2] * 100, 2),
-            "analysis": f"RSI: {round(rsi, 1)} | EMA کراس: {ema_cross} | MACD: {'مثبت' if macd > signal else 'منفی'} | {pa or '-'} | {elliott}",
+            "analysis": f"RSI: {round(rsi, 1)} | EMA Ú©Ø±Ø§Ø³: {ema_cross} | MACD: {'ÙØ«Ø¨Øª' if macd > signal else 'ÙÙÙÛ'} | {pa or '-'} | {elliott}",
             "tf": interval
         }
     return None
 
-# ---------- اسکن کریپتو ----------
 def scan_all_crypto_symbols():
     PRIORITY_SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "LTCUSDT"]
     TIMEFRAMES = ["5m", "15m", "1h", "1d", "1w"]
     all_symbols = get_all_symbols()
     symbols = PRIORITY_SYMBOLS + [s for s in all_symbols if s not in PRIORITY_SYMBOLS and s.endswith("USDT")]
     signals = []
-    for symbol in symbols[:10]:  # محدودیت تستی
+    for symbol in symbols[:10]:
         for tf in TIMEFRAMES:
             try:
                 df = fetch_ohlcv(symbol, interval=tf)
@@ -145,11 +138,10 @@ def scan_all_crypto_symbols():
                 if signal and extra_check:
                     signals.append(signal)
             except Exception as e:
-                print(f"خطا در {symbol} - {tf}: {e}")
+                print(f"Ø®Ø·Ø§ Ø¯Ø± {symbol} - {tf}: {e}")
                 continue
     return signals
 
-# ---------- اسکن فارکس ----------
 def scan_all_forex_symbols():
     pairs = [("EUR", "USD"), ("GBP", "USD"), ("USD", "JPY"), ("AUD", "USD"), ("USD", "CAD")]
     interval = "5min"
@@ -163,6 +155,6 @@ def scan_all_forex_symbols():
                 if signal:
                     results.append(signal)
         except Exception as e:
-            print(f"خطا در {base}/{quote}: {e}")
+            print(f"Ø®Ø·Ø§ Ø¯Ø± {base}/{quote}: {e}")
             continue
     return results
