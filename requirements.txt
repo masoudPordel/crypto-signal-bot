@@ -1,4 +1,4 @@
-python-telegram-bot==13.15
+python-telegram-bot==20.3
 requests
 pandas
-urllib3==1.26.18
+numpy
