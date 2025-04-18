@@ -238,57 +238,33 @@ def generate_signal(symbol, df, interval="--"):
 
 def scan_all_crypto_symbols():
 
-    PRIORITY_SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "LTCUSDT"]
+    timeframes = ["5m", "15m", "1h"]
 
-    TIMEFRAMES = ["5m", "15m", "1h", "1d", "1w"]
+    symbols = get_all_symbols()
 
+    results = []
 
+    for sym in symbols[:10]:  # محدودیت تستی
 
-    all_symbols = get_all_symbols()
+        for interval in timeframes:
 
-    symbols = PRIORITY_SYMBOLS + [s for s in all_symbols if s not in PRIORITY_SYMBOLS and s.endswith("USDT")]
+            try:
 
+                df = fetch_ohlcv(sym, interval)
 
+                signal = generate_signal(sym, df, interval)
 
-    signals = []
+                if signal:
 
-    for symbol in symbols:
+                    results.append(signal)
 
-        for tf in TIMEFRAMES:
+            except Exception as e:
 
-            df = fetch_ohlcv(symbol, interval=tf)
+                print(f"خطا در {sym} - {interval}: {e}")
 
-            signal = simple_signal_strategy(df)
+                continue
 
-            if signal:
-
-                entry = df["close"].iloc[-1]
-
-                tp = entry * 1.01
-
-                sl = entry * 0.99
-
-                signals.append({
-
-                    "symbol": symbol,
-
-                    "entry": round(entry, 4),
-
-                    "tp": round(tp, 4),
-
-                    "sl": round(sl, 4),
-
-                    "tf": tf,
-
-                    "signal": signal
-
-                })
-
-    return signals
-
-
-
-
+    return results
 
 
 
