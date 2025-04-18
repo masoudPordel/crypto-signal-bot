@@ -169,3 +169,4 @@ def scan_all_forex_symbols():
             print(f"خطا در {base}/{quote}: {e}")
             continue
     return results
+    
