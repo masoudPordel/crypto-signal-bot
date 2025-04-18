@@ -1,34 +1,69 @@
-import pandas as pd
 import requests
-from time import sleep
+import pandas as pd
 
-# دریافت داده از API
-def fetch_ohlcv(symbol, interval="4h", limit=300):
-    sleep(0.5)
-    url = f"https://api.mexc.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-    response = requests.get(url)
-    if response.status_code != 200:
+# === Alpha Vantage API Key ===
+ALPHA_VANTAGE_API_KEY = "8VL54YT3N656MW5T"
+
+# ---------- کریپتو ----------
+def get_all_symbols():
+    try:
+        url = "https://api.mexc.com/api/v3/exchangeInfo"
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        return [item["symbol"] for item in data["symbols"] if item.get("isSpotTradingAllowed")]
+    except Exception as e:
+        print(f"خطا در دریافت لیست نمادها: {e}")
+        return []
+
+def fetch_ohlcv(symbol, interval="5m", limit=100):
+    try:
+        url = f"https://api.mexc.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+        response = requests.get(url)
+        response.raise_for_status()
+        df = pd.DataFrame(response.json(), columns=[
+            "timestamp", "open", "high", "low", "close", "volume",
+            "close_time", "quote_asset_volume", "trades",
+            "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
+        ])
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = df[col].astype(float)
+        return df
+    except Exception as e:
+        print(f"خطا در دریافت داده {symbol} - {interval}: {e}")
         return None
-    data = response.json()
-    df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume", "close_time", "quote_asset_volume", "trades", "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"])
-    df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
-    return df
 
-# محاسبه اندیکاتورها
-def compute_indicators(df):
-    df["EMA20"] = df["close"].ewm(span=20).mean()
-    df["EMA50"] = df["close"].ewm(span=50).mean()
-    df["EMA200"] = df["close"].ewm(span=200).mean()
-    df["RSI"] = compute_rsi(df)
-    df["MACD"] = df["close"].ewm(span=12).mean() - df["close"].ewm(span=26).mean()
-    df["Signal"] = df["MACD"].ewm(span=9).mean()
-    df["MACD_Hist"] = df["MACD"] - df["Signal"]
-    df["ATR"] = compute_atr(df)
-    df["Pivot"] = (df["high"] + df["low"] + df["close"]) / 3
-    df["R1"] = 2 * df["Pivot"] - df["low"]
-    df["S1"] = 2 * df["Pivot"] - df["high"]
-    return df.fillna(method="ffill").fillna(method="bfill")
+# ---------- فارکس ----------
+def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min", outputsize="compact"):
+    try:
+        url = (
+            f"https://www.alphavantage.co/query"
+            f"?function=FX_INTRADAY"
+            f"&from_symbol={from_symbol}"
+            f"&to_symbol={to_symbol}"
+            f"&interval={interval}"
+            f"&outputsize={outputsize}"
+            f"&apikey={ALPHA_VANTAGE_API_KEY}"
+        )
+        response = requests.get(url)
+        data = response.json()
+        ts_key = next((k for k in data if "Time Series" in k), None)
+        if not ts_key:
+            print(f"داده‌ای برای {from_symbol}/{to_symbol} دریافت نشد.")
+            return None
+        df = pd.DataFrame.from_dict(data[ts_key], orient="index").sort_index()
+        df = df.rename(columns={
+            "1. open": "open",
+            "2. high": "high",
+            "3. low": "low",
+            "4. close": "close"
+        }).astype(float)
+        return df
+    except Exception as e:
+        print(f"خطا در دریافت فارکس {from_symbol}/{to_symbol}: {e}")
+        return None
 
+# ---------- تحلیل تکنیکال ----------
 def compute_rsi(df, period=14):
     delta = df["close"].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
@@ -36,108 +71,94 @@ def compute_rsi(df, period=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def compute_atr(df, period=14):
-    df["TR"] = df[["high", "low", "close"]].apply(lambda x: max(x["high"] - x["low"], abs(x["high"] - x["close"].shift()), abs(x["low"] - x["close"].shift())), axis=1)
-    return df["TR"].rolling(window=period).mean()
+def compute_indicators(df):
+    df["EMA20"] = df["close"].ewm(span=20).mean()
+    df["EMA50"] = df["close"].ewm(span=50).mean()
+    df["RSI"] = compute_rsi(df)
+    df["MACD"] = df["close"].ewm(span=12).mean() - df["close"].ewm(span=26).mean()
+    df["Signal"] = df["MACD"].ewm(span=9).mean()
+    return df
 
-# تشخیص الگوهای پرایس اکشن
 def detect_price_action(df):
-    last = df.iloc[-1]
-    prev1 = df.iloc[-2]
-    prev2 = df.iloc[-3]
-    # Bullish Engulfing
-    if last["close"] > last["open"] and prev1["close"] < prev1["open"] and last["open"] < prev1["close"] and last["close"] > prev1["open"]:
-        return "Bullish Engulfing"
-    # Doji
-    if abs(last["open"] - last["close"]) / (last["high"] - last["low"]) < 0.1:
-        return "Doji"
-    # Marubozu (کندل معنادار)
-    if (last["close"] - last["open"]) / (last["high"] - last["low"]) > 0.7 and last["close"] > last["open"]:
-        return "Bullish Marubozu"
-    # Morning Star
-    if prev2["close"] < prev2["open"] and abs(prev1["open"] - prev1["close"]) / (prev1["high"] - prev1["low"]) < 0.3 and last["close"] > last["open"] and last["close"] > (prev2["open"] + prev2["close"]) / 2:
-        return "Morning Star"
+    last, prev = df.iloc[-1], df.iloc[-2]
+    if last["close"] > last["open"] and prev["close"] < prev["open"] and last["open"] < prev["close"]:
+        return "الگوی انگالف صعودی"
+    elif last["close"] < last["open"] and prev["close"] > prev["open"] and last["open"] > prev["close"]:
+        return "الگوی انگالف نزولی"
     return None
 
-# تشخیص Breakout فیک
-def detect_fake_breakout(df, resistance, close_price):
-    if len(df) < 3:
-        return False
-    last_two = df.iloc[-2:]
-    if close_price > resistance and all(last_two["close"] < resistance):
-        return True  # Breakout فیک تشخیص داده شد
-    return False
+def dummy_elliott_wave_check(df):
+    return "موج الیوت شناسایی شد (فرضی)"
 
-# تولید سیگنال
-def generate_signal(symbol, df, interval="4h"):
-    if df is None or len(df) < 200:
+def generate_signal(symbol, df, interval="--"):
+    if df is None or len(df) < 50:
         return None
+
     df = compute_indicators(df)
-    
-    last = df.iloc[-1]
+    rsi, macd, signal = df["RSI"].iloc[-1], df["MACD"].iloc[-1], df["Signal"].iloc[-1]
+    ema_cross = df["EMA20"].iloc[-2] < df["EMA50"].iloc[-2] and df["EMA20"].iloc[-1] > df["EMA50"].iloc[-1]
     pa = detect_price_action(df)
-    volume_avg = df["volume"].rolling(window=20).mean().iloc[-1]
-    volume_current = last["volume"]
-    close_price = last["close"]
-    atr = last["ATR"]
+    elliott = dummy_elliott_wave_check(df)
+    close_price = df["close"].iloc[-1]
 
-    # فیلتر حجم معاملات
-    if volume_current < 5 * volume_avg:
-        return None
+    score = sum([
+        rsi < 35,
+        macd > signal,
+        ema_cross,
+        pa is not None
+    ])
 
-    # فیلتر بازار رنج (روانشناسی بازار)
-    if atr < 0.015 * close_price:  # بازار کم‌نوسان
-        return None
-
-    # تشخیص Breakout فیک
-    if detect_fake_breakout(df, last["R1"], close_price):
-        return None
-
-    # امتیازدهی
-    score = 0
-    if pa in ["Bullish Engulfing", "Morning Star", "Bullish Marubozu"] and last["RSI"] < 20:
-        score += 5
-    if last["MACD"] > last["Signal"] and last["MACD_Hist"] > 0.002 * close_price:
-        score += 3
-    if last["EMA20"] > last["EMA50"] > last["EMA200"]:
-        score += 3
-    if close_price > last["R1"] and volume_current > 5 * volume_avg:
-        score += 3
-
-    # وزن‌دهی بر اساس تایم‌فریم
-    tf_weight = {"5m": 0.5, "15m": 0.7, "1h": 1.0, "1d": 1.5}
-    score *= tf_weight.get(interval, 1.0)
-
-    # اعتمادسنجی هوشمند
-    confidence = min(100, int((score / 16) * 100))
-    if score >= 12 and confidence >= 95:
-        sl = round(close_price - atr, 5)
-        tp = round(close_price + 5 * atr, 5)
+    confidence = int((score / 4) * 100)
+    if score >= 2:
         return {
             "symbol": symbol,
             "entry": close_price,
-            "tp": tp,
-            "sl": sl,
+            "tp": round(close_price * 1.04, 5),
+            "sl": round(close_price * 0.97, 5),
             "confidence": confidence,
-            "analysis": f"Price Action: {pa} | RSI: {round(last['RSI'], 1)} | MACD: {'صعودی' if last['MACD'] > last['Signal'] else 'خنثی'} | Market: {'Trend' if atr > 0.015 * close_price else 'Range'}",
+            "volatility": round(abs(df["close"].iloc[-1] - df["close"].iloc[-2]) / df["close"].iloc[-2] * 100, 2),
+            "analysis": f"RSI: {round(rsi, 1)} | EMA کراس: {ema_cross} | MACD: {'مثبت' if macd > signal else 'منفی'} | {pa or '-'} | {elliott}",
             "tf": interval
         }
     return None
 
-# اسکن نمادها در تایم‌فریم‌های چندگانه
-def scan_symbols():
-    symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
-    timeframes = ["5m", "15m", "1h", "1d"]
+# ---------- استراتژی ساده ----------
+def simple_signal_strategy(df):
+    if df is None or len(df) < 2:
+        return None
+    if df["close"].iloc[-1] > df["close"].iloc[-2]:
+        return "buy"
+    elif df["close"].iloc[-1] < df["close"].iloc[-2]:
+        return "sell"
+    return None
+
+# ---------- اسکن کریپتو ----------
+def scan_all_crypto_symbols():
+    PRIORITY_SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "LTCUSDT"]
+    TIMEFRAMES = ["5m", "15m", "1h", "1d", "1w"]
+    all_symbols = get_all_symbols()
+    symbols = PRIORITY_SYMBOLS + [s for s in all_symbols if s.endswith("USDT") and s not in PRIORITY_SYMBOLS]
+
     signals = []
-    for symbol in symbols:
-        for tf in timeframes:
+    for symbol in symbols[:10]:  # محدودیت تستی
+        for tf in TIMEFRAMES:
             df = fetch_ohlcv(symbol, interval=tf)
             signal = generate_signal(symbol, df, tf)
-            if signal:
+            extra_check = simple_signal_strategy(df)
+            if signal and extra_check:
                 signals.append(signal)
     return signals
 
-# اجرا
-if __name__ == "__main__":
-    signals = scan_symbols()
-    print("سیگنال‌ها:", signals)
+# ---------- اسکن فارکس ----------
+def scan_all_forex_symbols():
+    PAIRS = [("EUR", "USD"), ("GBP", "USD"), ("USD", "JPY"), ("AUD", "USD"), ("USD", "CAD")]
+    INTERVAL = "5min"
+
+    signals = []
+    for base, quote in PAIRS:
+        df = fetch_forex_ohlcv(base, quote, INTERVAL)
+        symbol = f"{base}{quote}"
+        signal = generate_signal(symbol, df, INTERVAL)
+        if signal:
+            signals.append(signal)
+    return signals
