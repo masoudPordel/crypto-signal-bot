@@ -1,5 +1,5 @@
 import time
-from telegram import Bot
+from telegram.bot import Bot
 from strategy_engine import generate_signals
 
 TELEGRAM_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
