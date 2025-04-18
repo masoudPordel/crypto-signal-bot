@@ -1,8 +1,9 @@
-import requests
+import time
+
+import telegram
 
 from analyzer import scan_all_crypto_symbols, scan_all_forex_symbols
 
-import time
 
 
 
@@ -14,61 +15,39 @@ CHAT_ID = "632886964"
 
 
 
-def send_to_telegram(message):
+bot = telegram.Bot(token=BOT_TOKEN)
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
-    payload = {
-
-        "chat_id": CHAT_ID,
-
-        "text": message,
-
-        "parse_mode": "HTML"
-
-    }
-
-    try:
-
-        response = requests.post(url, data=payload)
-
-        if response.status_code != 200:
-
-            print("ارسال به تلگرام ناموفق بود:", response.text)
-
-    except Exception as e:
-
-        print("خطا در ارسال پیام تلگرام:", e)
+sent_signals = set()  # برای جلوگیری از ارسال سیگنال‌های تکراری
 
 
 
-def format_signal_message(sig):
-
-    market = "کریپتو" if "USDT" in sig["symbol"] else "فارکس"
+def format_signal(signal):
 
     return (
 
-        f"✅ <b>سیگنال جدید ({market})</b>\n\n"
+        f"💠 <b>{signal['symbol']}</b> | تایم‌فریم: {signal['tf']}\n"
 
-        f"<b>نماد:</b> {sig['symbol']}\n"
+        f"🎯 ورود: <code>{signal['entry']}</code>\n"
 
-        f"<b>بازه:</b> {sig['tf']}\n"
+        f"✅ حد سود: <code>{signal['tp']}</code>\n"
 
-        f"<b>ورود:</b> {sig['entry']}\n"
+        f"❌ حد ضرر: <code>{signal['sl']}</code>\n"
 
-        f"<b>TP:</b> {sig['tp']} | <b>SL:</b> {sig['sl']}\n"
+        f"⚡️ قدرت سیگنال: <b>{signal['confidence']}%</b>\n"
 
-        f"<b>اعتماد:</b> {sig['confidence']}%\n"
+        f"📊 تحلیل: {signal['analysis']}\n"
 
-        f"<b>نوسان:</b> {sig['volatility']}%\n"
-
-        f"<b>تحلیل:</b> {sig['analysis']}"
+        f"📉 نوسان: {signal['volatility']}%\n"
 
     )
 
 
 
 def send_signals():
+
+    print("در حال بررسی بازار...")
+
+
 
     crypto_signals = scan_all_crypto_symbols()
 
@@ -78,39 +57,51 @@ def send_signals():
 
     all_signals = crypto_signals + forex_signals
 
-    print(f"\n>> تعداد سیگنال‌ها: {len(all_signals)}\n")
+    new_signals = []
 
 
 
-    for sig in all_signals:
+    for signal in all_signals:
 
-        if not sig:
+        unique_id = f"{signal['symbol']}_{signal['tf']}_{signal['entry']}"
 
-            continue
+        if unique_id not in sent_signals:
+
+            sent_signals.add(unique_id)
+
+            new_signals.append(signal)
+
+
+
+    for sig in new_signals:
+
+        msg = format_signal(sig)
 
         try:
 
-            message = format_signal_message(sig)
+            bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode=telegram.ParseMode.HTML)
 
-            print(message)
-
-            send_to_telegram(message)
+            print(f"سیگنال ارسال شد: {sig['symbol']} - {sig['tf']}")
 
         except Exception as e:
 
-            print(f"خطا در ارسال سیگنال {sig['symbol']}: {e}")
+            print(f"خطا در ارسال سیگنال: {e}")
 
 
 
-# اجرای زمان‌بندی‌شده ساده
+    if not new_signals:
+
+        print("سیگنال جدیدی نبود.")
+
+
+
+# اجرای دائمی با فاصله ۲ دقیقه
 
 if __name__ == "__main__":
 
     while True:
 
-        print("\n--- شروع اسکن ---\n")
-
         send_signals()
 
-        time.sleep(600)
+        time.sleep(120)  # هر ۲ دقیقه
 
