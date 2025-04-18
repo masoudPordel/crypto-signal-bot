@@ -1,3 +1,4 @@
+
 import requests
 import pandas as pd
 
@@ -17,20 +18,19 @@ def fetch_ohlcv(symbol, interval="5m", limit=100):
     if response.status_code != 200:
         return None
     raw_data = response.json()
-    if len(raw_data) == 0 or len(raw_data[0]) < 6:
+    if len(raw_data) == 0:
         return None
-    # Dynamically assign only as many columns as data provides
-    all_columns = [
+    column_count = len(raw_data[0])
+    base_columns = [
         "timestamp", "open", "high", "low", "close", "volume",
         "close_time", "quote_asset_volume", "trades",
         "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
     ]
-    df = pd.DataFrame(raw_data, columns=all_columns[:len(raw_data[0])])
-    df["open"] = df["open"].astype(float)
-    df["high"] = df["high"].astype(float)
-    df["low"] = df["low"].astype(float)
-    df["close"] = df["close"].astype(float)
-    df["volume"] = df["volume"].astype(float)
+    columns = base_columns[:column_count]
+    df = pd.DataFrame(raw_data, columns=columns)
+    for col in ["open", "high", "low", "close", "volume"]:
+        if col in df.columns:
+            df[col] = df[col].astype(float)
     return df
 
 # ---------- فارکس ----------
@@ -138,7 +138,7 @@ def scan_all_crypto_symbols():
     all_symbols = get_all_symbols()
     symbols = PRIORITY_SYMBOLS + [s for s in all_symbols if s not in PRIORITY_SYMBOLS and s.endswith("USDT")]
     signals = []
-    for symbol in symbols[:10]:  # محدودیت تستی
+    for symbol in symbols[:10]:
         for tf in TIMEFRAMES:
             try:
                 df = fetch_ohlcv(symbol, interval=tf)
