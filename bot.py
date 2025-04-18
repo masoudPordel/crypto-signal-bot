@@ -1,50 +1,116 @@
-import os
-import asyncio
-from telegram import Bot
-from telegram.ext import Updater, CommandHandler
-from telegram.utils.request import Request
+import requests
 
-from strategy_engine import generate_crypto_signals, generate_forex_signals
+from analyzer import scan_all_crypto_symbols, scan_all_forex_symbols
 
-# —– تنظیم توکن و چت‌آیدی —–
-TOKEN   = os.getenv("BOT_TOKEN", "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA")
-CHAT_ID = int(os.getenv("CHAT_ID", "632886964"))
+import time
 
-def start(update, context):
-    update.message.reply_text("ربات سیگنال فعال شد. هر ۱۵ دقیقه یکبار سیگنال می‌آید.")
 
-def send_signals(context):
-    """این تابع توسط JobQueue هر ۱۵ دقیقه یک بار اجرا می‌شود."""
-    bot = context.bot
-    crypto = generate_crypto_signals()
-    forex  = generate_forex_signals()
 
-    for sig in crypto + forex:
-        market = "کریپتو" if "USDT" in sig["symbol"] else "فارکس"
-        msg = (
-            f"📡 سیگنال جدید ({{market}})\n\n"
-            f"نماد: {{sig['symbol']}}\n"
-            f"تایم‌فریم: {{sig['tf']}}\n"
-            f"قیمت ورود: {{sig['entry']}}\n"
-            f"حد سود (TP): {{sig['tp']}}\n"
-            f"حد ضرر (SL): {{sig['sl']}}\n"
-            f"درصد اطمینان: {{sig['confidence']}}%\n"
-            f"نوسان: {{sig['volatility']}}%\n"
-            f"تحلیل: {{sig['analysis']}}"
-        )
-        bot.send_message(chat_id=CHAT_ID, text=msg)
+# === تنظیمات تلگرام ===
 
-def main():
-    request = Request(con_pool_size=8)
-    bot = Bot(token=TOKEN, request=request)
-    updater = Updater(bot=bot, use_context=True)
-    dp = updater.dispatcher
+TELEGRAM_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
 
-    dp.add_handler(CommandHandler("start", start))
-    updater.job_queue.run_repeating(send_signals, interval=900, first=10)
+CHAT_ID = "632886964"
 
-    updater.start_polling()
-    updater.idle()
+
+
+def send_to_telegram(message):
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+    payload = {
+
+        "chat_id": CHAT_ID,
+
+        "text": message,
+
+        "parse_mode": "HTML"
+
+    }
+
+    try:
+
+        response = requests.post(url, data=payload)
+
+        if response.status_code != 200:
+
+            print("ارسال به تلگرام ناموفق بود:", response.text)
+
+    except Exception as e:
+
+        print("خطا در ارسال پیام تلگرام:", e)
+
+
+
+def format_signal_message(sig):
+
+    market = "کریپتو" if "USDT" in sig["symbol"] else "فارکس"
+
+    return (
+
+        f"✅ <b>سیگنال جدید ({market})</b>\n\n"
+
+        f"<b>نماد:</b> {sig['symbol']}\n"
+
+        f"<b>بازه:</b> {sig['tf']}\n"
+
+        f"<b>ورود:</b> {sig['entry']}\n"
+
+        f"<b>TP:</b> {sig['tp']} | <b>SL:</b> {sig['sl']}\n"
+
+        f"<b>اعتماد:</b> {sig['confidence']}%\n"
+
+        f"<b>نوسان:</b> {sig['volatility']}%\n"
+
+        f"<b>تحلیل:</b> {sig['analysis']}"
+
+    )
+
+
+
+def send_signals():
+
+    crypto_signals = scan_all_crypto_symbols()
+
+    forex_signals = scan_all_forex_symbols()
+
+
+
+    all_signals = crypto_signals + forex_signals
+
+    print(f"\n>> تعداد سیگنال‌ها: {len(all_signals)}\n")
+
+
+
+    for sig in all_signals:
+
+        if not sig:
+
+            continue
+
+        try:
+
+            message = format_signal_message(sig)
+
+            print(message)
+
+            send_to_telegram(message)
+
+        except Exception as e:
+
+            print(f"خطا در ارسال سیگنال {sig['symbol']}: {e}")
+
+
+
+# اجرای زمان‌بندی‌شده ساده
 
 if __name__ == "__main__":
-    main()
+
+    while True:
+
+        print("\n--- شروع اسکن ---\n")
+
+        send_signals()
+
+        time.sleep(600)
+
