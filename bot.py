@@ -6,12 +6,11 @@ from analyzer import scan_all_crypto_symbols, scan_all_forex_symbols
 
 
 
+# اطلاعات کاربر و توکن
 
-# === تنظیمات تلگرام ===
+BOT_TOKEN = 8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA
 
-TELEGRAM_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
-
-CHAT_ID = "632886964"
+CHAT_ID = 632886964         # همونی که دادی
 
 
 
