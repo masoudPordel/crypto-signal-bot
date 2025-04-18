@@ -54,8 +54,8 @@ def detect_price_action(df):
 def dummy_elliott_wave_check(df):
     return "شناسایی موج صعودی احتمالی (مبتنی بر الگوی ساده)"
 
-def generate_signal(symbol="BTCUSDT"):
-    df = fetch_ohlcv(symbol)
+def generate_signal(symbol="BTCUSDT", interval="5m"):
+    df = fetch_ohlcv(symbol, interval)
     df = compute_indicators(df)
     rsi = df["RSI"].iloc[-1]
     macd = df["MACD"].iloc[-1]
@@ -63,62 +63,38 @@ def generate_signal(symbol="BTCUSDT"):
     ema_cross = df["EMA20"].iloc[-2] < df["EMA50"].iloc[-2] and df["EMA20"].iloc[-1] > df["EMA50"].iloc[-1]
     pa = detect_price_action(df)
     elliott = dummy_elliott_wave_check(df)
-
     close_price = df["close"].iloc[-1]
-    if rsi < 30 and macd > signal and ema_cross:
+
+    score = 0
+    if rsi < 35: score += 1
+    if macd > signal: score += 1
+    if ema_cross: score += 1
+    if pa: score += 1
+
+    confidence = int((score / 4) * 100)
+
+    if score >= 2:
         return {
-            "symbol": symbol,
+            "symbol": f"{symbol} ({interval})",
             "entry": close_price,
             "tp": round(close_price * 1.04, 2),
             "sl": round(close_price * 0.97, 2),
-            "confidence": 95,
-            "analysis": f"RSI پایین ({round(rsi, 2)}), کراس EMA, MACD مثبت | {pa or '-'} | {elliott}"
+            "confidence": confidence,
+            "volatility": round(abs(df["close"].iloc[-1] - df["close"].iloc[-2]) / df["close"].iloc[-2] * 100, 2),
+            "analysis": f"RSI: {round(rsi, 1)} | EMA کراس: {ema_cross} | MACD: {'مثبت' if macd > signal else 'منفی'} | {pa or '-'} | {elliott}"
         }
     return None
 
 def scan_all_symbols():
+    intervals = ["5m", "15m", "1h"]
     symbols = get_all_symbols()
     results = []
     for sym in symbols:
-        try:
-            signal = generate_signal(sym)
-            if signal:
-                results.append(signal)
-        except:
-            continue
-    return results
-
-def get_forex_rate(base="USD", target="EUR"):
-    if base == target:
-        return 1.0
-
-    url = f"https://open.er-api.com/v6/latest/{base}"
-    response = requests.get(url)
-    if response.status_code != 200:
-        # تلاش معکوس اگر base/target در دسترس نیست
-        url_reverse = f"https://open.er-api.com/v6/latest/{target}"
-        rev_response = requests.get(url_reverse)
-        if rev_response.status_code == 200:
-            rev_data = rev_response.json()
-            reversed_rate = rev_data["rates"].get(base)
-            return 1 / reversed_rate if reversed_rate else None
-        return None
-
-    data = response.json()
-    return data["rates"].get(target)
-
-def scan_forex_symbols():
-    forex_pairs = [
-        ("USD", "EUR"), ("USD", "GBP"), ("USD", "JPY"),
-        ("EUR", "GBP"), ("EUR", "CHF"), ("AUD", "USD"),
-        ("USD", "CAD"), ("NZD", "USD")
-    ]
-    results = []
-    for base, target in forex_pairs:
-        try:
-            signal = generate_forex_signal(base, target)
-            if signal:
-                results.append(signal)
-        except:
-            continue
+        for interval in intervals:
+            try:
+                signal = generate_signal(sym, interval)
+                if signal:
+                    results.append(signal)
+            except:
+                continue
     return results
