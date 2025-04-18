@@ -1,0 +1,13 @@
+
+services:
+  - type: worker
+    name: crypto-signal-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    region: oregon
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        value: your_telegram_bot_token_here
+      - key: BASE_CURRENCY
+        value: USDT
