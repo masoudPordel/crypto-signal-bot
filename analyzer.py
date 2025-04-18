@@ -236,28 +236,6 @@ def generate_signal(symbol, df, interval="--"):
 
 # ---------- اسکن ----------
 
-def simple_signal_strategy(df):
-
-    if df is None or len(df) < 20:
-
-        return None
-
-    last = df.iloc[-1]
-
-    prev = df.iloc[-2]
-
-    if last["close"] > last["open"] and prev["close"] < prev["open"]:
-
-        return "Buy"
-
-    elif last["close"] < last["open"] and prev["close"] > prev["open"]:
-
-        return "Sell"
-
-    return None
-
-
-
 def scan_all_crypto_symbols():
 
     PRIORITY_SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "LTCUSDT"]
@@ -307,6 +285,8 @@ def scan_all_crypto_symbols():
                 })
 
     return signals
+
+
 
 
 
