@@ -7,13 +7,12 @@ def get_all_symbols():
     data = response.json()
     return [item["symbol"] for item in data["symbols"] if item["isSpotTradingAllowed"]]
 
-def fetch_ohlcv(symbol="BTCUSDT", interval="5m", limit=100):
+def fetch_ohlcv(symbol, interval="5m", limit=100):
     url = f"https://api.mexc.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     response = requests.get(url)
     if response.status_code != 200:
-        raise Exception("API error")
-    data = response.json()
-    df = pd.DataFrame(data, columns=[
+        return None
+    df = pd.DataFrame(response.json(), columns=[
         "timestamp", "open", "high", "low", "close", "volume",
         "close_time", "quote_asset_volume", "trades",
         "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
@@ -23,7 +22,6 @@ def fetch_ohlcv(symbol="BTCUSDT", interval="5m", limit=100):
     df["low"] = df["low"].astype(float)
     df["close"] = df["close"].astype(float)
     df["volume"] = df["volume"].astype(float)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
     return df
 
 def compute_indicators(df):
@@ -39,8 +37,7 @@ def compute_rsi(df, period=14):
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
     rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+    return 100 - (100 / (1 + rs))
 
 def detect_price_action(df):
     last = df.iloc[-1]
@@ -56,6 +53,8 @@ def dummy_elliott_wave_check(df):
 
 def generate_signal(symbol="BTCUSDT", interval="5m"):
     df = fetch_ohlcv(symbol, interval)
+    if df is None or len(df) < 50:
+        return None
     df = compute_indicators(df)
     rsi = df["RSI"].iloc[-1]
     macd = df["MACD"].iloc[-1]
@@ -86,11 +85,11 @@ def generate_signal(symbol="BTCUSDT", interval="5m"):
     return None
 
 def scan_all_symbols():
-    intervals = ["5m", "15m", "1h"]
+    timeframes = ["5m", "15m", "1h"]
     symbols = get_all_symbols()
     results = []
     for sym in symbols:
-        for interval in intervals:
+        for interval in timeframes:
             try:
                 signal = generate_signal(sym, interval)
                 if signal:
