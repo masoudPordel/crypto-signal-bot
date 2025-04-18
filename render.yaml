@@ -8,6 +8,6 @@ services:
     region: oregon
     envVars:
       - key: TELEGRAM_BOT_TOKEN
-        value: your_telegram_bot_token_here
+        value: 8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA
       - key: BASE_CURRENCY
         value: USDT
