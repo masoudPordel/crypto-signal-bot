@@ -331,4 +331,3 @@ def scan_all_crypto_symbols():
                 print(f"خطا در {symbol} - {tf}: {e}")
                 continue
     return signals
-
