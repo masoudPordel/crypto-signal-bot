@@ -107,7 +107,47 @@ def elliott_wave_analysis(df):
         wave = "موج اصلاحی احتمالی (موج A/B؟)"
     return wave
 
+
 def generate_signal(symbol, df, interval="--"):
+    if df is None or len(df) < 50:
+        return None
+
+    df = compute_indicators(df)
+    rsi = df["RSI"].iloc[-1]
+    macd = df["MACD"].iloc[-1]
+    signal = df["Signal"].iloc[-1]
+    ema_cross = df["EMA20"].iloc[-2] < df["EMA50"].iloc[-2] and df["EMA20"].iloc[-1] > df["EMA50"].iloc[-1]
+    pa = detect_price_action(df)
+    elliott = dummy_elliott_wave_check(df)
+    close_price = df["close"].iloc[-1]
+    volume = df["volume"].iloc[-1]
+    avg_volume = df["volume"].rolling(10).mean().iloc[-1]
+
+    # هوش مصنوعی ساده برای تعیین وضعیت روند کلی
+    trend_bias = "صعودی" if df["EMA20"].iloc[-1] > df["EMA50"].iloc[-1] else "نزولی"
+
+    # شرط‌های سخت‌گیرانه‌تر برای کاهش سیگنال‌های فیک
+    score = 0
+    if rsi < 30 or rsi > 70: score += 1
+    if macd > signal and trend_bias == "صعودی": score += 1
+    if ema_cross and volume > avg_volume: score += 1
+    if pa: score += 1
+
+    confidence = int((score / 4) * 100)
+
+    if score >= 3:
+        return {
+            "symbol": symbol,
+            "entry": close_price,
+            "tp": round(close_price * 1.04, 5),
+            "sl": round(close_price * 0.97, 5),
+            "confidence": confidence,
+            "volatility": round(abs(df["close"].iloc[-1] - df["close"].iloc[-2]) / df["close"].iloc[-2] * 100, 2),
+            "analysis": f"RSI: {round(rsi, 1)} | EMA کراس: {ema_cross} | MACD: {'مثبت' if macd > signal else 'منفی'} | {pa or '-'} | {elliott} | روند: {trend_bias}",
+            "tf": interval
+        }
+    return None
+
     if df is None or len(df) < 50:
         return None
     df = compute_indicators(df)
