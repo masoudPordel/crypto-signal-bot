@@ -4,6 +4,14 @@ import pandas as pd
 
 
 
+# === Alpha Vantage API Key ===
+
+ALPHA_VANTAGE_API_KEY = "8VL54YT3N656MW5T"
+
+
+
+# ---------- کریپتو ----------
+
 def get_all_symbols():
 
     url = "https://api.mexc.com/api/v3/exchangeInfo"
@@ -23,8 +31,6 @@ def fetch_ohlcv(symbol, interval="5m", limit=100):
     response = requests.get(url)
 
     if response.status_code != 200:
-
-        print(f"Failed to fetch data for {symbol} ({interval})")
 
         return None
 
@@ -49,6 +55,64 @@ def fetch_ohlcv(symbol, interval="5m", limit=100):
     df["volume"] = df["volume"].astype(float)
 
     return df
+
+
+
+# ---------- فارکس ----------
+
+def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min", outputsize="compact"):
+
+    url = (
+
+        f"https://www.alphavantage.co/query"
+
+        f"?function=FX_INTRADAY"
+
+        f"&from_symbol={from_symbol}"
+
+        f"&to_symbol={to_symbol}"
+
+        f"&interval={interval}"
+
+        f"&outputsize={outputsize}"
+
+        f"&apikey={ALPHA_VANTAGE_API_KEY}"
+
+    )
+
+    response = requests.get(url)
+
+    data = response.json()
+
+    if not any("Time Series" in k for k in data):
+
+        print(f"داده‌ای برای {from_symbol}/{to_symbol} دریافت نشد.")
+
+        return None
+
+
+
+    ts_key = [k for k in data if "Time Series" in k][0]
+
+    df = pd.DataFrame.from_dict(data[ts_key], orient="index").sort_index()
+
+    df = df.rename(columns={
+
+        "1. open": "open",
+
+        "2. high": "high",
+
+        "3. low": "low",
+
+        "4. close": "close"
+
+    }).astype(float)
+
+    return df
+
+
+
+# ---------- تحلیل ----------
 
 def compute_indicators(df):
 
@@ -102,6 +166,8 @@ def dummy_elliott_wave_check(df):
 
     return "موج الیوت شناسایی شد (فرضی)"
 
+
+
 def generate_signal(symbol, df, interval="--"):
 
     if df is None or len(df) < 50:
@@ -142,7 +208,7 @@ def generate_signal(symbol, df, interval="--"):
 
 
 
-    if score >= 1:
+    if score >= 2:
 
         return {
 
@@ -168,6 +234,8 @@ def generate_signal(symbol, df, interval="--"):
 
 
 
+# ---------- اسکن ----------
+
 def scan_all_crypto_symbols():
 
     timeframes = ["5m", "15m", "1h"]
@@ -176,13 +244,11 @@ def scan_all_crypto_symbols():
 
     results = []
 
-    for sym in symbols[:30]:  # بررسی بیشتر نمادها
+    for sym in symbols[:10]:  # محدودیت تستی
 
         for interval in timeframes:
 
             try:
-
-                print(f"در حال بررسی: {sym} - {interval}")
 
                 df = fetch_ohlcv(sym, interval)
 
@@ -190,13 +256,11 @@ def scan_all_crypto_symbols():
 
                 if signal:
 
-                    print(f"سیگنال یافت شد: {signal}")
-
                     results.append(signal)
 
             except Exception as e:
 
-                print(f"خطا برای {sym} ({interval}): {e}")
+                print(f"خطا در {sym} - {interval}: {e}")
 
                 continue
 
@@ -206,23 +270,33 @@ def scan_all_crypto_symbols():
 
 def scan_all_forex_symbols():
 
-    symbols = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD"]
+    pairs = [("EUR", "USD"), ("GBP", "USD"), ("USD", "JPY"), ("AUD", "USD"), ("USD", "CAD")]
+
+    interval = "5min"
 
     results = []
 
-    for symbol in symbols:
+    for base, quote in pairs:
 
-        df = pd.DataFrame({"close": [1.1, 1.12, 1.13, 1.14, 1.15]*12})
+        try:
 
-        df["open"] = df["close"].shift(1).fillna(method="bfill")
+            df = fetch_forex_ohlcv(base, quote, interval)
 
-        signal = generate_signal(symbol, df)
+            symbol = base + quote
 
-        if signal:
+            if df is not None:
 
-            print(f"سیگنال فارکس: {signal}")
+                signal = generate_signal(symbol, df, interval)
 
-            results.append(signal)
+                if signal:
+
+                    results.append(signal)
+
+        except Exception as e:
+
+            print(f"خطا در {base}/{quote}: {e}")
+
+            continue
 
     return results
 
