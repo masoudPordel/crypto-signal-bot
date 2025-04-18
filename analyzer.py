@@ -1,3 +1,4 @@
+
 import requests
 import pandas as pd
 
@@ -19,11 +20,12 @@ def fetch_ohlcv(symbol, interval="5m", limit=100):
     raw_data = response.json()
     if len(raw_data) == 0 or len(raw_data[0]) < 6:
         return None
-    df = pd.DataFrame(raw_data, columns=[
+    column_names = [
         "timestamp", "open", "high", "low", "close", "volume",
         "close_time", "quote_asset_volume", "trades",
         "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
-    ][:len(raw_data[0])])  # Truncate to match actual column count
+    ]
+    df = pd.DataFrame(raw_data, columns=column_names[:len(raw_data[0])])  # Truncate to match actual column count
     df["open"] = df["open"].astype(float)
     df["high"] = df["high"].astype(float)
     df["low"] = df["low"].astype(float)
