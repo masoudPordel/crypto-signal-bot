@@ -136,7 +136,7 @@ def scan_all_crypto_symbols():
     all_symbols = get_all_symbols()
     symbols = PRIORITY_SYMBOLS + [s for s in all_symbols if s not in PRIORITY_SYMBOLS and s.endswith("USDT")]
     signals = []
-    for symbol in symbols[:10]:
+    for symbol in symbols[:10]:  # محدودیت تستی
         for tf in TIMEFRAMES:
             try:
                 df = fetch_ohlcv(symbol, interval=tf)
