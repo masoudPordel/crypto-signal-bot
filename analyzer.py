@@ -1,4 +1,3 @@
-
 import requests
 import pandas as pd
 
@@ -80,8 +79,33 @@ def detect_price_action(df):
         return "الگوی انگالف نزولی"
     return None
 
-def dummy_elliott_wave_check(df):
-    return "موج الیوت شناسایی شد (فرضی)"
+def advanced_price_action(df):
+    if len(df) < 3:
+        return None
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    before_prev = df.iloc[-3]
+    signals = []
+    if abs(last["open"] - last["close"]) / (last["high"] - last["low"]) < 0.1:
+        signals.append("دوجی")
+    if (last["close"] > last["open"]) and ((last["low"] < min(prev["low"], before_prev["low"])) and ((last["high"] - last["close"]) < (last["close"] - last["low"]))):
+        signals.append("چکش")
+    if (prev["close"] < prev["open"]) and (last["close"] > last["open"]) and (last["open"] < prev["close"]) and (last["close"] > prev["open"]):
+        signals.append("پوشای صعودی")
+    if (prev["close"] > prev["open"]) and (last["close"] < last["open"]) and (last["open"] > prev["close"]) and (last["close"] < prev["open"]):
+        signals.append("پوشای نزولی")
+    return signals if signals else None
+
+def elliott_wave_analysis(df):
+    if len(df) < 20:
+        return None
+    wave = None
+    trend = df["close"].iloc[-1] - df["close"].iloc[-5]
+    if trend > 0:
+        wave = "موج صعودی احتمالی (موج 3؟)"
+    elif trend < 0:
+        wave = "موج اصلاحی احتمالی (موج A/B؟)"
+    return wave
 
 def generate_signal(symbol, df, interval="--"):
     if df is None or len(df) < 50:
@@ -92,14 +116,18 @@ def generate_signal(symbol, df, interval="--"):
     signal = df["Signal"].iloc[-1]
     ema_cross = df["EMA20"].iloc[-2] < df["EMA50"].iloc[-2] and df["EMA20"].iloc[-1] > df["EMA50"].iloc[-1]
     pa = detect_price_action(df)
-    elliott = dummy_elliott_wave_check(df)
+    advanced_pa = advanced_price_action(df)
+    elliott = elliott_wave_analysis(df)
     close_price = df["close"].iloc[-1]
+
     score = 0
     if rsi < 35: score += 1
     if macd > signal: score += 1
     if ema_cross: score += 1
     if pa: score += 1
+
     confidence = int((score / 4) * 100)
+
     if score >= 2:
         return {
             "symbol": symbol,
@@ -108,7 +136,7 @@ def generate_signal(symbol, df, interval="--"):
             "sl": round(close_price * 0.97, 5),
             "confidence": confidence,
             "volatility": round(abs(df["close"].iloc[-1] - df["close"].iloc[-2]) / df["close"].iloc[-2] * 100, 2),
-            "analysis": f"RSI: {round(rsi, 1)} | EMA کراس: {ema_cross} | MACD: {'مثبت' if macd > signal else 'منفی'} | {pa or '-'} | {elliott}",
+            "analysis": f"RSI: {round(rsi, 1)} | EMA کراس: {ema_cross} | MACD: {'مثبت' if macd > signal else 'منفی'} | {pa or '-'} | {', '.join(advanced_pa) if advanced_pa else '-'} | {elliott or '-'}",
             "tf": interval
         }
     return None
@@ -130,7 +158,7 @@ def scan_all_crypto_symbols():
     all_symbols = get_all_symbols()
     symbols = PRIORITY_SYMBOLS + [s for s in all_symbols if s not in PRIORITY_SYMBOLS and s.endswith("USDT")]
     signals = []
-    for symbol in symbols[:10]:
+    for symbol in symbols[:10]:  # محدودیت تستی
         for tf in TIMEFRAMES:
             try:
                 df = fetch_ohlcv(symbol, interval=tf)
@@ -159,50 +187,3 @@ def scan_all_forex_symbols():
             print(f"خطا در {base}/{quote}: {e}")
             continue
     return results
-
-
-# ---------- استراتژی هوش مصنوعی (مدل ساده مبتنی بر یادگیری) ----------
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
-import numpy as np
-
-def ai_signal_strategy(df):
-    if df is None or len(df) < 60:
-        return None
-
-    df = compute_indicators(df).dropna().copy()
-    df["target"] = (df["close"].shift(-1) > df["close"]).astype(int)
-
-    features = ["close", "EMA20", "EMA50", "RSI", "MACD", "Signal"]
-    if len(df) < 60:
-        return None
-
-    X = df[features].iloc[:-1]
-    y = df["target"].iloc[:-1]
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X_scaled, y)
-
-    X_pred = scaler.transform([df[features].iloc[-1]])
-    prediction = model.predict(X_pred)
-
-    return "buy" if prediction[0] == 1 else "sell"
-
-
-# ---------- استراتژی پرایس اکشن پیشرفته ----------
-def advanced_price_action(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    # بررسی شکست مقاومت یا حمایت
-    resistance = max(df["high"].iloc[-5:-1])
-    support = min(df["low"].iloc[-5:-1])
-
-    if last["close"] > resistance:
-        return "breakout"
-    elif last["close"] < support:
-        return "breakdown"
-    return None
