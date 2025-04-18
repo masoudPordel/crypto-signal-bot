@@ -1,0 +1,9 @@
+python-telegram-bot==13.15
+requests
+pandas
+numpy
+ta
+schedule
+ccxt
+python-dotenv
+pytz
