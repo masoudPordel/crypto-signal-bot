@@ -17,14 +17,15 @@ def fetch_ohlcv(symbol, interval="5m", limit=100):
     if response.status_code != 200:
         return None
     raw_data = response.json()
-    if len(raw_data) == 0:
+    if len(raw_data) == 0 or len(raw_data[0]) < 6:
         return None
-    columns_map = [
+    # Dynamically assign only as many columns as data provides
+    all_columns = [
         "timestamp", "open", "high", "low", "close", "volume",
         "close_time", "quote_asset_volume", "trades",
         "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
     ]
-    df = pd.DataFrame(raw_data, columns=columns_map[:len(raw_data[0])])
+    df = pd.DataFrame(raw_data, columns=all_columns[:len(raw_data[0])])
     df["open"] = df["open"].astype(float)
     df["high"] = df["high"].astype(float)
     df["low"] = df["low"].astype(float)
@@ -58,7 +59,7 @@ def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min", outputsize=
     }).astype(float)
     return df
 
-# ---------- اندیکاتورها ----------
+# ---------- تحلیل ----------
 def compute_indicators(df):
     df["EMA20"] = df["close"].ewm(span=20).mean()
     df["EMA50"] = df["close"].ewm(span=50).mean()
@@ -86,7 +87,7 @@ def detect_price_action(df):
 def dummy_elliott_wave_check(df):
     return "موج الیوت شناسایی شد (فرضی)"
 
-# ---------- استراتژی‌ها ----------
+# ---------- استراتژی ساده ----------
 def simple_signal_strategy(df):
     if df is None or len(df) < 2:
         return None
@@ -96,6 +97,7 @@ def simple_signal_strategy(df):
         return "sell"
     return None
 
+# ---------- تولید سیگنال ----------
 def generate_signal(symbol, df, interval="--"):
     if df is None or len(df) < 50:
         return None
@@ -129,14 +131,14 @@ def generate_signal(symbol, df, interval="--"):
         }
     return None
 
-# ---------- اسکن ----------
+# ---------- اسکن کریپتو ----------
 def scan_all_crypto_symbols():
     PRIORITY_SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "LTCUSDT"]
-    TIMEFRAMES = ["5m", "15m", "1h", "1d"]
+    TIMEFRAMES = ["5m", "15m", "1h", "1d", "1w"]
     all_symbols = get_all_symbols()
     symbols = PRIORITY_SYMBOLS + [s for s in all_symbols if s not in PRIORITY_SYMBOLS and s.endswith("USDT")]
     signals = []
-    for symbol in symbols[:10]:
+    for symbol in symbols[:10]:  # محدودیت تستی
         for tf in TIMEFRAMES:
             try:
                 df = fetch_ohlcv(symbol, interval=tf)
@@ -146,8 +148,10 @@ def scan_all_crypto_symbols():
                     signals.append(signal)
             except Exception as e:
                 print(f"خطا در {symbol} - {tf}: {e}")
+                continue
     return signals
 
+# ---------- اسکن فارکس ----------
 def scan_all_forex_symbols():
     pairs = [("EUR", "USD"), ("GBP", "USD"), ("USD", "JPY"), ("AUD", "USD"), ("USD", "CAD")]
     interval = "5min"
@@ -162,4 +166,5 @@ def scan_all_forex_symbols():
                     results.append(signal)
         except Exception as e:
             print(f"خطا در {base}/{quote}: {e}")
+            continue
     return results
