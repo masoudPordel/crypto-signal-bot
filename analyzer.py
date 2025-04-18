@@ -19,13 +19,11 @@ def fetch_ohlcv(symbol, interval="5m", limit=100):
     raw_data = response.json()
     if len(raw_data) == 0 or len(raw_data[0]) < 6:
         return None
-    expected_columns = [
+    df = pd.DataFrame(raw_data, columns=[
         "timestamp", "open", "high", "low", "close", "volume",
         "close_time", "quote_asset_volume", "trades",
         "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
-    ]
-    df = pd.DataFrame(raw_data)
-    df.columns = expected_columns[:df.shape[1]]
+    ][:len(raw_data[0])])  # Truncate to match actual column count
     df["open"] = df["open"].astype(float)
     df["high"] = df["high"].astype(float)
     df["low"] = df["low"].astype(float)
@@ -138,7 +136,7 @@ def scan_all_crypto_symbols():
     all_symbols = get_all_symbols()
     symbols = PRIORITY_SYMBOLS + [s for s in all_symbols if s not in PRIORITY_SYMBOLS and s.endswith("USDT")]
     signals = []
-    for symbol in symbols[:10]:  # محدودیت تستی
+    for symbol in symbols[:10]:
         for tf in TIMEFRAMES:
             try:
                 df = fetch_ohlcv(symbol, interval=tf)
