@@ -1,4 +1,3 @@
-
 import requests
 import pandas as pd
 
@@ -18,9 +17,10 @@ def fetch_ohlcv(symbol, interval="5m", limit=100):
     if response.status_code != 200:
         return None
     raw_data = response.json()
-    if len(raw_data) == 0:
+    if len(raw_data) == 0 or len(raw_data[0]) < 6:
         return None
     column_count = len(raw_data[0])
+    raw_data = [row for row in raw_data if len(row) == column_count]
     base_columns = [
         "timestamp", "open", "high", "low", "close", "volume",
         "close_time", "quote_asset_volume", "trades",
@@ -28,9 +28,11 @@ def fetch_ohlcv(symbol, interval="5m", limit=100):
     ]
     columns = base_columns[:column_count]
     df = pd.DataFrame(raw_data, columns=columns)
-    for col in ["open", "high", "low", "close", "volume"]:
-        if col in df.columns:
-            df[col] = df[col].astype(float)
+    df["open"] = df["open"].astype(float)
+    df["high"] = df["high"].astype(float)
+    df["low"] = df["low"].astype(float)
+    df["close"] = df["close"].astype(float)
+    df["volume"] = df["volume"].astype(float)
     return df
 
 # ---------- فارکس ----------
