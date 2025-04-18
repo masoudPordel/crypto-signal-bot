@@ -300,3 +300,35 @@ def scan_all_forex_symbols():
 
     return results
 
+# ---------- simple_signal_strategy (جدید)
+def simple_signal_strategy(df):
+    if df is None or len(df) < 2:
+        return None
+    if df["close"].iloc[-1] > df["close"].iloc[-2]:
+        return "buy"
+    elif df["close"].iloc[-1] < df["close"].iloc[-2]:
+        return "sell"
+    return None
+
+# ---------- scan_all_crypto_symbols (اصلاح‌شده)
+def scan_all_crypto_symbols():
+    PRIORITY_SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "LTCUSDT"]
+    TIMEFRAMES = ["5m", "15m", "1h", "1d", "1w"]
+
+    all_symbols = get_all_symbols()
+    symbols = PRIORITY_SYMBOLS + [s for s in all_symbols if s not in PRIORITY_SYMBOLS and s.endswith("USDT")]
+
+    signals = []
+    for symbol in symbols[:10]:  # محدودیت تستی
+        for tf in TIMEFRAMES:
+            try:
+                df = fetch_ohlcv(symbol, interval=tf)
+                signal = generate_signal(symbol, df, tf)
+                extra_check = simple_signal_strategy(df)  # شرط اضافی
+                if signal and extra_check:  # فقط وقتی هر دو برقرار باشند
+                    signals.append(signal)
+            except Exception as e:
+                print(f"خطا در {symbol} - {tf}: {e}")
+                continue
+    return signals
+
