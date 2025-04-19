@@ -1,8 +1,0 @@
-pandas
-requests
-ccxt
-numpy
-aiohttp
-tenacity
-schedule
-backtrader
