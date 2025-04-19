@@ -5,7 +5,7 @@ import ccxt
 import time
 
 # تایم‌فریم‌هایی که بررسی می‌شن
-TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"]
+TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
 
 # --- اندیکاتورها ---
 def compute_rsi(df, period=14):
