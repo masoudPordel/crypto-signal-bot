@@ -1,4 +1,3 @@
-
 import time
 import asyncio
 import telegram
@@ -22,22 +21,14 @@ async def send_signals():
             signal_id = (signal["نماد"], signal["تایم‌فریم"], signal["قیمت ورود"])
             if signal_id not in sent_signals:
                 sent_signals.add(signal_id)
-                message = (
-                    f"نماد: {signal['نماد']}
-"
-                    f"تایم‌فریم: {signal['تایم‌فریم']}
-"
-                    f"قیمت ورود: {signal['قیمت ورود']}
-"
-                    f"هدف سود: {signal['هدف سود']}
-"
-                    f"حد ضرر: {signal['حد ضرر']}
-"
-                    f"سطح اطمینان: {signal['سطح اطمینان']}%
-"
-                    f"تحلیل:
-{signal['تحلیل']}"
-                )
+                message = f"""نماد: {signal['نماد']}
+تایم‌فریم: {signal['تایم‌فریم']}
+قیمت ورود: {signal['قیمت ورود']}
+هدف سود: {signal['هدف سود']}
+حد ضرر: {signal['حد ضرر']}
+سطح اطمینان: {signal['سطح اطمینان']}%
+تحلیل:
+{signal['تحلیل']}"""
                 await bot.send_message(chat_id=CHAT_ID, text=message)
         else:
             print("فرمت سیگنال نامعتبر:", signal)
