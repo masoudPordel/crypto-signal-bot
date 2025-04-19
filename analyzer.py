@@ -4,30 +4,34 @@ import pandas as pd
 # === Alpha Vantage API Key ===
 ALPHA_VANTAGE_API_KEY = "8VL54YT3N656MW5T"
 
-# ---------- کریپتو از CoinEx ----------
-def get_all_coinex_symbols():
-    url = "https://api.coinex.com/v1/market/list"
+# ---------- کریپتو ----------
+def get_all_symbols():
+    url = "https://api.mexc.com/api/v3/exchangeInfo"
     response = requests.get(url)
     data = response.json()
-    return [symbol.replace('/', '').upper() for symbol in data["data"] if symbol.endswith("USDT")]
+    return [item["symbol"] for item in data["symbols"] if item.get("isSpotTradingAllowed")]
 
-def fetch_coinex_ohlcv(symbol, interval="5min", limit=100):
-    market = symbol.replace("USDT", "USDT").lower()
-    url = f"https://api.coinex.com/v1/market/kline?market={market}&type={interval}&limit={limit}"
+def fetch_ohlcv(symbol, interval="5m", limit=100):
+    url = f"https://api.mexc.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     response = requests.get(url)
     if response.status_code != 200:
         return None
-    data = response.json().get("data", {}).get("kline", [])
-    if not data or len(data[0]) < 6:
+    raw_data = response.json()
+
+    # --- فیکس ارور columns ---
+    expected_column_count = 12
+    raw_data = [row for row in raw_data if len(row) == expected_column_count]
+
+    if len(raw_data) == 0:
         return None
-    df = pd.DataFrame(data, columns=[
-        "timestamp", "open", "high", "low", "close", "volume"
-    ])
-    df["open"] = df["open"].astype(float)
-    df["high"] = df["high"].astype(float)
-    df["low"] = df["low"].astype(float)
-    df["close"] = df["close"].astype(float)
-    df["volume"] = df["volume"].astype(float)
+
+    columns = [
+        "timestamp", "open", "high", "low", "close", "volume",
+        "close_time", "quote_asset_volume", "trades",
+        "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
+    ]
+    df = pd.DataFrame(raw_data, columns=columns)
+    df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
     return df
 
 # ---------- فارکس ----------
@@ -43,10 +47,10 @@ def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min", outputsize=
     )
     response = requests.get(url)
     data = response.json()
-    if not any("Time Series" in k for k in data):
+    ts_key = next((k for k in data if "Time Series" in k), None)
+    if not ts_key:
         print(f"داده‌ای برای {from_symbol}/{to_symbol} دریافت نشد.")
         return None
-    ts_key = [k for k in data if "Time Series" in k][0]
     df = pd.DataFrame.from_dict(data[ts_key], orient="index").sort_index()
     df = df.rename(columns={
         "1. open": "open",
@@ -57,13 +61,6 @@ def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min", outputsize=
     return df
 
 # ---------- اندیکاتورها ----------
-def compute_rsi(df, period=14):
-    delta = df["close"].diff()
-    gain = delta.clip(lower=0).rolling(window=period).mean()
-    loss = -delta.clip(upper=0).rolling(window=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-
 def compute_indicators(df):
     df["EMA20"] = df["close"].ewm(span=20).mean()
     df["EMA50"] = df["close"].ewm(span=50).mean()
@@ -72,9 +69,17 @@ def compute_indicators(df):
     df["Signal"] = df["MACD"].ewm(span=9).mean()
     return df
 
-# ---------- پرایس اکشن و موج ----------
+def compute_rsi(df, period=14):
+    delta = df["close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+# ---------- الگوها ----------
 def detect_price_action(df):
-    last, prev = df.iloc[-1], df.iloc[-2]
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
     if last["close"] > last["open"] and prev["close"] < prev["open"] and last["open"] < prev["close"]:
         return "الگوی انگالف صعودی"
     elif last["close"] < last["open"] and prev["close"] > prev["open"] and last["open"] > prev["close"]:
@@ -94,7 +99,7 @@ def simple_signal_strategy(df):
         return "sell"
     return None
 
-# ---------- تولید سیگنال نهایی ----------
+# ---------- سیگنال نهایی ----------
 def generate_signal(symbol, df, interval="--"):
     if df is None or len(df) < 50:
         return None
@@ -128,19 +133,20 @@ def generate_signal(symbol, df, interval="--"):
         }
     return None
 
-# ---------- اسکن کریپتو (CoinEx) ----------
-def scan_coinex():
-    PRIORITY = ["BTCUSDT", "ETHUSDT", "XRPUSDT"]
-    TIMEFRAMES = ["5min", "15min", "30min"]
-    all_symbols = get_all_coinex_symbols()
-    symbols = PRIORITY + [s for s in all_symbols if s not in PRIORITY]
+# ---------- اسکن کریپتو ----------
+def scan_all_crypto_symbols():
+    PRIORITY_SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "LTCUSDT"]
+    TIMEFRAMES = ["5m", "15m", "1h", "1d"]
+    all_symbols = get_all_symbols()
+    symbols = PRIORITY_SYMBOLS + [s for s in all_symbols if s not in PRIORITY_SYMBOLS and s.endswith("USDT")]
     signals = []
-    for symbol in symbols[:10]:
+    for symbol in symbols[:10]:  # تستی محدود
         for tf in TIMEFRAMES:
             try:
-                df = fetch_coinex_ohlcv(symbol, interval=tf)
+                df = fetch_ohlcv(symbol, interval=tf)
                 signal = generate_signal(symbol, df, tf)
-                if signal and simple_signal_strategy(df):
+                extra_check = simple_signal_strategy(df)
+                if signal and extra_check:
                     signals.append(signal)
             except Exception as e:
                 print(f"خطا در {symbol} - {tf}: {e}")
@@ -148,10 +154,10 @@ def scan_coinex():
     return signals
 
 # ---------- اسکن فارکس ----------
-def scan_forex():
-    pairs = [("EUR", "USD"), ("GBP", "USD"), ("USD", "JPY")]
+def scan_all_forex_symbols():
+    pairs = [("EUR", "USD"), ("GBP", "USD"), ("USD", "JPY"), ("AUD", "USD"), ("USD", "CAD")]
     interval = "5min"
-    signals = []
+    results = []
     for base, quote in pairs:
         try:
             df = fetch_forex_ohlcv(base, quote, interval)
@@ -159,23 +165,8 @@ def scan_forex():
             if df is not None:
                 signal = generate_signal(symbol, df, interval)
                 if signal:
-                    signals.append(signal)
+                    results.append(signal)
         except Exception as e:
             print(f"خطا در {base}/{quote}: {e}")
             continue
-    return signals
-
-# ---------- اجرای یکجا ----------
-def run_all():
-    crypto_signals = scan_coinex()
-    forex_signals = scan_forex()
-    return {
-        "crypto": crypto_signals,
-        "forex": forex_signals
-    }
-
-# تست سریع
-if __name__ == "__main__":
-    result = run_all()
-    for s in result["crypto"] + result["forex"]:
-        print(s)
+    return results
