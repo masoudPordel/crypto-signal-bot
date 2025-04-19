@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
+from scipy.signal import argrelextrema
 
+# --- اندیکاتورها ---
 def compute_rsi(df, period=14):
     delta = df["close"].diff()
     gain = delta.where(delta > 0, 0).rolling(window=period).mean()
@@ -21,12 +23,66 @@ def compute_bollinger_bands(df, period=20, std_dev=2):
     std = df["close"].rolling(window=period).std()
     return sma + std_dev * std, sma - std_dev * std
 
+# --- پرایس اکشن حرفه‌ای ---
+def detect_pin_bar(df):
+    body = abs(df["close"] - df["open"])
+    candle_range = df["high"] - df["low"]
+    upper_shadow = df["high"] - df[["close", "open"]].max(axis=1)
+    lower_shadow = df[["close", "open"]].min(axis=1) - df["low"]
+
+    condition = (
+        (body < 0.3 * candle_range) &
+        ((upper_shadow > 2 * body) | (lower_shadow > 2 * body))
+    )
+    df["PinBar"] = condition
+    return df
+
+def detect_engulfing(df):
+    prev_open = df["open"].shift(1)
+    prev_close = df["close"].shift(1)
+    condition = (
+        ((df["close"] > df["open"]) & (prev_close < prev_open) &
+         (df["close"] > prev_open) & (df["open"] < prev_close)) |
+        ((df["close"] < df["open"]) & (prev_close > prev_open) &
+         (df["close"] < prev_open) & (df["open"] > prev_close))
+    )
+    df["Engulfing"] = condition
+    return df
+
+# --- امواج الیوت ساده ---
+def detect_elliott_wave(df):
+    local_max = argrelextrema(df['close'].values, np.greater, order=5)[0]
+    local_min = argrelextrema(df['close'].values, np.less, order=5)[0]
+
+    df["WavePoint"] = np.nan
+    df.loc[local_max, "WavePoint"] = df.loc[local_max, "close"]
+    df.loc[local_min, "WavePoint"] = df.loc[local_min, "close"]
+    return df
+
+# --- بک‌تست استراتژی EMA کراس ---
+def backtest_ema_strategy(df):
+    df["TradeSignal"] = 0
+    df.loc[df["EMA12"] > df["EMA26"], "TradeSignal"] = 1
+    df.loc[df["EMA12"] < df["EMA26"], "TradeSignal"] = -1
+
+    df["Return"] = df["close"].pct_change()
+    df["StrategyReturn"] = df["TradeSignal"].shift() * df["Return"]
+    df["EquityCurve"] = (1 + df["StrategyReturn"]).cumprod()
+    return df
+
+# --- نهایی: اجرای همه تحلیل‌ها ---
 def compute_indicators(df):
     df["EMA12"] = df["close"].ewm(span=12).mean()
     df["EMA26"] = df["close"].ewm(span=26).mean()
-    df["RSI"] = compute_rsi(df)
     df["MACD"] = df["EMA12"] - df["EMA26"]
     df["Signal"] = df["MACD"].ewm(span=9).mean()
+    df["RSI"] = compute_rsi(df)
     df["ATR"] = compute_atr(df)
     df["BB_upper"], df["BB_lower"] = compute_bollinger_bands(df)
+
+    df = detect_pin_bar(df)
+    df = detect_engulfing(df)
+    df = detect_elliott_wave(df)
+    df = backtest_ema_strategy(df)
+
     return df
