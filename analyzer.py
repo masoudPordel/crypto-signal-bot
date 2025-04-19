@@ -226,3 +226,11 @@ def run_backtest(symbol, df, signals):
     cerebro.addsizer(bt.sizers.FixedSize, stake=1000)
     cerebro.run()
     return cerebro.broker.getvalue()
+
+
+async def scan_all_crypto_symbols():
+    return ["BTC/USDT", "ETH/USDT"]
+
+
+async def scan_all_forex_symbols():
+    return ["EUR/USD", "GBP/USD"]
