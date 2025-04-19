@@ -3,4 +3,4 @@ pandas
 python-telegram-bot==13.15
 schedule
 requests
-kucoin
+python-kucoin
