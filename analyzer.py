@@ -20,23 +20,24 @@ def fetch_ohlcv(symbol, interval="5m", limit=100):
     if len(raw_data) == 0:
         return None
 
-    # اصلاح: هندل کردن داده‌هایی با تعداد ستون متفاوت (۸ یا ۱۲)
-    base_columns = [
-        "timestamp", "open", "high", "low", "close", "volume",
-        "close_time", "quote_asset_volume", "trades",
-        "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
-    ]
-    raw_data = [row for row in raw_data if 6 <= len(row) <= 12]
-    if not raw_data:
+    column_templates = {
+        6: ["timestamp", "open", "high", "low", "close", "volume"],
+        8: ["timestamp", "open", "high", "low", "close", "volume", "close_time", "quote_asset_volume"],
+        12: [
+            "timestamp", "open", "high", "low", "close", "volume",
+            "close_time", "quote_asset_volume", "trades",
+            "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
+        ]
+    }
+
+    col_len = len(raw_data[0])
+    if col_len not in column_templates:
+        print(f"{symbol}: ناشناس با {col_len} ستون. رد شد.")
         return None
-    columns = base_columns[:len(raw_data[0])]
-    df = pd.DataFrame(raw_data, columns=columns)
-    
-    df["open"] = df["open"].astype(float)
-    df["high"] = df["high"].astype(float)
-    df["low"] = df["low"].astype(float)
-    df["close"] = df["close"].astype(float)
-    df["volume"] = df["volume"].astype(float)
+
+    df = pd.DataFrame(raw_data, columns=column_templates[col_len])
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = df[col].astype(float)
     return df
 
 # ---------- فارکس ----------
@@ -153,7 +154,7 @@ def scan_all_crypto_symbols():
                 if signal and extra_check:
                     signals.append(signal)
             except Exception as e:
-                print(f"خطا در {symbol} – {tf}: {e}")
+                print(f"خطا در {symbol} - {tf}: {e}")
                 continue
     return signals
 
