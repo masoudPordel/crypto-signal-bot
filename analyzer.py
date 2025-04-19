@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 
-# === Alpha Vantage API Key ===
+# === API Key ===
 ALPHA_VANTAGE_API_KEY = "8VL54YT3N656MW5T"
 
 # ---------- کریپتو ----------
@@ -20,24 +20,32 @@ def fetch_ohlcv(symbol, interval="5m", limit=100):
     if len(raw_data) == 0:
         return None
 
-    column_templates = {
-        6: ["timestamp", "open", "high", "low", "close", "volume"],
-        8: ["timestamp", "open", "high", "low", "close", "volume", "close_time", "quote_asset_volume"],
-        12: [
+    col_count = len(raw_data[0])
+    if col_count == 12:
+        columns = [
             "timestamp", "open", "high", "low", "close", "volume",
-            "close_time", "quote_asset_volume", "trades",
+            "close_time", "quote_asset_volume", "number_of_trades",
             "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
         ]
-    }
-
-    col_len = len(raw_data[0])
-    if col_len not in column_templates:
-        print(f"{symbol}: ناشناس با {col_len} ستون. رد شد.")
+    elif col_count == 8:
+        columns = [
+            "timestamp", "open", "high", "low", "close", "volume",
+            "close_time", "quote_asset_volume"
+        ]
+    elif col_count == 6:
+        columns = [
+            "timestamp", "open", "high", "low", "close", "volume"
+        ]
+    else:
+        print(f"{symbol} - تعداد ستون نامشخص: {col_count}")
         return None
 
-    df = pd.DataFrame(raw_data, columns=column_templates[col_len])
+    df = pd.DataFrame(raw_data, columns=columns)
+
     for col in ["open", "high", "low", "close", "volume"]:
-        df[col] = df[col].astype(float)
+        if col in df.columns:
+            df[col] = df[col].astype(float)
+
     return df
 
 # ---------- فارکس ----------
@@ -66,7 +74,14 @@ def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min", outputsize=
     }).astype(float)
     return df
 
-# ---------- تحلیل ----------
+# ---------- اندیکاتورها ----------
+def compute_rsi(df, period=14):
+    delta = df["close"].diff()
+    gain = delta.clip(lower=0).rolling(window=period).mean()
+    loss = (-delta.clip(upper=0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
 def compute_indicators(df):
     df["EMA20"] = df["close"].ewm(span=20).mean()
     df["EMA50"] = df["close"].ewm(span=50).mean()
@@ -74,13 +89,6 @@ def compute_indicators(df):
     df["MACD"] = df["close"].ewm(span=12).mean() - df["close"].ewm(span=26).mean()
     df["Signal"] = df["MACD"].ewm(span=9).mean()
     return df
-
-def compute_rsi(df, period=14):
-    delta = df["close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
 
 def detect_price_action(df):
     last = df.iloc[-1]
@@ -104,7 +112,7 @@ def simple_signal_strategy(df):
         return "sell"
     return None
 
-# ---------- تولید سیگنال ----------
+# ---------- سیگنال ----------
 def generate_signal(symbol, df, interval="--"):
     if df is None or len(df) < 50:
         return None
