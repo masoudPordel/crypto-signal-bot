@@ -1,66 +1,92 @@
-import logging
-import aiohttp
-import yfinance as yf
 import pandas as pd
-from strategy_engine import compute_indicators
+import numpy as np
+from scipy.signal import argrelextrema
 
-from datetime import datetime
+# === اندیکاتورها ===
+def compute_rsi(df, period=14):
+    delta = df["close"].diff()
+    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=period).mean()
+    rs = gain / loss.replace(0, 1e-10)
+    return 100 - (100 / (1 + rs))
 
-async def fetch_ohlcv_kucoin_async(symbol, interval="5min"):
-    async with aiohttp.ClientSession() as session:
-        url = f"https://api.kucoin.com/api/v1/market/candles?type={interval}&symbol={symbol}-USDT"
-        async with session.get(url) as response:
-            data = await response.json()
-            if "data" not in data:
-                return None
-            df = pd.DataFrame(data["data"], columns=["timestamp", "open", "close", "high", "low", "volume", "turnover"])
-            df = df.iloc[::-1]
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
-            df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
-            return df
+def compute_atr(df, period=14):
+    tr = pd.concat([
+        df["high"] - df["low"],
+        abs(df["high"] - df["close"].shift()),
+        abs(df["low"] - df["close"].shift())
+    ], axis=1).max(axis=1)
+    return tr.rolling(window=period).mean()
 
-def fetch_forex_ohlcv(symbol):
-    df = yf.download(symbol, period="1d", interval="5m")
-    if df.empty:
-        return None
-    df = df.rename(columns={
-        "Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"
-    })[["open", "high", "low", "close", "volume"]]
+def compute_bollinger_bands(df, period=20, std_dev=2):
+    sma = df["close"].rolling(window=period).mean()
+    std = df["close"].rolling(window=period).std()
+    return sma + std_dev * std, sma - std_dev * std
+
+# === پرایس اکشن ===
+def detect_pin_bar(df):
+    df = df.copy()
+    df["body"] = abs(df["close"] - df["open"])
+    df["candle_range"] = df["high"] - df["low"]
+    df["upper_shadow"] = df["high"] - df[["close", "open"]].max(axis=1)
+    df["lower_shadow"] = df[["close", "open"]].min(axis=1) - df["low"]
+
+    condition = (
+        (df["body"] < 0.3 * df["candle_range"]) &
+        ((df["upper_shadow"] > 2 * df["body"]) | (df["lower_shadow"] > 2 * df["body"]))
+    )
+
+    df["PinBar"] = condition
     return df
 
-def generate_signal(symbol, df, interval="5min", is_crypto=True):
-    if df is None or len(df) < 50:
-        return None
-    df = compute_indicators(df)
-    last = df.iloc[-1]
-    atr = df["ATR"].iloc[-1]
-    confidence = 70
-    return {
-        "نماد": symbol,
-        "قیمت ورود": round(last["close"], 5),
-        "هدف سود": round(last["close"] + 2 * atr, 5),
-        "حد ضرر": round(last["close"] - 1.5 * atr, 5),
-        "سطح اطمینان": confidence,
-        "تحلیل": f"RSI={round(last['RSI'],1)}, MACD={round(last['MACD'], 2)}",
-        "تایم‌فریم": interval
-    }
+def detect_engulfing(df):
+    prev_open = df["open"].shift(1)
+    prev_close = df["close"].shift(1)
 
-async def scan_all_crypto_symbols():
-    symbols = ["BTC", "ETH", "XRP", "LTC", "TRX"]
-    results = []
-    for symbol in symbols:
-        df = await fetch_ohlcv_kucoin_async(symbol)
-        signal = generate_signal(symbol, df, is_crypto=True)
-        if signal:
-            results.append(signal)
-    return results
+    condition = (
+        ((df["close"] > df["open"]) & (prev_close < prev_open) &
+         (df["close"] > prev_open) & (df["open"] < prev_close)) |
+        ((df["close"] < df["open"]) & (prev_close > prev_open) &
+         (df["close"] < prev_open) & (df["open"] > prev_close))
+    )
 
-async def scan_all_forex_symbols():
-    pairs = ["EURUSD=X", "GBPUSD=X"]
-    results = []
-    for symbol in pairs:
-        df = fetch_forex_ohlcv(symbol)
-        signal = generate_signal(symbol, df, is_crypto=False)
-        if signal:
-            results.append(signal)
-    return results
+    df["Engulfing"] = condition
+    return df
+
+# === امواج الیوت ساده ===
+def detect_elliott_wave(df):
+    local_max = argrelextrema(df['close'].values, np.greater, order=5)[0]
+    local_min = argrelextrema(df['close'].values, np.less, order=5)[0]
+
+    df["WavePoint"] = np.nan
+    df.loc[df.index[local_max], "WavePoint"] = df.loc[df.index[local_max], "close"]
+    df.loc[df.index[local_min], "WavePoint"] = df.loc[df.index[local_min], "close"]
+    return df
+
+# === بک‌تست استراتژی EMA کراس ===
+def backtest_ema_strategy(df):
+    df["TradeSignal"] = 0
+    df.loc[df["EMA12"] > df["EMA26"], "TradeSignal"] = 1
+    df.loc[df["EMA12"] < df["EMA26"], "TradeSignal"] = -1
+
+    df["Return"] = df["close"].pct_change()
+    df["StrategyReturn"] = df["TradeSignal"].shift() * df["Return"]
+    df["EquityCurve"] = (1 + df["StrategyReturn"]).cumprod()
+    return df
+
+# === اجرای نهایی همه تحلیل‌ها ===
+def compute_indicators(df):
+    df["EMA12"] = df["close"].ewm(span=12).mean()
+    df["EMA26"] = df["close"].ewm(span=26).mean()
+    df["MACD"] = df["EMA12"] - df["EMA26"]
+    df["Signal"] = df["MACD"].ewm(span=9).mean()
+    df["RSI"] = compute_rsi(df)
+    df["ATR"] = compute_atr(df)
+    df["BB_upper"], df["BB_lower"] = compute_bollinger_bands(df)
+
+    df = detect_pin_bar(df)
+    df = detect_engulfing(df)
+    df = detect_elliott_wave(df)
+    df = backtest_ema_strategy(df)
+
+    return df
