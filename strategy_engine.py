@@ -25,10 +25,12 @@ def compute_bollinger_bands(df, period=20, std_dev=2):
 
 # --- پرایس اکشن حرفه‌ای ---
 def detect_pin_bar(df):
-    body = abs(df["close"] - df["open"])
+    body = (df["close"] - df["open"]).abs()
     candle_range = df["high"] - df["low"]
-    upper_shadow = df["high"] - df[["close", "open"]].max(axis=1)
-    lower_shadow = df[["close", "open"]].min(axis=1) - df["low"]
+    max_oc = pd.concat([df["open"], df["close"]], axis=1).max(axis=1)
+    min_oc = pd.concat([df["open"], df["close"]], axis=1).min(axis=1)
+    upper_shadow = df["high"] - max_oc
+    lower_shadow = min_oc - df["low"]
 
     condition = (
         (body < 0.3 * candle_range) &
@@ -70,7 +72,7 @@ def backtest_ema_strategy(df):
     df["EquityCurve"] = (1 + df["StrategyReturn"]).cumprod()
     return df
 
-# --- نهایی: اجرای همه تحلیل‌ها ---
+# --- اجرای نهایی همه تحلیل‌ها ---
 def compute_indicators(df):
     df["EMA12"] = df["close"].ewm(span=12).mean()
     df["EMA26"] = df["close"].ewm(span=26).mean()
