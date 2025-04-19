@@ -234,3 +234,4 @@ async def scan_all_crypto_symbols():
 
 async def scan_all_forex_symbols():
     return ["EUR/USD", "GBP/USD"]
+
