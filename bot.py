@@ -1,9 +1,12 @@
 import time
 import asyncio
 import telegram
+import logging
 from analyzer import scan_all_crypto_symbols, scan_all_forex_symbols
 
-# اصلاح‌شده: توکن درست
+# تنظیمات لاگ
+logging.basicConfig(level=logging.INFO)
+
 BOT_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
 CHAT_ID = 632886964
 
@@ -11,18 +14,19 @@ bot = telegram.Bot(token=BOT_TOKEN)
 sent_signals = set()
 
 async def send_signals():
-    print("در حال بررسی بازار...")
-    crypto_signals = await scan_all_crypto_symbols()
-    forex_signals = await scan_all_forex_symbols()
+    logging.info("در حال بررسی بازار...")
+    try:
+        crypto_signals = await scan_all_crypto_symbols()
+        forex_signals = await scan_all_forex_symbols()
 
-    all_signals = crypto_signals + forex_signals
+        all_signals = crypto_signals + forex_signals
 
-    for signal in all_signals:
-        if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم")):
-            signal_id = (signal["نماد"], signal["تایم‌فریم"], signal["قیمت ورود"])
-            if signal_id not in sent_signals:
-                sent_signals.add(signal_id)
-                message = f"""نماد: {signal['نماد']}
+        for signal in all_signals:
+            if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل")):
+                signal_id = (signal["نماد"], signal["تایم‌فریم"], signal["قیمت ورود"])
+                if signal_id not in sent_signals:
+                    sent_signals.add(signal_id)
+                    message = f"""نماد: {signal['نماد']}
 تایم‌فریم: {signal['تایم‌فریم']}
 قیمت ورود: {signal['قیمت ورود']}
 هدف سود: {signal['هدف سود']}
@@ -30,14 +34,16 @@ async def send_signals():
 سطح اطمینان: {signal['سطح اطمینان']}%
 تحلیل:
 {signal['تحلیل']}"""
-                await bot.send_message(chat_id=CHAT_ID, text=message)
-        else:
-            print("فرمت سیگنال نامعتبر:", signal)
+                    await bot.send_message(chat_id=CHAT_ID, text=message)
+            else:
+                logging.warning("فرمت سیگنال ناقص: %s", signal)
+    except Exception as e:
+        logging.error("خطا در ارسال سیگنال‌ها: %s", e)
 
 async def main():
     while True:
         await send_signals()
-        await asyncio.sleep(300)
+        await asyncio.sleep(300)  # ۵ دقیقه بین هر بررسی
 
 if __name__ == "__main__":
     asyncio.run(main())
