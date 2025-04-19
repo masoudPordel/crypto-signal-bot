@@ -11,13 +11,13 @@ import backtrader as bt
 import os
 
 # تنظیم لاگ‌ها برای دیباگ دقیق‌تر
-logging.basicConfig(filename="trading_errors.log", level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(filename="trading_errors.log", level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # تنظیم API Key از متغیر محیطی
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "8VL54YT3N656MW5T")
 
 # تنظیم پروکسی برای دور زدن فیلتر (در صورت نیاز)
-PROXY = os.getenv("HTTP_PROXY", None)  # مثال: "http://user:pass@proxy:port"
+PROXY = os.getenv("HTTP_PROXY", None)
 
 @lru_cache(maxsize=1)
 def get_all_symbols_kucoin(_=None):
@@ -38,7 +38,7 @@ def get_all_symbols_kucoin(_=None):
         return []
 
 @sleep_and_retry
-@limits(calls=10, period=1)  # محدودیت KuCoin: 10 درخواست در ثانیه
+@limits(calls=10, period=1)
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def fetch_ohlcv_kucoin_async(symbol, interval="5min", limit=200):
     async with aiohttp.ClientSession() as session:
@@ -56,11 +56,11 @@ async def fetch_ohlcv_kucoin_async(symbol, interval="5min", limit=200):
             df = df.iloc[::-1]
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
             df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
-            logging.info(f"Fetched {len(df)} candles for {symbol} from KuCoin")
+            logging.debug(f"Fetched {len(df)} candles for {symbol} from KuCoin")
             return df
 
 @sleep_and_retry
-@limits(calls=5, period=60)  # محدودیت Alpha Vantage: 5 درخواست در دقیقه
+@limits(calls=5, period=60)
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10))
 def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min"):
     try:
@@ -73,6 +73,9 @@ def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min"):
         response = requests.get(url, proxies=proxies)
         response.raise_for_status()
         data = response.json()
+        if "Error Message" in data:
+            logging.error(f"Alpha Vantage API error for {from_symbol}/{to_symbol}: {data['Error Message']}")
+            return None
         ts_key = [k for k in data if "Time Series" in k]
         if not ts_key:
             logging.error(f"داده زمانی برای {from_symbol}/{to_symbol} از Alpha Vantage دریافت نشد")
@@ -82,7 +85,7 @@ def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min"):
             "1. open": "open", "2. high": "high", "3. low": "low", "4. close": "close"
         }).astype(float)
         df.index = pd.to_datetime(df.index)
-        logging.info(f"Fetched {len(df)} candles for {from_symbol}/{to_symbol} from Alpha Vantage")
+        logging.debug(f"Fetched {len(df)} candles for {from_symbol}/{to_symbol} from Alpha Vantage")
         return df
     except Exception as e:
         logging.error(f"خطا در دریافت داده فارکس برای {from_symbol}/{to_symbol}: {e}")
@@ -165,7 +168,7 @@ def bollinger_strategy(df):
     return None
 
 # --- Generate Signal ---
-def generate_signal(symbol, df, interval="5min", is_crypto=True, min_confidence=20):  # کاهش سطح اطمینان
+def generate_signal(symbol, df, interval="5min", is_crypto=True, min_confidence=20):
     if df is None:
         logging.error(f"داده‌ای برای {symbol} دریافت نشد")
         return None
@@ -192,6 +195,7 @@ def generate_signal(symbol, df, interval="5min", is_crypto=True, min_confidence=
     ])
 
     confidence = int((score / 7) * 100)
+    logging.debug(f"سطح اطمینان برای {symbol}: {confidence}% (RSI={rsi}, MACD={macd}, Signal={signal}, EMA Cross={ema_cross})")
     if confidence < min_confidence:
         logging.info(f"سطح اطمینان برای {symbol} کمتر از حداقل است: {confidence}%")
         return None
@@ -208,7 +212,7 @@ def generate_signal(symbol, df, interval="5min", is_crypto=True, min_confidence=
                  f"حجم={'بالا' if volume_spike else 'نرمال'}",
         "تایم‌فریم": interval
     }
-    logging.info(f"سیگنال برای {symbol} با اطمینان {confidence}% تولید شد")
+    logging.info(f"سیگنال برای {symbol} با اطمینان {confidence}% تولید شد: {signal}")
     return signal
 
 # --- Backtest ---
@@ -256,27 +260,65 @@ def run_backtest(symbol, df, signals):
     return final_value
 
 # --- تابع برای دریافت داده و تولید سیگنال برای فارکس ---
-async def analyze_forex_pair(from_symbol, to_symbol="USD", interval="5min"):
+async def analyze_forex_pair(from_symbol, to_symbol="USD", interval="1hour"):
     symbol = f"{from_symbol}/{to_symbol}"
+    logging.info(f"در حال دریافت داده برای {symbol} در تایم‌فریم {interval}")
     df = fetch_forex_ohlcv(from_symbol, to_symbol, interval)
     if df is None:
+        logging.error(f"دریافت داده برای {symbol} ناموفق بود")
         return None
     signal = generate_signal(symbol, df, interval=interval, is_crypto=False, min_confidence=20)
+    if signal:
+        logging.info(f"سیگنال برای {symbol}: {signal}")
+    else:
+        logging.info(f"هیچ سیگنالی برای {symbol} تولید نشد")
     return signal
 
-# --- تست کد برای EUR/USD ---
+# --- تابع برای ارسال سیگنال به تلگرام (اختیاری) ---
+async def send_signal_to_telegram(signal, bot_token, chat_id):
+    try:
+        from telegram import Bot
+        bot = Bot(token=bot_token)
+        message = (
+            f"سیگنال جدید:\n"
+            f"نماد: {signal['نماد']}\n"
+            f"قیمت ورود: {signal['قیمت ورود']}\n"
+            f"هدف سود: {signal['هدف سود']}\n"
+            f"حد ضرر: {signal['حد ضرر']}\n"
+            f"سطح اطمینان: {signal['سطح اطمینان']}%\n"
+            f"تحلیل: {signal['تحلیل']}\n"
+            f"تایم‌فریم: {signal['تایم‌فریم']}"
+        )
+        await bot.send_message(chat_id=chat_id, text=message)
+        logging.info(f"سیگنال به تلگرام ارسال شد: {signal['نماد']}")
+    except Exception as e:
+        logging.error(f"خطا در ارسال سیگنال به تلگرام: {e}")
+
+# --- تابع اصلی برای پردازش جفت‌ارزها ---
+async def main():
+    pairs = [
+        ("EUR", "USD"),
+        ("GBP", "USD"),
+        ("USD", "JPY"),
+        ("AUD", "USD"),
+        ("USD", "CAD")
+    ]
+    interval = "1hour"  # تایم‌فریم مطابق با لاگ‌ها
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "your_bot_token")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "your_chat_id")
+
+    for from_symbol, to_symbol in pairs:
+        logging.info(f"... حالت انتظار {from_symbol}/{to_symbol} در تایم فریم {interval} ...")
+        signal = await analyze_forex_pair(from_symbol, to_symbol, interval)
+        if signal:
+            # ارسال سیگنال به تلگرام
+            await send_signal_to_telegram(signal, bot_token, chat_id)
+            # بک‌تست
+            df = fetch_forex_ohlcv(from_symbol, to_symbol, interval)
+            signals = pd.DataFrame([signal])
+            signals['زمان'] = df.index[-1]
+            final_value = run_backtest(f"{from_symbol}/{to_symbol}", df, signals)
+            logging.info(f"ارزش نهایی پرتفوی: {final_value}")
+
 if __name__ == "__main__":
-    # تست برای جفت‌ارز EUR/USD
-    symbol = "EUR/USD"
-    loop = asyncio.get_event_loop()
-    signal = loop.run_until_complete(analyze_forex_pair("EUR", "USD", "5min"))
-    if signal:
-        print(f"سیگنال برای {symbol}: {signal}")
-        # بک‌تست
-        df = fetch_forex_ohlcv("EUR", "USD", "5min")
-        signals = pd.DataFrame([signal])
-        signals['زمان'] = df.index[-1]
-        final_value = run_backtest(symbol, df, signals)
-        print(f"ارزش نهایی پرتفوی: {final_value}")
-    else:
-        print(f"هیچ سیگنالی برای {symbol} تولید نشد")
+    asyncio.run(main())
