@@ -3,7 +3,8 @@ import asyncio
 import telegram
 from analyzer import scan_all_crypto_symbols, scan_all_forex_symbols
 
-BOT_TOKEN = "8111192844:AAHuVZYs6Ro1BhdqPpTWW9g7ksGRaq3p0WA"
+# اصلاح‌شده: توکن درست
+BOT_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
 CHAT_ID = 632886964
 
 bot = telegram.Bot(token=BOT_TOKEN)
