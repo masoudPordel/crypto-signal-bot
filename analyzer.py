@@ -5,19 +5,18 @@ import asyncio
 from ratelimit import limits, sleep_and_retry
 from tenacity import retry, stop_after_attempt, wait_exponential
 from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor
 import logging
 import numpy as np
 import backtrader as bt
 import os
 
-# Configure logging
+# تنظیم لاگ‌ها
 logging.basicConfig(filename="trading_errors.log", level=logging.ERROR, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Alpha Vantage API key (hardcoded as requested)
+# کلید API Alpha Vantage (سخت‌کد شده به درخواست شما)
 ALPHA_VANTAGE_API_KEY = "8VL54YT3N656MW5T"
 
-# ---------- Fetch KuCoin crypto symbols ----------
+# ---------- دریافت نمادهای کریپتو از KuCoin ----------
 @lru_cache(maxsize=1)
 def get_all_symbols_kucoin():
     url = "https://api.kucoin.com/api/v1/symbols"
@@ -27,17 +26,17 @@ def get_all_symbols_kucoin():
         data = response.json()
         return [item["symbol"].replace("-", "") for item in data["data"] if item["symbol"].endswith("-USDT")]
     except Exception as e:
-        logging.error(f"Failed to fetch KuCoin symbols: {e}")
+        logging.error(f"خطا در دریافت نمادهای KuCoin: {e}")
         return []
 
-# ---------- Fetch crypto OHLCV data (async) ----------
+# ---------- دریافت داده‌های OHLCV کریپتو (ناهمگام) ----------
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def fetch_ohlcv_kucoin_async(symbol, interval="5min", limit=100):
     async with aiohttp.ClientSession() as session:
         url = f"https://api.kucoin.com/api/v1/market/candles?type={interval}&symbol={symbol[:len(symbol)-4]}-USDT"
         async with session.get(url) as response:
             if response.status != 200:
-                logging.error(f"Failed to fetch KuCoin data for {symbol}: {response.status}")
+                logging.error(f"خطا در دریافت داده‌های KuCoin برای {symbol}: {response.status}")
                 return None
             raw_data = await response.json()
             if not raw_data["data"]:
@@ -45,14 +44,14 @@ async def fetch_ohlcv_kucoin_async(symbol, interval="5min", limit=100):
             df = pd.DataFrame(raw_data["data"], columns=[
                 "timestamp", "open", "close", "high", "low", "volume", "turnover"
             ])
-            df = df.iloc[::-1]
+            df = df.iloc[::-1]  # معکوس کردن برای ترتیب زمانی
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
             df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
             return df
 
-# ---------- Fetch forex OHLCV data ----------
+# ---------- دریافت داده‌های OHLCV فارکس ----------
 @sleep_and_retry
-@limits(calls=5, period=60)  # 5 requests per minute
+@limits(calls=5, period=60)  # 5 درخواست در دقیقه
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min"):
     url = (
@@ -70,7 +69,7 @@ def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min"):
         data = response.json()
         ts_key = [k for k in data if "Time Series" in k]
         if not ts_key:
-            logging.error(f"Invalid forex data for {from_symbol}{to_symbol}")
+            logging.error(f"داده‌های فارکس برای {from_symbol}{to_symbol} نامعتبر است")
             return None
         df = pd.DataFrame.from_dict(data[ts_key[0]], orient="index").sort_index()
         df = df.rename(columns={
@@ -79,10 +78,10 @@ def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min"):
         df.index = pd.to_datetime(df.index)
         return df
     except Exception as e:
-        logging.error(f"Failed to fetch forex data for {from_symbol}{to_symbol}: {e}")
+        logging.error(f"خطا در دریافت داده‌های فارکس برای {from_symbol}{to_symbol}: {e}")
         return None
 
-# ---------- Technical Indicators ----------
+# ---------- محاسبه اندیکاتورهای تکنیکال ----------
 def compute_indicators(df):
     df["EMA20"] = df["close"].ewm(span=20).mean()
     df["EMA50"] = df["close"].ewm(span=50).mean()
@@ -96,7 +95,7 @@ def compute_rsi(df, period=14):
     delta = df["close"].diff()
     gain = delta.where(delta > 0, 0).rolling(window=period).mean()
     loss = -delta.where(delta < 0, 0).rolling(window=period).mean()
-    rs = gain / loss.where(loss != 0, 1e-10)  # Prevent division by zero
+    rs = gain / loss.where(loss != 0, 1e-10)  # جلوگیری از تقسیم بر صفر
     return 100 - (100 / (1 + rs))
 
 def compute_atr(df, period=14):
@@ -106,7 +105,7 @@ def compute_atr(df, period=14):
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     return tr.rolling(window=period).mean()
 
-# ---------- Advanced Price Action ----------
+# ---------- تشخیص الگوهای پرایس اکشن پیشرفته ----------
 def detect_advanced_price_action(df):
     last = df.iloc[-1]
     body = abs(last["close"] - last["open"])
@@ -115,11 +114,11 @@ def detect_advanced_price_action(df):
     lower_shadow = min(last["close"], last["open"]) - last["low"]
 
     if body < wick * 0.2:
-        return "Doji"
+        return "دوجی"
     elif lower_shadow > body * 2 and upper_shadow < body:
-gry: "Bullish Pin Bar"
+        return "پین بار صعودی"
     elif upper_shadow > body * 2 and lower_shadow < body:
-        return "Bearish Pin Bar"
+        return "پین بار نزولی"
     return None
 
 def detect_engulfing(df):
@@ -127,43 +126,32 @@ def detect_engulfing(df):
     prev = df.iloc[-2]
     if (last["close"] > last["open"] and prev["close"] < prev["open"] and
             last["open"] < prev["close"] and last["close"] > prev["open"]):
-        return "Bullish Engulfing"
+        return "الگوی پوشای صعودی"
     elif (last["close"] < last["open"] and prev["close"] > prev["open"] and
           last["open"] > prev["close"] and last["close"] < prev["open"]):
-        return "Bearish Engulfing"
-    return None
-
-def detect_fake_breakout(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    resistance = df["high"].rolling(20).max().iloc[-2]
-    support = df["low"].rolling(20).min().iloc[-2]
-    if last["high"] > resistance and last["close"] < resistance:
-        return "Fake Bullish Breakout"
-    if last["low"] < support and last["close"] > support:
-        return "Fake Bearish Breakout"
+        return "الگوی پوشای نزولی"
     return None
 
 def detect_trend(df):
     highs = df["high"].rolling(20).max()
     lows = df["low"].rolling(20).min()
     if df["close"].iloc[-1] > highs.iloc[-2] and df["close"].iloc[-2] > highs.iloc[-3]:
-        return "Uptrend"
+        return "روند صعودی"
     elif df["close"].iloc[-1] < lows.iloc[-2] and df["close"].iloc[-2] < lows.iloc[-3]:
-        return "Downtrend"
-    return "No Trend"
+        return "روند نزولی"
+    return "بدون روند"
 
 def detect_key_levels(df):
     support = df["low"].rolling(20).min().iloc[-1]
     resistance = df["high"].rolling(20).max().iloc[-1]
     last = df.iloc[-1]
     if abs(last["close"] - support) < last["close"] * 0.01:
-        return "Near Support"
+        return "نزدیک به حمایت"
     elif abs(last["close"] - resistance) < last["close"] * 0.01:
-        return "Near Resistance"
+        return "نزدیک به مقاومت"
     return None
 
-# ---------- Multi-Timeframe Analysis ----------
+# ---------- تحلیل چند تایم‌فریمی ----------
 async def check_higher_tf_trend(symbol, higher_tf="1hour"):
     df_higher = await fetch_ohlcv_kucoin_async(symbol, interval=higher_tf)
     if df_higher is None:
@@ -171,8 +159,8 @@ async def check_higher_tf_trend(symbol, higher_tf="1hour"):
     df_higher = compute_indicators(df_higher)
     return df_higher["close"].iloc[-1] > df_higher["EMA20"].iloc[-1]
 
-# ---------- Generate Signal ----------
-def generate_signal(symbol, df, interval="5min", is_crypto=True):
+# ---------- تولید سیگنال ----------
+def generate_signal(symbol, df, interval="5min", is_crypto=True, min_confidence=70):
     if df is None or len(df) < 50:
         return None
     df = compute_indicators(df)
@@ -185,7 +173,6 @@ def generate_signal(symbol, df, interval="5min", is_crypto=True):
     atr = df["ATR"].iloc[-1]
 
     price_action = detect_engulfing(df) or detect_advanced_price_action(df)
-    fake_breakout = detect_fake_breakout(df)
     key_level = detect_key_levels(df)
     trend = detect_trend(df)
 
@@ -200,30 +187,28 @@ def generate_signal(symbol, df, interval="5min", is_crypto=True):
         score += 1
     if volume_spike:
         score += 1
-    if key_level == "Near Support":
+    if key_level == "نزدیک به حمایت":
         score += 1
-    if fake_breakout:
-        score -= 1
-    if trend == "Uptrend":
+    if trend == "روند صعودی":
         score += 1
 
     confidence = int((score / 7) * 100)
-    if confidence < 80:
+    if confidence < min_confidence:  # حداقل اطمینان قابل تنظیم
         return None
 
     close_price = df["close"].iloc[-1]
     signal_data = {
-        "symbol": symbol,
-        "entry": round(close_price, 5),
-        "tp": round(close_price + 2 * atr, 5),
-        "sl": round(close_price - 1.5 * atr, 5),
-        "confidence": confidence,
-        "analysis": (
-            f"RSI: {round(rsi,1)} | EMA Crossover: {ema_cross} | MACD: {'Positive' if macd > signal else 'Negative'} | "
-            f"Price Action: {price_action or '-'} | {key_level or '-'} | {trend} | "
-            f"Volume: {'High' if volume_spike else 'Normal'} | {fake_breakout or '-'}"
+        "نماد": symbol,
+        "قیمت ورود": round(close_price, 5),
+        "هدف سود": round(close_price + 2 * atr, 5),
+        "حد ضرر": round(close_price - 1.5 * atr, 5),
+        "سطح اطمینان": confidence,
+        "تحلیل": (
+            f"RSI: {round(rsi,1)} | تقاطع EMA: {ema_cross} | MACD: {'مثبت' if macd > signal else 'منفی'} | "
+            f"پرایس اکشن: {price_action or '-'} | {key_level or '-'} | {trend} | "
+            f"حجم: {'بالا' if volume_spike else 'عادی'}"
         ),
-        "tf": interval
+        "تایم‌فریم": interval
     }
 
     if is_crypto:
@@ -233,8 +218,8 @@ def generate_signal(symbol, df, interval="5min", is_crypto=True):
 
     return signal_data
 
-# ---------- Scan Crypto Symbols ----------
-async def scan_all_crypto_symbols():
+# ---------- اسکن نمادهای کریپتو ----------
+async def scan_all_crypto_symbols(min_confidence=70):
     TIMEFRAMES = ["5min", "15min", "1hour"]
     all_symbols = get_all_symbols_kucoin()
     signals = []
@@ -242,10 +227,10 @@ async def scan_all_crypto_symbols():
     async def scan_symbol(symbol, tf):
         try:
             df = await fetch_ohlcv_kucoin_async(symbol, interval=tf)
-            signal = generate_signal(symbol, df, tf, is_crypto=True)
+            signal = generate_signal(symbol, df, tf, is_crypto=True, min_confidence=min_confidence)
             return signal
         except Exception as e:
-            logging.error(f"Error for {symbol}-{tf}: {e}")
+            logging.error(f"خطا برای {symbol}-{tf}: {e}")
             return None
 
     tasks = [scan_symbol(symbol, tf) for symbol in all_symbols for tf in TIMEFRAMES]
@@ -253,8 +238,8 @@ async def scan_all_crypto_symbols():
     signals = [r for r in results if r and not isinstance(r, Exception)]
     return signals
 
-# ---------- Scan Forex Symbols ----------
-def scan_all_forex_symbols():
+# ---------- اسکن نمادهای فارکس ----------
+def scan_all_forex_symbols(min_confidence=70):
     pairs = [
         ("EUR", "USD"), ("GBP", "USD"), ("USD", "JPY"), ("USD", "CAD"), ("USD", "CHF"),
         ("NZD", "USD"), ("AUD", "USD"), ("AUD", "NZD"), ("AUD", "CAD"), ("AUD", "CHF"), ("AUD", "JPY"),
@@ -269,18 +254,19 @@ def scan_all_forex_symbols():
             base, quote = pair
             df = fetch_forex_ohlcv(base, quote)
             symbol = base + quote
-            signal = generate_signal(symbol, df, is_crypto=False)
+            signal = generate_signal(symbol, df, is_crypto=False, min_confidence=min_confidence)
             return signal
         except Exception as e:
-            logging.error(f"Error for {base}{quote}: {e}")
+            logging.error(f"خطا برای {base}{quote}: {e}")
             return None
 
+    from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=5) as executor:
         results = list(executor.map(scan_forex_pair, pairs))
     signals = [r for r in results if r]
     return signals
 
-# ---------- Backtest Strategy ----------
+# ---------- بک‌تست استراتژی ----------
 class SignalStrategy(bt.Strategy):
     params = (('signals', None),)
 
@@ -299,9 +285,9 @@ class SignalStrategy(bt.Strategy):
         if date >= signal_time:
             if self.order:
                 return
-            self.order = self.buy(size=1000, price=signal['entry'], exectype=bt.Order.Limit)
-            self.order_add = self.sell(size=1000, price=signal['tp'], exectype=bt.Order.Limit, parent=self.order)
-            self.order_add = self.sell(size=1000, price=signal['sl'], exectype=bt.Order.Stop, parent=self.order)
+            self.order = self.buy(size=1000, price=signal['قیمت ورود'], exectype=bt.Order.Limit)
+            self.order_add = self.sell(size=1000, price=signal['هدف سود'], exectype=bt.Order.Limit, parent=self.order)
+            self.order_add = self.sell(size=1000, price=signal['حد ضرر'], exectype=bt.Order.Stop, parent=self.order)
             self.signal_index += 1
 
     def notify_order(self, order):
@@ -318,34 +304,48 @@ def run_backtest(symbol, df, signals):
     cerebro.run()
     return cerebro.broker.getvalue()
 
-# ---------- Main Execution ----------
+# ---------- اجرای اصلی ----------
 if __name__ == "__main__":
-    # Scan crypto symbols
+    # تنظیم حداقل اطمینان برای تولید سیگنال (کاهش به 70 برای سیگنال‌های بیشتر)
+    MIN_CONFIDENCE = 70
+
+    print("در حال اسکن نمادهای کریپتو...")
     loop = asyncio.get_event_loop()
-    crypto_signals = loop.run_until_complete(scan_all_crypto_symbols())
+    crypto_signals = loop.run_until_complete(scan_all_crypto_symbols(min_confidence=MIN_CONFIDENCE))
     
-    # Scan forex symbols
-    forex_signals = scan_all_forex_symbols()
+    print("در حال اسکن نمادهای فارکس...")
+    forex_signals = scan_all_forex_symbols(min_confidence=MIN_CONFIDENCE)
     
-    # Combine signals
+    # ترکیب سیگنال‌ها
     all_signals = crypto_signals + forex_signals
     
-    # Save signals to CSV
+    # ذخیره سیگنال‌ها در CSV
     if all_signals:
         signals_df = pd.DataFrame(all_signals)
-        signals_df['timestamp'] = pd.Timestamp.now()
+        signals_df['زمان'] = pd.Timestamp.now()
         signals_df.to_csv("trading_signals.csv", index=False)
+        print(f"تعداد سیگنال‌های تولیدشده: {len(all_signals)}")
     
-    # Backtest (example: BTCUSDT)
+    # بک‌تست (مثال: BTCUSDT)
     try:
         btc_df = loop.run_until_complete(fetch_ohlcv_kucoin_async("BTCUSDT", interval="5min"))
-        btc_signals = pd.DataFrame([s for s in all_signals if s['symbol'] == 'BTCUSDT'])
+        btc_signals = pd.DataFrame([s for s in all_signals if s['نماد'] == 'BTCUSDT'])
         if not btc_signals.empty:
             final_value = run_backtest("BTCUSDT", btc_df, btc_signals)
-            print(f"Backtest Result (BTCUSDT): Final Portfolio Value = {final_value}")
+            print(f"نتیجه بک‌تست (BTCUSDT): ارزش نهایی حساب = {final_value}")
     except Exception as e:
-        logging.error(f"Backtest Failed: {e}")
+        logging.error(f"خطا در بک‌تست: {e}")
     
-    # Display signals
-    for s in all_signals:
-        print(s)
+    # نمایش سیگنال‌ها
+    if all_signals:
+        for s in all_signals:
+            print("\n📈 سیگنال جدید:")
+            print(f"نماد: {s['نماد']}")
+            print(f"تایم‌فریم: {s['تایم‌فریم']}")
+            print(f"قیمت ورود: {s['قیمت ورود']}")
+            print(f"هدف سود: {s['هدف سود']}")
+            print(f"حد ضرر: {s['حد ضرر']}")
+            print(f"سطح اطمینان: {s['سطح اطمینان']}%")
+            print(f"تحلیل: {s['تحلیل']}")
+    else:
+        print("هیچ سیگنالی تولید نشد! ممکن است داده‌ها ناکافی باشند یا فیلترها بیش از حد سخت‌گیرانه باشند.")
