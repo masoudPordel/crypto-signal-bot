@@ -4,46 +4,39 @@ import telegram
 from analyzer import scan_all_crypto_symbols, scan_all_forex_symbols
 
 # اطلاعات کاربر و توکن
-BOT_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
-CHAT_ID = 632886964         # همونی که دادی
+BOT_TOKEN = "8111192844:AAHuVZYs6Ro1BhdqPpTWW9g7ksGRaq3p0WA"
+CHAT_ID = 632886964  # همونی که دادی
 
 bot = telegram.Bot(token=BOT_TOKEN)
-sent_signals = set()  # برای جلوگیری از ارسال سیگنال‌های تکراری
-
-def format_signal(signal):
-    return (
-        f"💠 <b>{signal['symbol']}</b> | تایم‌فریم: {signal['tf']}\n"
-        f"🎯 ورود: <code>{signal['entry']}</code>\n"
-        f"✅ حد سود: <code>{signal['tp']}</code>\n"
-        f"❌ حد ضرر: <code>{signal['sl']}</code>\n"
-        f"⚡️ قدرت سیگنال: <b>{signal['confidence']}%</b>\n"
-        f"📊 تحلیل: {signal['analysis']}\n"
-        f"📉 نوسان: {signal['volatility']}%\n"
-    )
+sent_signals = set()  # جلوگیری از ارسال سیگنال تکراری
 
 async def send_signals():
     print("در حال بررسی بازار...")
-
     crypto_signals = await scan_all_crypto_symbols()
     forex_signals = await scan_all_forex_symbols()
-
     all_signals = crypto_signals + forex_signals
-    new_signals = []
 
     for signal in all_signals:
-        signal_id = (signal["symbol"], signal["tf"], signal["entry"])
-        if signal_id not in sent_signals:
-            new_signals.append(signal)
-            sent_signals.add(signal_id)
-
-    for signal in new_signals:
-        text = format_signal(signal)
-        await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode=telegram.constants.ParseMode.HTML)
+        if all(k in signal for k in ("symbol", "tf", "entry")):
+            signal_id = (signal["symbol"], signal["tf"], signal["entry"])
+            if signal_id not in sent_signals:
+                sent_signals.add(signal_id)
+                message = (
+                    f"Symbol: {signal['symbol']}\n"
+                    f"TF: {signal['tf']}\n"
+                    f"Entry: {signal['entry']}\n"
+                    f"SL: {signal['sl']}\n"
+                    f"TP: {signal['tp']}\n"
+                    f"Type: {signal['type']}"
+                )
+                await bot.send_message(chat_id=CHAT_ID, text=message)
+        else:
+            print("Invalid signal format:", signal)
 
 async def main():
     while True:
         await send_signals()
-        time.sleep(60)
+        await asyncio.sleep(300)  # هر 5 دقیقه
 
 if __name__ == "__main__":
     asyncio.run(main())
