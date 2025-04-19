@@ -1,6 +1,11 @@
 import pandas as pd
 import numpy as np
 from scipy.signal import argrelextrema
+import ccxt
+import time
+
+# === لیست تایم‌فریم‌هایی که بررسی می‌شن ===
+TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"]
 
 # === اندیکاتورها ===
 def compute_rsi(df, period=14):
@@ -53,7 +58,7 @@ def detect_engulfing(df):
     df["Engulfing"] = condition
     return df
 
-# === امواج الیوت ساده ===
+# === الیوت ساده ===
 def detect_elliott_wave(df):
     local_max = argrelextrema(df['close'].values, np.greater, order=5)[0]
     local_min = argrelextrema(df['close'].values, np.less, order=5)[0]
@@ -63,7 +68,7 @@ def detect_elliott_wave(df):
     df.loc[df.index[local_min], "WavePoint"] = df.loc[df.index[local_min], "close"]
     return df
 
-# === بک‌تست استراتژی EMA کراس ===
+# === کراس EMA ===
 def backtest_ema_strategy(df):
     df["TradeSignal"] = 0
     df.loc[df["EMA12"] > df["EMA26"], "TradeSignal"] = 1
@@ -74,7 +79,7 @@ def backtest_ema_strategy(df):
     df["EquityCurve"] = (1 + df["StrategyReturn"]).cumprod()
     return df
 
-# === اجرای نهایی همه تحلیل‌ها ===
+# === اجرای تحلیل کامل ===
 def compute_indicators(df):
     df["EMA12"] = df["close"].ewm(span=12).mean()
     df["EMA26"] = df["close"].ewm(span=26).mean()
@@ -90,3 +95,37 @@ def compute_indicators(df):
     df = backtest_ema_strategy(df)
 
     return df
+
+# === تحلیل یک نماد در یک تایم‌فریم ===
+def analyze_symbol(symbol, timeframe="1h", limit=100):
+    exchange = ccxt.binance()
+    try:
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df.set_index("timestamp", inplace=True)
+
+        df = compute_indicators(df)
+        last = df.iloc[-1]
+
+        if last["Engulfing"] or last["PinBar"]:
+            print(f"Signal on {symbol} ({timeframe}) - PinBar: {last['PinBar']} - Engulfing: {last['Engulfing']}")
+
+        return df
+    except Exception as e:
+        print(f"Error analyzing {symbol} ({timeframe}):", e)
+
+# === اسکن کل بازار کریپتو ===
+def scan_all_crypto_symbols():
+    exchange = ccxt.binance()
+    markets = exchange.load_markets()
+    crypto_symbols = [s for s in markets if s.endswith("/USDT")]
+
+    for symbol in crypto_symbols:
+        for tf in TIMEFRAMES:
+            analyze_symbol(symbol, tf)
+            time.sleep(0.2)  # جلوگیری از rate limit
+
+# === اسکن بازار فارکس (مثلاً با OANDA یا بروکر دیگر) ===
+def scan_all_forex_symbols():
+    pass  # برای بروکرهای واقعی نیاز به API هست
