@@ -1,51 +1,35 @@
 import requests
 import pandas as pd
 
-# === API Key ===
+# === Alpha Vantage API Key ===
 ALPHA_VANTAGE_API_KEY = "8VL54YT3N656MW5T"
 
-# ---------- کریپتو ----------
-def get_all_symbols():
-    url = "https://api.mexc.com/api/v3/exchangeInfo"
+# ---------- کریپتو از KuCoin ----------
+def get_all_kucoin_symbols():
+    url = "https://api.kucoin.com/api/v1/symbols"
     response = requests.get(url)
     data = response.json()
-    return [item["symbol"] for item in data["symbols"] if item["isSpotTradingAllowed"]]
+    return [item["symbol"].replace("-", "") for item in data["data"] if item["enableTrading"]]
 
-def fetch_ohlcv(symbol, interval="5m", limit=100):
-    url = f"https://api.mexc.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+def fetch_kucoin_ohlcv(symbol, interval="5min", limit=100):
+    interval_map = {
+        "1m": "1min", "5m": "5min", "15m": "15min", "1h": "1hour",
+        "4h": "4hour", "1d": "1day", "1w": "1week"
+    }
+    k_interval = interval_map.get(interval, "5min")
+    url = f"https://api.kucoin.com/api/v1/market/candles?type={k_interval}&symbol={symbol.replace('USDT', '-USDT')}"
     response = requests.get(url)
     if response.status_code != 200:
         return None
-    raw_data = response.json()
-    if len(raw_data) == 0:
+    raw = response.json().get("data", [])[::-1][:limit]
+    if not raw or len(raw[0]) < 6:
         return None
-
-    col_count = len(raw_data[0])
-    if col_count == 12:
-        columns = [
-            "timestamp", "open", "high", "low", "close", "volume",
-            "close_time", "quote_asset_volume", "number_of_trades",
-            "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
-        ]
-    elif col_count == 8:
-        columns = [
-            "timestamp", "open", "high", "low", "close", "volume",
-            "close_time", "quote_asset_volume"
-        ]
-    elif col_count == 6:
-        columns = [
-            "timestamp", "open", "high", "low", "close", "volume"
-        ]
-    else:
-        print(f"{symbol} - تعداد ستون نامشخص: {col_count}")
-        return None
-
-    df = pd.DataFrame(raw_data, columns=columns)
-
-    for col in ["open", "high", "low", "close", "volume"]:
-        if col in df.columns:
-            df[col] = df[col].astype(float)
-
+    df = pd.DataFrame(raw, columns=["timestamp", "open", "close", "high", "low", "volume", "turnover"])
+    df["open"] = df["open"].astype(float)
+    df["high"] = df["high"].astype(float)
+    df["low"] = df["low"].astype(float)
+    df["close"] = df["close"].astype(float)
+    df["volume"] = df["volume"].astype(float)
     return df
 
 # ---------- فارکس ----------
@@ -74,14 +58,7 @@ def fetch_forex_ohlcv(from_symbol, to_symbol="USD", interval="5min", outputsize=
     }).astype(float)
     return df
 
-# ---------- اندیکاتورها ----------
-def compute_rsi(df, period=14):
-    delta = df["close"].diff()
-    gain = delta.clip(lower=0).rolling(window=period).mean()
-    loss = (-delta.clip(upper=0)).rolling(window=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-
+# ---------- تحلیل ----------
 def compute_indicators(df):
     df["EMA20"] = df["close"].ewm(span=20).mean()
     df["EMA50"] = df["close"].ewm(span=50).mean()
@@ -89,6 +66,13 @@ def compute_indicators(df):
     df["MACD"] = df["close"].ewm(span=12).mean() - df["close"].ewm(span=26).mean()
     df["Signal"] = df["MACD"].ewm(span=9).mean()
     return df
+
+def compute_rsi(df, period=14):
+    delta = df["close"].diff()
+    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
 def detect_price_action(df):
     last = df.iloc[-1]
@@ -112,7 +96,7 @@ def simple_signal_strategy(df):
         return "sell"
     return None
 
-# ---------- سیگنال ----------
+# ---------- تولید سیگنال ----------
 def generate_signal(symbol, df, interval="--"):
     if df is None or len(df) < 50:
         return None
@@ -148,18 +132,17 @@ def generate_signal(symbol, df, interval="--"):
 
 # ---------- اسکن کریپتو ----------
 def scan_all_crypto_symbols():
-    PRIORITY_SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "LTCUSDT"]
-    TIMEFRAMES = ["5m", "15m", "1h", "1d", "1w"]
-    all_symbols = get_all_symbols()
-    symbols = PRIORITY_SYMBOLS + [s for s in all_symbols if s not in PRIORITY_SYMBOLS and s.endswith("USDT")]
+    PRIORITY = ["BTCUSDT", "ETHUSDT", "XRPUSDT"]
+    TIMEFRAMES = ["5min", "15min", "1hour", "1day"]
+    all_symbols = get_all_kucoin_symbols()
+    symbols = PRIORITY + [s for s in all_symbols if s not in PRIORITY and s.endswith("USDT")]
     signals = []
     for symbol in symbols[:10]:
         for tf in TIMEFRAMES:
             try:
-                df = fetch_ohlcv(symbol, interval=tf)
+                df = fetch_kucoin_ohlcv(symbol, interval=tf)
                 signal = generate_signal(symbol, df, tf)
-                extra_check = simple_signal_strategy(df)
-                if signal and extra_check:
+                if signal and simple_signal_strategy(df):
                     signals.append(signal)
             except Exception as e:
                 print(f"خطا در {symbol} - {tf}: {e}")
