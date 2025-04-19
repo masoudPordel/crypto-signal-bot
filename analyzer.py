@@ -10,7 +10,7 @@ import numpy as np
 import backtrader as bt
 import os
 
-‎# تنظیم لاگ‌ها
+# تنظیم لاگ‌ها
 logging.basicConfig(filename="trading_errors.log", level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 ALPHA_VANTAGE_API_KEY = "8VL54YT3N656MW5T"
@@ -173,16 +173,16 @@ def generate_signal(symbol, df, interval="5min", is_crypto=True, min_confidence=
         return None
 
     return {
-‎        "نماد": symbol,
-‎        "قیمت ورود": round(close, 5),
-‎        "هدف سود": round(close + 2 * atr, 5),
-‎        "حد ضرر": round(close - 1.5 * atr, 5),
-‎        "سطح اطمینان": confidence,
-‎        "تحلیل": f"RSI={round(rsi,1)}, EMA کراس={ema_cross}, MACD={'مثبت' if macd > signal else 'منفی'}, "
+        "نماد": symbol,
+        "قیمت ورود": round(close, 5),
+        "هدف سود": round(close + 2 * atr, 5),
+        "حد ضرر": round(close - 1.5 * atr, 5),
+        "سطح اطمینان": confidence,
+        "تحلیل": f"RSI={round(rsi,1)}, EMA کراس={ema_cross}, MACD={'مثبت' if macd > signal else 'منفی'}, "
                  f"الگو={detect_engulfing(df) or detect_advanced_price_action(df)}, {detect_trend(df)}, "
                  f"{breakout_strategy(df) or '-'}, {bollinger_strategy(df) or '-'}, "
                  f"حجم={'بالا' if volume_spike else 'نرمال'}",
-‎        "تایم‌فریم": interval
+        "تایم‌فریم": interval
     }
 
 # --- Backtest ---
