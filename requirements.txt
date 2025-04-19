@@ -1,10 +1,9 @@
-python-telegram-bot==13.15
+aiohttp
 requests
 pandas
-urllib3==1.26.18
-aiohttp
-backtrader
-nump
-ratelimit
 tenacity
+ratelimit
+python-telegram-bot==13.15
 yfinance
+numpy
+backtrader
