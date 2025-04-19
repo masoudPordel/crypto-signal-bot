@@ -22,7 +22,7 @@ async def send_signals():
         all_signals = crypto_signals + forex_signals
 
         for signal in all_signals:
-            if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل")):
+            if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل", "ریسک به ریوارد")):
                 signal_id = (signal["نماد"], signal["تایم‌فریم"], signal["قیمت ورود"])
                 if signal_id not in sent_signals:
                     sent_signals.add(signal_id)
@@ -32,6 +32,7 @@ async def send_signals():
 هدف سود: {signal['هدف سود']}
 حد ضرر: {signal['حد ضرر']}
 سطح اطمینان: {signal['سطح اطمینان']}%
+ریسک به ریوارد: {signal['ریسک به ریوارد']}
 تحلیل:
 {signal['تحلیل']}"""
                     await bot.send_message(chat_id=CHAT_ID, text=message)
