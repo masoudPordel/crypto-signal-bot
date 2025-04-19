@@ -6,3 +6,5 @@ aiohttp
 ratelimit
 tenacity
 backtrader
+python-telegram-bot==20.8
+urllib3<2.0
