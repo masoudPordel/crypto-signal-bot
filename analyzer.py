@@ -188,3 +188,4 @@ if __name__ == "__main__":
     all_signals = crypto_signals + forex_signals
     for sig in all_signals:
         print(sig)
+        
