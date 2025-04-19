@@ -7,3 +7,4 @@ backtrader
 nump
 ratelimit
 tenacity
+yfinance
