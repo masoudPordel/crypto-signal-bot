@@ -1,6 +1,0 @@
-[
-    {"symbol": "EURUSD=X", "type": "forex"},
-    {"symbol": "USDJPY=X", "type": "forex"},
-    {"symbol": "BTC-USDT", "type": "crypto"},
-    {"symbol": "ETH-USDT", "type": "crypto"}
-]
