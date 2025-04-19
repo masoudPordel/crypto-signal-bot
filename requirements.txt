@@ -8,3 +8,4 @@ yfinance
 numpy
 backtrader
 scipy
+ccxt
