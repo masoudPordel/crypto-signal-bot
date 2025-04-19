@@ -228,10 +228,26 @@ def run_backtest(symbol, df, signals):
     return cerebro.broker.getvalue()
 
 
-async def scan_all_crypto_symbols():
-    return ["BTC/USDT", "ETH/USDT"]
+import aiohttp
+import logging
 
+async def scan_all_crypto_symbols():
+    logging.info("اسکن نمادهای کریپتو...")
+    async with aiohttp.ClientSession() as session:
+        async with session.get('https://api.kucoin.com/api/v1/symbols') as resp:
+            data = await resp.json()
+            symbols = [item["symbol"].replace("-", "") for item in data["data"] if item["symbol"].endswith("-USDT")]
+            return symbols[:5]  # محدود به ۵ نماد برای تست سریع
+
+
+import yfinance as yf
 
 async def scan_all_forex_symbols():
-    return ["EUR/USD", "GBP/USD"]
-
+    logging.info("اسکن نمادهای فارکس...")
+    forex_pairs = ["EURUSD=X", "GBPUSD=X"]
+    results = []
+    for pair in forex_pairs:
+        data = yf.download(pair, period="1d", interval="5m")
+        if not data.empty:
+            results.append(pair)
+    return results
