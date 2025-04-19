@@ -1,4 +1,3 @@
-
 import requests
 import pandas as pd
 
@@ -18,17 +17,21 @@ def fetch_ohlcv(symbol, interval="5m", limit=100):
     if response.status_code != 200:
         return None
     raw_data = response.json()
-    if len(raw_data) == 0 or len(raw_data[0]) < 6:
+    if len(raw_data) == 0:
         return None
-    column_count = len(raw_data[0])
-    raw_data = [row for row in raw_data if len(row) == column_count]
+
+    # اصلاح: هندل کردن داده‌هایی با تعداد ستون متفاوت (۸ یا ۱۲)
     base_columns = [
         "timestamp", "open", "high", "low", "close", "volume",
         "close_time", "quote_asset_volume", "trades",
         "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
     ]
-    columns = base_columns[:column_count]
+    raw_data = [row for row in raw_data if 6 <= len(row) <= 12]
+    if not raw_data:
+        return None
+    columns = base_columns[:len(raw_data[0])]
     df = pd.DataFrame(raw_data, columns=columns)
+    
     df["open"] = df["open"].astype(float)
     df["high"] = df["high"].astype(float)
     df["low"] = df["low"].astype(float)
@@ -150,7 +153,7 @@ def scan_all_crypto_symbols():
                 if signal and extra_check:
                     signals.append(signal)
             except Exception as e:
-                print(f"خطا در {symbol} - {tf}: {e}")
+                print(f"خطا در {symbol} – {tf}: {e}")
                 continue
     return signals
 
@@ -171,4 +174,3 @@ def scan_all_forex_symbols():
             print(f"خطا در {base}/{quote}: {e}")
             continue
     return results
-
