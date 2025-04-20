@@ -11,7 +11,7 @@ from analyzer import scan_all_crypto_symbols  # فقط ایمپورت کریپت
 # تنظیمات لاگ
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = "توکن خودت"
+BOT_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
 CHAT_ID = 632886964
 LOCK_FILE = "bot.lock"
 
