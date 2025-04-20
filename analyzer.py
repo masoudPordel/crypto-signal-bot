@@ -118,58 +118,69 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
 
 # بررسی سیگنال
 async def analyze_symbol(exchange, symbol, tf):
-    df = await get_ohlcv_cached(exchange, symbol, tf)
-    if df is None or len(df) < 50:
-        logging.info(f"[{symbol}-{tf}] داده نامعتبر")
-        return None
-    if df["volume"].iloc[-1] < VOLUME_THRESHOLD:
-        logging.info(f"[{symbol}-{tf}] حجم پایین: {df['volume'].iloc[-1]}")
-        return None
+    try:
+        df = await get_ohlcv_cached(exchange, symbol, tf)
+        if df is None or len(df) < 50:
+            logging.info(f"[{symbol}-{tf}] داده نامعتبر")
+            return None
+        if df["volume"].iloc[-1] < VOLUME_THRESHOLD:
+            logging.info(f"[{symbol}-{tf}] حجم پایین: {df['volume'].iloc[-1]}")
+            return None
 
-    # شرط EMA روزانه
-    df_d = await get_ohlcv_cached(exchange, symbol, "1d", limit=200)
-    if df_d is None or len(df_d) < EMA_FILTER_PERIOD:
-        logging.info(f"[{symbol}] داده روزانه کافی نیست.")
-        return None
-    ema_daily = df_d["close"].ewm(span=EMA_FILTER_PERIOD).mean().iloc[-1]
-    close_daily = df_d["close"].iloc[-1]
-    if close_daily < ema_daily:
-        logging.info(f"[{symbol}] زیر EMA{EMA_FILTER_PERIOD} روزانه.")
-        return None
+        # شرط EMA روزانه
+        df_d = await get_ohlcv_cached(exchange, symbol, "1d", limit=200)
+        if df_d is None or len(df_d) < EMA_FILTER_PERIOD:
+            logging.info(f"[{symbol}] داده روزانه کافی نیست.")
+            return None
+        ema_daily = df_d["close"].ewm(span=EMA_FILTER_PERIOD).mean().iloc[-1]
+        close_daily = df_d["close"].iloc[-1]
+        if close_daily < ema_daily:
+            logging.info(f"[{symbol}] زیر EMA{EMA_FILTER_PERIOD} روزانه.")
+            return None
 
-    df = compute_indicators(df)
-    last = df.iloc[-1]
+        df = compute_indicators(df)
+        last = df.iloc[-1]
 
-    conds = {
-        "PinBar": bool(last["PinBar"]),
-        "Engulfing": bool(last["Engulfing"]),
-        "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1],
-        "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
-        "RSI_Oversold": last["RSI"] < 30,
-        "ADX_StrongTrend": last["ADX"] > 25,
-    }
-
-    score = sum(conds.values())
-    logging.info(f"[{symbol}-{tf}] شرایط: {conds} - امتیاز: {score}")
-    if score >= 2:
-        sl = last["close"] - 1.5 * last["ATR"]
-        tp = last["close"] + 2 * last["ATR"]
-        rr = round((tp - last["close"]) / (last["close"] - sl), 2)
-        signal = {
-            "نماد": symbol,
-            "تایم‌فریم": tf,
-            "قیمت ورود": round(last["close"], 4),
-            "هدف سود": round(tp, 4),
-            "حد ضرر": round(sl, 4),
-            "سطح اطمینان": min(score * 20, 100),
-            "تحلیل": " | ".join([k for k, v in conds.items() if v]),
-            "ریسک به ریوارد": rr
+        conds = {
+            "PinBar": bool(last.get("PinBar", False)),
+            "Engulfing": bool(last.get("Engulfing", False)),
+            "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1],
+            "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
+            "RSI_Oversold": last.get("RSI", 100) < 30,
+            "ADX_StrongTrend": last.get("ADX", 0) > 25,
         }
-        logging.info(f"سیگنال نهایی: {signal}")
-        return signal
-    else:
-        logging.info(f"[{symbol}-{tf}] سیگنال رد شد.")
-    return None
+
+        score = sum(conds.values())
+        logging.info(f"[{symbol}-{tf}] شرایط: {conds} - امتیاز: {score}")
+
+        if score >= 2:
+            atr = last.get("ATR", 0)
+            if atr == 0:
+                logging.warning(f"[{symbol}-{tf}] ATR صفر است. سیگنال رد شد.")
+                return None
+
+            sl = last["close"] - 1.5 * atr
+            tp = last["close"] + 2 * atr
+            rr = round((tp - last["close"]) / (last["close"] - sl), 2)
+
+            signal = {
+                "نماد": symbol,
+                "تایم‌فریم": tf,
+                "قیمت ورود": round(last["close"], 4),
+                "هدف سود": round(tp, 4),
+                "حد ضرر": round(sl, 4),
+                "سطح اطمینان": min(score * 20, 100),
+                "تحلیل": " | ".join([k for k, v in conds.items() if v]),
+                "ریسک به ریوارد": rr
+            }
+            logging.info(f"سیگنال نهایی: {signal}")
+            return signal
+        else:
+            logging.info(f"[{symbol}-{tf}] سیگنال رد شد.")
+            return None
+    except Exception as e:
+        logging.error(f"خطا در تحلیل {symbol}-{tf}: {str(e)}")
+        return None
 
 # اسکن بازار
 async def scan_all_crypto_symbols():
