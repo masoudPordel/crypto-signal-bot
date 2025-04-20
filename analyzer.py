@@ -1,5 +1,3 @@
-# نسخه حرفه‌ای با کنترل throttle و اجرای موازی محدود
-
 import pandas as pd
 import numpy as np
 from scipy.signal import argrelextrema
@@ -16,7 +14,7 @@ logging.basicConfig(
 )
 
 # --- تنظیمات ---
-TIMEFRAMES = ["5m", "15m", "1h", "4h"]
+TIMEFRAMES = ["4h"]
 CACHE = {}
 CACHE_TTL = 60
 VOLUME_THRESHOLD = 1000
@@ -24,8 +22,8 @@ SIGNAL_LOG = "signals.csv"
 EMA_FILTER_PERIOD = 50
 
 MAX_CONCURRENT_REQUESTS = 2
-WAIT_BETWEEN_REQUESTS = 2  # ثانیه تأخیر بین درخواست‌های داخل semaphore
-WAIT_BETWEEN_CHUNKS = 60  # مکث بین هر دسته از نمادها
+WAIT_BETWEEN_REQUESTS = 2
+WAIT_BETWEEN_CHUNKS = 60
 
 # اندیکاتورها
 def compute_rsi(df, period=14):
@@ -103,7 +101,6 @@ def compute_indicators(df):
     df = detect_elliott_wave(df)
     return df
 
-# کنترل همزمانی
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
@@ -178,7 +175,7 @@ async def analyze_symbol(exchange, symbol, tf):
 async def scan_all_crypto_symbols():
     exchange = ccxt.kucoin({
         'enableRateLimit': True,
-        'rateLimit': 1500
+        'rateLimit': 2000
     })
 
     await exchange.load_markets()
