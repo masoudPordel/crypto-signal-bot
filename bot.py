@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 import requests
-from analyzer import scan_all_crypto_symbols  # فقط ایمپورت کریپتو
+from analyzer import scan_all_crypto_symbols  # فقط کریپتو
 
 # تنظیمات لاگ
 logging.basicConfig(level=logging.INFO)
@@ -40,30 +40,22 @@ def remove_lock():
         os.remove(LOCK_FILE)
 
 async def send_signals():
-    logging.info("در حال بررسی بازار کریپتو...")
+    logging.info("در حال بررسی بازار...")
     try:
         all_signals = await scan_all_crypto_symbols()
 
         for signal in all_signals:
-            required_keys = ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل", "ریسک به ریوارد")
-            if all(k in signal for k in required_keys):
+            if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل", "ریسک به ریوارد", "فاندامنتال")):
                 signal_id = (signal["نماد"], signal["تایم‌فریم"], signal["قیمت ورود"])
-                if signal_id not in sent_signals:
-                    sent_signals.add(signal_id)
+                
+                # تست: همه سیگنال‌ها حتی تکراری‌ها ارسال می‌شن
+                entry_price = float(signal["قیمت ورود"])
+                tp = float(signal["هدف سود"])
+                sl = float(signal["حد ضرر"])
+                confidence = float(signal["سطح اطمینان"])
+                rr = float(signal["ریسک به ریوارد"])
 
-                    entry_price = float(signal["قیمت ورود"])
-                    tp = float(signal["هدف سود"])
-                    sl = float(signal["حد ضرر"])
-                    confidence = float(signal["سطح اطمینان"])
-                    rr = float(signal["ریسک به ریوارد"])
-                    fundamental = signal.get("فاندامنتال", "ندارد")
-
-                    # تشخیص نوع سیگنال: Buy یا Sell
-                    direction = "خرید (Buy)" if tp > entry_price else "فروش (Sell)"
-
-                    message = f"""🟢 سیگنال {direction}
-
-نماد: {signal['نماد']}
+                message = f"""نماد: {signal['نماد']}
 تایم‌فریم: {signal['تایم‌فریم']}
 قیمت ورود: {entry_price}
 هدف سود: {tp}
@@ -75,11 +67,17 @@ async def send_signals():
 {signal['تحلیل']}
 
 تحلیل فاندامنتال:
-{fundamental}"""
+{signal['فاندامنتال']}"""
 
+                logging.info("در حال ارسال سیگنال به تلگرام:\n%s", message)
+                
+                try:
                     await bot.send_message(chat_id=CHAT_ID, text=message)
+                    logging.info("سیگنال با موفقیت ارسال شد.")
+                except Exception as e:
+                    logging.error("خطا در ارسال پیام تلگرام: %s", e)
             else:
-                logging.warning("فرمت ناقص سیگنال: %s", signal)
+                logging.warning("فرمت سیگنال ناقص: %s", signal)
     except Exception as e:
         logging.error("خطا در ارسال سیگنال‌ها: %s", e)
 
