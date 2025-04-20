@@ -188,4 +188,4 @@ async def scan_all_crypto_symbols():
 
 # --- فارکس (اختیاری) ---
 async def scan_all_forex_symbols():
-    return []
+    pass
