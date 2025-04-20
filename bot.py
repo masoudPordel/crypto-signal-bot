@@ -10,8 +10,9 @@ from analyzer import scan_all_crypto_symbols  # فقط کریپتو
 # تنظیمات لاگ
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = "توکن_خودت_اینجا"  # توکن رباتت
-CHAT_ID = 632886964  # آی‌دی شخصی یا گروهی
+BOT_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
+CHAT_ID = 632886964
+
 LOCK_FILE = "bot.lock"
 
 bot = Bot(token=BOT_TOKEN)
