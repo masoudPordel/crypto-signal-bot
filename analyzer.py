@@ -170,7 +170,7 @@ async def scan_all_crypto_symbols():
     await exchange.load_markets()
 
     usdt_symbols = [s for s in exchange.symbols if s.endswith("/USDT")]
-    symbols = usdt_symbols[:100]  # فقط 100 نماد اول
+    symbols = usdt_symbols[:1000]  # فقط 100 نماد اول
 
     results = []
     chunk_size = 10
