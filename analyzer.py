@@ -14,7 +14,7 @@ logging.basicConfig(
 )
 
 # --- تنظیمات ---
-TIMEFRAMES = ["4h"]
+TIMEFRAMES = ["1h", "4h"]
 CACHE = {}
 CACHE_TTL = 60
 VOLUME_THRESHOLD = 1000
