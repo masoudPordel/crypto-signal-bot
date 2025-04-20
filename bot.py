@@ -22,19 +22,37 @@ async def send_signals():
         all_signals = crypto_signals + forex_signals
 
         for signal in all_signals:
-            if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل", "ریسک به ریوارد")):
+            # چک می‌کنیم فیلدهای اصلی تکنیکال موجود باشن
+            required_keys = (
+                "نماد", "قیمت ورود", "تایم‌فریم",
+                "هدف سود", "حد ضرر", "سطح اطمینان",
+                "ریسک به ریوارد", "تحلیل"
+            )
+            if all(k in signal for k in required_keys):
                 signal_id = (signal["نماد"], signal["تایم‌فریم"], signal["قیمت ورود"])
                 if signal_id not in sent_signals:
                     sent_signals.add(signal_id)
-                    message = f"""نماد: {signal['نماد']}
-تایم‌فریم: {signal['تایم‌فریم']}
-قیمت ورود: {signal['قیمت ورود']}
-هدف سود: {signal['هدف سود']}
-حد ضرر: {signal['حد ضرر']}
-سطح اطمینان: {signal['سطح اطمینان']}%
-ریسک به ریوارد: {signal['ریسک به ریوارد']}
-تحلیل:
-{signal['تحلیل']}"""
+
+                    # پیام پایه
+                    message = (
+                        f"نماد: {signal['نماد']}\n"
+                        f"تایم‌فریم: {signal['تایم‌فریم']}\n"
+                        f"قیمت ورود: {signal['قیمت ورود']}\n"
+                        f"هدف سود: {signal['هدف سود']}\n"
+                        f"حد ضرر: {signal['حد ضرر']}\n"
+                        f"سطح اطمینان: {signal['سطح اطمینان']}%\n"
+                        f"ریسک به ریوارد: {signal['ریسک به ریوارد']}\n"
+                        f"تحلیل:\n{signal['تحلیل']}"
+                    )
+
+                    # اضافه کردن تحلیل فاندامنتال اگر موجود باشه
+                    if "رتبه فاندامنتال" in signal:
+                        message += f"\nرتبه فاندامنتال: {signal['رتبه فاندامنتال']}"
+                    if "امتیاز توسعه‌دهنده" in signal:
+                        message += f"\nامتیاز توسعه‌دهنده: {signal['امتیاز توسعه‌دهنده']}"
+                    if "امتیاز جامعه" in signal:
+                        message += f"\nامتیاز جامعه: {signal['امتیاز جامعه']}"
+
                     await bot.send_message(chat_id=CHAT_ID, text=message)
             else:
                 logging.warning("فرمت سیگنال ناقص: %s", signal)
