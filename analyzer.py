@@ -1,3 +1,5 @@
+# نسخه حرفه‌ای با کنترل throttle و اجرای موازی محدود
+
 import pandas as pd
 import numpy as np
 from scipy.signal import argrelextrema
@@ -22,8 +24,8 @@ SIGNAL_LOG = "signals.csv"
 EMA_FILTER_PERIOD = 50
 
 MAX_CONCURRENT_REQUESTS = 2
-WAIT_BETWEEN_REQUESTS = 2  # ثانیه
-WAIT_BETWEEN_CHUNKS = 60  # مکث بین هر سری بررسی
+WAIT_BETWEEN_REQUESTS = 2  # ثانیه تأخیر بین درخواست‌های داخل semaphore
+WAIT_BETWEEN_CHUNKS = 60  # مکث بین هر دسته از نمادها
 
 # اندیکاتورها
 def compute_rsi(df, period=14):
@@ -101,6 +103,7 @@ def compute_indicators(df):
     df = detect_elliott_wave(df)
     return df
 
+# کنترل همزمانی
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
