@@ -4,17 +4,18 @@ import telegram
 import logging
 import os
 import sys
-from analyzer import scan_all_crypto_symbols  # فقط کریپتو
+from analyzer import scan_all_crypto_symbols, scan_all_forex_symbols
 
 # تنظیمات لاگ
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
 CHAT_ID = 632886964
-LOCK_FILE = "bot.lock"
 
 bot = telegram.Bot(token=BOT_TOKEN)
 sent_signals = set()
+
+LOCK_FILE = "bot.lock"
 
 def check_already_running():
     if os.path.exists(LOCK_FILE):
@@ -31,24 +32,30 @@ async def send_signals():
     logging.info("در حال بررسی بازار...")
 
     try:
-        all_signals = await scan_all_crypto_symbols()
+        crypto_signals = await scan_all_crypto_symbols()
+        forex_signals = await scan_all_forex_symbols()
+        all_signals = crypto_signals + forex_signals
+
+        found_valid = False
 
         for signal in all_signals:
-            # بررسی کامل بودن سیگنال
             if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل", "ریسک به ریوارد")):
                 signal_id = (signal["نماد"], signal["تایم‌فریم"], signal["قیمت ورود"])
-                if signal_id not in sent_signals:
-                    sent_signals.add(signal_id)
+                if signal_id in sent_signals:
+                    continue
 
-                    entry_price = float(signal["قیمت ورود"])
-                    tp = float(signal["هدف سود"])
-                    sl = float(signal["حد ضرر"])
-                    confidence = float(signal["سطح اطمینان"])
-                    rr = float(signal["ریسک به ریوارد"])
-                    signal_type = "خرید" if tp > entry_price else "فروش"
-                    fundamental = signal.get("فاندامنتال", "ندارد")
+                sent_signals.add(signal_id)
+                found_valid = True
 
-                    message = f"""📢 سیگنال {signal_type.upper()}
+                entry_price = float(signal["قیمت ورود"])
+                tp = float(signal["هدف سود"])
+                sl = float(signal["حد ضرر"])
+                confidence = float(signal["سطح اطمینان"])
+                rr = float(signal["ریسک به ریوارد"])
+                signal_type = "خرید" if tp > entry_price else "فروش"
+                fundamental = signal.get("فاندامنتال", "ندارد")
+
+                message = f"""📢 سیگنال {signal_type.upper()}
 
 نماد: {signal['نماد']}
 تایم‌فریم: {signal['تایم‌فریم']}
@@ -64,15 +71,17 @@ async def send_signals():
 تحلیل فاندامنتال:
 {fundamental}"""
 
-                    logging.info("در حال ارسال سیگنال:\n%s", message)
-
-                    try:
-                        await bot.send_message(chat_id=CHAT_ID, text=message)
-                        logging.info("سیگنال با موفقیت ارسال شد.")
-                    except Exception as e:
-                        logging.error("خطا در ارسال پیام به تلگرام: %s", e)
+                logging.info("در حال ارسال سیگنال:\n%s", message)
+                try:
+                    await bot.send_message(chat_id=CHAT_ID, text=message)
+                except Exception as e:
+                    logging.error("ارسال پیام ناموفق بود: %s", e)
             else:
-                logging.warning("سیگنال ناقص: %s", signal)
+                logging.warning("سیگنال ناقص بود: %s", signal)
+
+        if not found_valid:
+            await bot.send_message(chat_id=CHAT_ID, text="هیچ سیگنال معتبری یافت نشد.")
+            logging.info("هیچ سیگنال معتبری نبود.")
 
     except Exception as e:
         logging.error("خطا در بررسی سیگنال‌ها: %s", e)
