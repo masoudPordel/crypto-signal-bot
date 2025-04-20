@@ -354,6 +354,10 @@ async def scan_all_crypto_symbols():
     finally:
         await exchange.close()
 
+# --- اسکن فارکس (برای سازگاری با bot.py) ---
+async def scan_all_forex_symbols():
+    return []  # برای فارکس بعداً پیاده‌سازی کنید
+
 # --- اجرای بک‌تست برای یک نماد ---
 async def run_backtest(symbol="BTC/USDT", tf="1h", limit=500):
     exchange = ccxt.kucoin()
@@ -365,49 +369,3 @@ async def run_backtest(symbol="BTC/USDT", tf="1h", limit=500):
             print(f"No trades generated for {symbol} - {tf}")
     finally:
         await exchange.close()
-
-# --- اجرای اصلی ---
-async def main():
-    # اجرای بک‌تست برای تست اولیه
-    await run_backtest(symbol="BTC/USDT", tf="1h", limit=500)
-
-    # اسکن زنده
-    while True:
-        signals = await scan_all_crypto_symbols()
-        if signals:
-            print(f"Found {len(signals)} signals: {signals}")
-        else:
-            print("No signals found.")
-        await asyncio.sleep(300)  # هر 5 دقیقه اسکن
-
-if __name__ == "__main__":
-    # ایجاد جداول SQLite اگر وجود نداشته باشند
-    conn = sqlite3.connect(DATABASE)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS signals (
-            نماد TEXT,
-            تایم_فریم TEXT,
-            قیمت_ورود REAL,
-            هدف_سود REAL,
-            حد_ضرر REAL,
-            سطح_اطمینان REAL,
-            تحلیل TEXT,
-            ریسک_به_ریوارد REAL,
-            زمان TEXT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS backtest_results (
-            نماد TEXT,
-            تایم_فریم TEXT,
-            تعداد_معاملات INTEGER,
-            نرخ_برد REAL,
-            سود_زیان_کلی REAL,
-            میانگین_ریسک_به_ریوارد REAL,
-            حداکثر_افت_سرمایه REAL,
-            زمان_بک_تست TEXT
-        )
-    """)
-    conn.close()
-
-    asyncio.run(main())
