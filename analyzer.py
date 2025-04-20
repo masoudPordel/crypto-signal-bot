@@ -161,10 +161,10 @@ async def analyze_symbol(exchange, symbol, tf):
 
     # ۳) فیلتر روند کلان (EMA200 روزانه)
     df_d = await get_ohlcv_cached(exchange, symbol, "1d", limit=250)
-    if df_d is None or len(df_d) < 200:
+    if df_d is None or len(df_d) < 50:
         return None
-    ema200 = df_d["close"].ewm(span=200).mean().iloc[-1]
-    if df_d["close"].iloc[-1] < ema200:
+    ema200 = df_d["close"].ewm(span=50).mean().iloc[-1]
+    if df_d["close"].iloc[-1] < ema50:
         return None
 
     # ۴) محاسبهٔ اندیکاتورها
