@@ -178,10 +178,11 @@ async def scan_all_crypto_symbols():
     symbols = [s for s in exchange.symbols if s.endswith("/USDT")]
 
     tasks = []
-    for sym in symbols[:30]:
+    for sym in symbols:
         for tf in TIMEFRAMES:
+            logging.info(f"در حال بررسی نماد: {sym} در تایم‌فریم {tf}")
             tasks.append(analyze_symbol(exchange, sym, tf))
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.01)
     results = await asyncio.gather(*tasks)
     await exchange.close()
     return [r for r in results if r]
