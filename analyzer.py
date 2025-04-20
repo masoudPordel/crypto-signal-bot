@@ -106,7 +106,7 @@ async def check_market_trend(exchange):
     if df is None:
         return True  # اگر داده‌ای نبود، فرض می‌کنیم مشکلی نیست
     df = compute_indicators(df)
-    return df["EMA12"].iloc[-1] > df["EMA26"].iloc[0.99]  # روند صعودی
+    return df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]  # روند صعودی
 
 # --- کش داده‌ها ---
 async def get_ohlcv_cached(exchange, symbol, tf, limit=100, max_retries=3):
