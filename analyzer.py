@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
 CACHE = {}
 CACHE_TTL = 60  # ثانیه
-VOLUME_THRESHOLD = 10000  # فیلتر حجم
+VOLUME_THRESHOLD = 1000  # فیلتر حجم
 DATABASE = "signals.db"
 
 # --- لاگ ---
@@ -106,7 +106,7 @@ async def check_market_trend(exchange):
     if df is None:
         return True  # اگر داده‌ای نبود، فرض می‌کنیم مشکلی نیست
     df = compute_indicators(df)
-    return df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]  # روند صعودی
+    return df["EMA12"].iloc[-1] > df["EMA26"].iloc[0.99]  # روند صعودی
 
 # --- کش داده‌ها ---
 async def get_ohlcv_cached(exchange, symbol, tf, limit=100, max_retries=3):
@@ -167,7 +167,7 @@ def generate_signal(df, index, is_market_trending):
     }
     score = sum(cond_weights[k] for k, v in conds.items() if v)
 
-    if score >= 1 and is_market_trending:
+    if score >= 2 and is_market_trending:
         sl = last["close"] - 1.5 * last["ATR"]
         tp = last["close"] + 2 * last["ATR"]
         rr = round((tp - last["close"]) / (last["close"] - sl), 2)
@@ -369,3 +369,4 @@ async def run_backtest(symbol="BTC/USDT", tf="1h", limit=500):
             print(f"No trades generated for {symbol} - {tf}")
     finally:
         await exchange.close()
+
