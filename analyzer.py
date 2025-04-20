@@ -197,3 +197,37 @@ async def scan_all_crypto_symbols():
 
     await exchange.close()
     return results
+
+async def scan_all_forex_symbols():
+    exchange = ccxt.fxcm({
+        'enableRateLimit': True,
+        'rateLimit': 2000
+    })
+
+    try:
+        await exchange.load_markets()
+    except Exception as e:
+        logging.error(f"خطا در بارگذاری بازار فارکس: {e}")
+        return []
+
+    symbols = [s for s in exchange.symbols if any(pair in s for pair in [
+        "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD", "USD/CAD"
+    ])]
+
+    timeframes = TIMEFRAMES
+    results = []
+
+    chunk_size = 5
+    for i in range(0, len(symbols), chunk_size):
+        chunk = symbols[i:i + chunk_size]
+        tasks = []
+        for symbol in chunk:
+            for tf in timeframes:
+                tasks.append(analyze_symbol(exchange, symbol, tf))
+        chunk_results = await asyncio.gather(*tasks)
+        results.extend([res for res in chunk_results if res])
+        logging.info(f"اسکن فارکس {i + chunk_size}/{len(symbols)} نماد کامل شد.")
+        await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
+
+    await exchange.close()
+    return results
