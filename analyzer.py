@@ -132,7 +132,7 @@ async def analyze_symbol(exchange, symbol, tf):
     }
 
     score = sum(conds.values())
-    if score >= 2:
+    if score >= 3:
         sl = last["close"] - 1.5 * last["ATR"]
         tp = last["close"] + 2 * last["ATR"]
         rr = round((tp - last["close"]) / (last["close"] - sl), 2)
