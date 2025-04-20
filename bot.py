@@ -1,10 +1,9 @@
 import time
 import asyncio
+import telegram
 import logging
 import os
 import sys
-from telegram import Bot
-from telegram.error import TelegramError
 from analyzer import scan_all_crypto_symbols  # فقط کریپتو
 
 # تنظیمات لاگ
@@ -12,11 +11,9 @@ logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
 CHAT_ID = 632886964
-
 LOCK_FILE = "bot.lock"
 
-bot = Bot(token=BOT_TOKEN)
-sent_signals = set()
+bot = telegram.Bot(token=BOT_TOKEN)
 
 def check_already_running():
     if os.path.exists(LOCK_FILE):
@@ -32,21 +29,19 @@ def remove_lock():
 async def send_signals():
     logging.info("در حال بررسی بازار...")
     try:
-        all_signals = await scan_all_crypto_symbols()  # فقط کریپتو
+        all_signals = await scan_all_crypto_symbols()
 
         for signal in all_signals:
             if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل", "ریسک به ریوارد")):
-                signal_id = (signal["نماد"], signal["تایم‌فریم"], signal["قیمت ورود"])
-                if signal_id not in sent_signals:
-                    sent_signals.add(signal_id)
+                entry_price = float(signal["قیمت ورود"])
+                tp = float(signal["هدف سود"])
+                sl = float(signal["حد ضرر"])
+                confidence = float(signal["سطح اطمینان"])
+                rr = float(signal["ریسک به ریوارد"])
+                signal_type = "خرید" if tp > entry_price else "فروش"
+                fundamental = signal.get("فاندامنتال", "ندارد")
 
-                    entry_price = float(signal["قیمت ورود"])
-                    tp = float(signal["هدف سود"])
-                    sl = float(signal["حد ضرر"])
-                    confidence = float(signal["سطح اطمینان"])
-                    rr = float(signal["ریسک به ریوارد"])
-
-                    message = f"""📢 سیگنال جدید {'خرید' if tp > entry_price else 'فروش'}
+                message = f"""📢 سیگنال {signal_type.upper()}
 
 نماد: {signal['نماد']}
 تایم‌فریم: {signal['تایم‌فریم']}
@@ -58,20 +53,26 @@ async def send_signals():
 
 تحلیل تکنیکال:
 {signal['تحلیل']}
-"""
 
+تحلیل فاندامنتال:
+{fundamental}"""
+
+                logging.info("در حال ارسال سیگنال به تلگرام:\n%s", message)
+
+                try:
                     await bot.send_message(chat_id=CHAT_ID, text=message)
+                    logging.info("سیگنال با موفقیت ارسال شد.")
+                except Exception as e:
+                    logging.error("خطا در ارسال پیام تلگرام: %s", e)
             else:
                 logging.warning("فرمت سیگنال ناقص: %s", signal)
-    except TelegramError as e:
-        logging.error("خطا در ارسال پیام تلگرام: %s", e)
     except Exception as e:
-        logging.error("خطای کلی در ارسال سیگنال‌ها: %s", e)
+        logging.error("خطا در ارسال سیگنال‌ها: %s", e)
 
 async def main():
     while True:
         await send_signals()
-        await asyncio.sleep(300)  # هر ۵ دقیقه
+        await asyncio.sleep(300)
 
 if __name__ == "__main__":
     check_already_running()
