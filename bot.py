@@ -4,18 +4,16 @@ import telegram
 import logging
 import os
 import sys
-from analyzer import scan_all_crypto_symbols, scan_all_forex_symbols
+from analyzer import scan_all_crypto_symbols  # فقط کریپتو
 
 # تنظیمات لاگ
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
 CHAT_ID = 632886964
+LOCK_FILE = "bot.lock"
 
 bot = telegram.Bot(token=BOT_TOKEN)
-sent_signals = set()
-
-LOCK_FILE = "bot.lock"
 
 def check_already_running():
     if os.path.exists(LOCK_FILE):
@@ -33,20 +31,10 @@ async def send_signals():
 
     try:
         crypto_signals = await scan_all_crypto_symbols()
-        forex_signals = await scan_all_forex_symbols()
-        all_signals = crypto_signals + forex_signals
-
-        found_valid = False
+        all_signals = crypto_signals
 
         for signal in all_signals:
             if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل", "ریسک به ریوارد")):
-                signal_id = (signal["نماد"], signal["تایم‌فریم"], signal["قیمت ورود"])
-                if signal_id in sent_signals:
-                    continue
-
-                sent_signals.add(signal_id)
-                found_valid = True
-
                 entry_price = float(signal["قیمت ورود"])
                 tp = float(signal["هدف سود"])
                 sl = float(signal["حد ضرر"])
@@ -71,25 +59,22 @@ async def send_signals():
 تحلیل فاندامنتال:
 {fundamental}"""
 
-                logging.info("در حال ارسال سیگنال:\n%s", message)
+                logging.info("در حال ارسال سیگنال به تلگرام:\n%s", message)
+
                 try:
                     await bot.send_message(chat_id=CHAT_ID, text=message)
+                    logging.info("سیگنال با موفقیت ارسال شد.")
                 except Exception as e:
-                    logging.error("ارسال پیام ناموفق بود: %s", e)
+                    logging.error("خطا در ارسال پیام تلگرام: %s", e)
             else:
-                logging.warning("سیگنال ناقص بود: %s", signal)
-
-        if not found_valid:
-            await bot.send_message(chat_id=CHAT_ID, text="هیچ سیگنال معتبری یافت نشد.")
-            logging.info("هیچ سیگنال معتبری نبود.")
-
+                logging.warning("فرمت سیگنال ناقص: %s", signal)
     except Exception as e:
-        logging.error("خطا در بررسی سیگنال‌ها: %s", e)
+        logging.error("خطا در دریافت یا پردازش سیگنال‌ها: %s", e)
 
 async def main():
     while True:
         await send_signals()
-        await asyncio.sleep(300)
+        await asyncio.sleep(300)  # هر ۵ دقیقه بررسی می‌کنه
 
 if __name__ == "__main__":
     check_already_running()
