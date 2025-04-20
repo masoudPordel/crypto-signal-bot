@@ -5,7 +5,6 @@ import logging
 import os
 import sys
 import requests
-from datetime import datetime
 from analyzer import scan_all_crypto_symbols  # فقط ایمپورت کریپتو
 
 # تنظیمات لاگ
@@ -41,9 +40,9 @@ def remove_lock():
         os.remove(LOCK_FILE)
 
 async def send_signals():
-    logging.info("در حال بررسی بازار...")
+    logging.info("در حال بررسی بازار کریپتو...")
     try:
-        all_signals = await scan_all_crypto_symbols()  # فقط کریپتو
+        all_signals = await scan_all_crypto_symbols()
 
         for signal in all_signals:
             required_keys = ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل", "ریسک به ریوارد")
@@ -52,51 +51,35 @@ async def send_signals():
                 if signal_id not in sent_signals:
                     sent_signals.add(signal_id)
 
-                    # تعیین نوع سیگنال
-                    signal_type = "Buy" if float(signal["قیمت ورود"]) < float(signal["هدف سود"]) else "Sell"
+                    entry_price = float(signal["قیمت ورود"])
+                    tp = float(signal["هدف سود"])
+                    sl = float(signal["حد ضرر"])
+                    confidence = float(signal["سطح اطمینان"])
+                    rr = float(signal["ریسک به ریوارد"])
+                    fundamental = signal.get("فاندامنتال", "ندارد")
 
-                    # ساخت دیکشنری نهایی سیگنال
-                    final_signal = {
-                        "نماد": signal["نماد"],
-                        "تایم‌فریم": signal["تایم‌فریم"],
-                        "نوع": signal_type,
-                        "قیمت ورود": float(signal["قیمت ورود"]),
-                        "هدف سود": float(signal["هدف سود"]),
-                        "حد ضرر": float(signal["حد ضرر"]),
-                        "ریسک به ریوارد": float(signal["ریسک به ریوارد"]),
-                        "سطح اطمینان": int(signal["سطح اطمینان"]),
-                        "تحلیل": signal["تحلیل"],
-                        "فاندامنتال": signal.get("فاندامنتال", "ندارد"),
-                        "تاریخ تولید": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "سیستم": "Elliott + EMA + MACD + Volume Filter",
-                        "هشدار": "این سیگنال صرفاً برای اهداف آموزشی بوده و نباید به‌تنهایی مبنای خرید یا فروش قرار گیرد."
-                    }
+                    # تشخیص نوع سیگنال: Buy یا Sell
+                    direction = "خرید (Buy)" if tp > entry_price else "فروش (Sell)"
 
-                    # پیام تلگرام با فرمت حرفه‌ای
-                    message = f"""
-{final_signal['نوع']} سیگنال - {final_signal['نماد']} [{final_signal['تایم‌فریم']}]
-----------------------------------------
-قیمت ورود: {final_signal['قیمت ورود']}
-هدف سود: {final_signal['هدف سود']}
-حد ضرر: {final_signal['حد ضرر']}
-ریسک به ریوارد: {final_signal['ریسک به ریوارد']}
-سطح اطمینان: {final_signal['سطح اطمینان']}%
+                    message = f"""🟢 سیگنال {direction}
+
+نماد: {signal['نماد']}
+تایم‌فریم: {signal['تایم‌فریم']}
+قیمت ورود: {entry_price}
+هدف سود: {tp}
+حد ضرر: {sl}
+سطح اطمینان: {confidence}%
+ریسک به ریوارد: {rr}
 
 تحلیل تکنیکال:
-{final_signal['تحلیل']}
+{signal['تحلیل']}
 
 تحلیل فاندامنتال:
-{final_signal['فاندامنتال']}
-
-تاریخ: {final_signal['تاریخ تولید']}
-سیستم: {final_signal['سیستم']}
-
-{final_signal['هشدار']}
-""".strip()
+{fundamental}"""
 
                     await bot.send_message(chat_id=CHAT_ID, text=message)
             else:
-                logging.warning("فرمت سیگنال ناقص: %s", signal)
+                logging.warning("فرمت ناقص سیگنال: %s", signal)
     except Exception as e:
         logging.error("خطا در ارسال سیگنال‌ها: %s", e)
 
