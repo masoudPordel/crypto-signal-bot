@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 import requests
-from analyzer import scan_all_crypto_symbols, scan_all_forex_symbols
+from analyzer import scan_all_crypto_symbols  # فقط ایمپورت کریپتو
 
 # تنظیمات لاگ
 logging.basicConfig(level=logging.INFO)
@@ -17,7 +17,6 @@ LOCK_FILE = "bot.lock"
 bot = telegram.Bot(token=BOT_TOKEN)
 sent_signals = set()
 
-# حذف Webhook برای جلوگیری از Conflict
 def clear_webhook():
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
     try:
@@ -29,7 +28,6 @@ def clear_webhook():
     except Exception as e:
         logging.error(f"خطا در اتصال برای حذف Webhook: {e}")
 
-# جلوگیری از اجرای هم‌زمان اسکریپت
 def check_already_running():
     if os.path.exists(LOCK_FILE):
         logging.error("ربات در حال اجراست. ابتدا آن را متوقف کن.")
@@ -44,10 +42,7 @@ def remove_lock():
 async def send_signals():
     logging.info("در حال بررسی بازار...")
     try:
-        crypto_signals = await scan_all_crypto_symbols()
-        forex_signals = await scan_all_forex_symbols()
-
-        all_signals = crypto_signals + forex_signals
+        all_signals = await scan_all_crypto_symbols()  # فقط کریپتو
 
         for signal in all_signals:
             if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل", "ریسک به ریوارد", "فاندامنتال")):
