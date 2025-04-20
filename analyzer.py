@@ -167,7 +167,7 @@ def generate_signal(df, index, is_market_trending):
     }
     score = sum(cond_weights[k] for k, v in conds.items() if v)
 
-    if score >= 2.5 and is_market_trending:
+    if score >= 1 and is_market_trending:
         sl = last["close"] - 1.5 * last["ATR"]
         tp = last["close"] + 2 * last["ATR"]
         rr = round((tp - last["close"]) / (last["close"] - sl), 2)
