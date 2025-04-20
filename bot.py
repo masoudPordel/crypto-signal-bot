@@ -14,6 +14,7 @@ CHAT_ID = 632886964
 LOCK_FILE = "bot.lock"
 
 bot = telegram.Bot(token=BOT_TOKEN)
+sent_signals = set()
 
 def check_already_running():
     if os.path.exists(LOCK_FILE):
@@ -28,20 +29,26 @@ def remove_lock():
 
 async def send_signals():
     logging.info("در حال بررسی بازار...")
+
     try:
         all_signals = await scan_all_crypto_symbols()
 
         for signal in all_signals:
+            # بررسی کامل بودن سیگنال
             if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل", "ریسک به ریوارد")):
-                entry_price = float(signal["قیمت ورود"])
-                tp = float(signal["هدف سود"])
-                sl = float(signal["حد ضرر"])
-                confidence = float(signal["سطح اطمینان"])
-                rr = float(signal["ریسک به ریوارد"])
-                signal_type = "خرید" if tp > entry_price else "فروش"
-                fundamental = signal.get("فاندامنتال", "ندارد")
+                signal_id = (signal["نماد"], signal["تایم‌فریم"], signal["قیمت ورود"])
+                if signal_id not in sent_signals:
+                    sent_signals.add(signal_id)
 
-                message = f"""📢 سیگنال {signal_type.upper()}
+                    entry_price = float(signal["قیمت ورود"])
+                    tp = float(signal["هدف سود"])
+                    sl = float(signal["حد ضرر"])
+                    confidence = float(signal["سطح اطمینان"])
+                    rr = float(signal["ریسک به ریوارد"])
+                    signal_type = "خرید" if tp > entry_price else "فروش"
+                    fundamental = signal.get("فاندامنتال", "ندارد")
+
+                    message = f"""📢 سیگنال {signal_type.upper()}
 
 نماد: {signal['نماد']}
 تایم‌فریم: {signal['تایم‌فریم']}
@@ -57,17 +64,18 @@ async def send_signals():
 تحلیل فاندامنتال:
 {fundamental}"""
 
-                logging.info("در حال ارسال سیگنال به تلگرام:\n%s", message)
+                    logging.info("در حال ارسال سیگنال:\n%s", message)
 
-                try:
-                    await bot.send_message(chat_id=CHAT_ID, text=message)
-                    logging.info("سیگنال با موفقیت ارسال شد.")
-                except Exception as e:
-                    logging.error("خطا در ارسال پیام تلگرام: %s", e)
+                    try:
+                        await bot.send_message(chat_id=CHAT_ID, text=message)
+                        logging.info("سیگنال با موفقیت ارسال شد.")
+                    except Exception as e:
+                        logging.error("خطا در ارسال پیام به تلگرام: %s", e)
             else:
-                logging.warning("فرمت سیگنال ناقص: %s", signal)
+                logging.warning("سیگنال ناقص: %s", signal)
+
     except Exception as e:
-        logging.error("خطا در ارسال سیگنال‌ها: %s", e)
+        logging.error("خطا در بررسی سیگنال‌ها: %s", e)
 
 async def main():
     while True:
