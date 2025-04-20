@@ -183,7 +183,7 @@ async def analyze_symbol(exchange, symbol, tf):
         "ElliottLow":  bool(last["ElliottLow"])
     }
     score = sum(conds.values())
-    if score < 3:
+    if score < 2:
         return None
 
     # ۶) تأیید در TF بالاتر
