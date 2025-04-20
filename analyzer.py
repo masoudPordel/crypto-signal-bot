@@ -18,8 +18,11 @@ TIMEFRAMES = ["5m", "15m", "1h", "4h"]
 CACHE = {}
 CACHE_TTL = 60  # ثانیه
 VOLUME_THRESHOLD = 1000
-SIGNAL_LOG = "signals.csv"
-EMA_FILTER_PERIOD = 50  # قابل تنظیم
+EMA_FILTER_PERIOD = 50
+CHUNK_SIZE = 25
+MAX_CONCURRENT_REQUESTS = 5
+WAIT_BETWEEN_CHUNKS = 30
+WAIT_BETWEEN_REQUESTS = 1.2
 
 # اندیکاتورها
 def compute_rsi(df, period=14):
@@ -58,7 +61,7 @@ def compute_adx(df, period=14):
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
     return dx.rolling(window=period).mean()
 
-# پرایس اکشن و الگوها
+# الگوها
 def detect_pin_bar(df):
     df["body"] = abs(df["close"] - df["open"])
     df["range"] = df["high"] - df["low"]
@@ -84,7 +87,6 @@ def detect_elliott_wave(df):
     df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
     return df
 
-# محاسبه اندیکاتورها
 def compute_indicators(df):
     df["EMA12"] = df["close"].ewm(span=12).mean()
     df["EMA26"] = df["close"].ewm(span=26).mean()
@@ -99,7 +101,6 @@ def compute_indicators(df):
     df = detect_elliott_wave(df)
     return df
 
-# کش دیتا
 async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
     key = f"{symbol}_{tf}"
     now = time.time()
@@ -116,86 +117,83 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
         logging.error(f"خطا در دریافت داده: {symbol}-{tf}: {e}")
         return None
 
-# بررسی سیگنال
+semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
 async def analyze_symbol(exchange, symbol, tf):
-    df = await get_ohlcv_cached(exchange, symbol, tf)
-    if df is None or len(df) < 50:
-        logging.info(f"[{symbol}-{tf}] داده نامعتبر")
-        return None
-    if df["volume"].iloc[-1] < VOLUME_THRESHOLD:
-        logging.info(f"[{symbol}-{tf}] حجم پایین: {df['volume'].iloc[-1]}")
-        return None
+    async with semaphore:
+        df = await get_ohlcv_cached(exchange, symbol, tf)
+        if df is None or len(df) < 50:
+            return None
+        if df["volume"].iloc[-1] < VOLUME_THRESHOLD:
+            return None
 
-    # شرط EMA روزانه
-    df_d = await get_ohlcv_cached(exchange, symbol, "1d", limit=200)
-    if df_d is None or len(df_d) < EMA_FILTER_PERIOD:
-        logging.info(f"[{symbol}] داده روزانه کافی نیست.")
-        return None
-    ema_daily = df_d["close"].ewm(span=EMA_FILTER_PERIOD).mean().iloc[-1]
-    close_daily = df_d["close"].iloc[-1]
-    if close_daily < ema_daily:
-        logging.info(f"[{symbol}] زیر EMA{EMA_FILTER_PERIOD} روزانه.")
-        return None
+        df_d = await get_ohlcv_cached(exchange, symbol, "1d", limit=200)
+        if df_d is None or len(df_d) < EMA_FILTER_PERIOD:
+            return None
+        ema_daily = df_d["close"].ewm(span=EMA_FILTER_PERIOD).mean().iloc[-1]
+        close_daily = df_d["close"].iloc[-1]
+        if close_daily < ema_daily:
+            return None
 
-    df = compute_indicators(df)
-    last = df.iloc[-1]
+        df = compute_indicators(df)
+        last = df.iloc[-1]
 
-    conds = {
-        "PinBar": bool(last["PinBar"]),
-        "Engulfing": bool(last["Engulfing"]),
-        "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1],
-        "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
-        "RSI_Oversold": last["RSI"] < 30,
-        "ADX_StrongTrend": last["ADX"] > 25,
-    }
-
-    score = sum(conds.values())
-    logging.info(f"[{symbol}-{tf}] شرایط: {conds} - امتیاز: {score}")
-    if score >= 2:
-        sl = last["close"] - 1.5 * last["ATR"]
-        tp = last["close"] + 2 * last["ATR"]
-        rr = round((tp - last["close"]) / (last["close"] - sl), 2)
-        signal = {
-            "نماد": symbol,
-            "تایم‌فریم": tf,
-            "قیمت ورود": round(last["close"], 4),
-            "هدف سود": round(tp, 4),
-            "حد ضرر": round(sl, 4),
-            "سطح اطمینان": min(score * 20, 100),
-            "تحلیل": " | ".join([k for k, v in conds.items() if v]),
-            "ریسک به ریوارد": rr
+        conds = {
+            "PinBar": bool(last["PinBar"]),
+            "Engulfing": bool(last["Engulfing"]),
+            "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1],
+            "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
+            "RSI_Oversold": last["RSI"] < 30,
+            "ADX_StrongTrend": last["ADX"] > 25,
         }
-        logging.info(f"سیگنال نهایی: {signal}")
-        return signal
-    else:
-        logging.info(f"[{symbol}-{tf}] سیگنال رد شد.")
-    return None
 
-# اسکن بازار با کنترل نرخ
+        score = sum(conds.values())
+        if score >= 2:
+            sl = last["close"] - 1.5 * last["ATR"]
+            tp = last["close"] + 2 * last["ATR"]
+            rr = round((tp - last["close"]) / (last["close"] - sl), 2)
+            return {
+                "نماد": symbol,
+                "تایم‌فریم": tf,
+                "قیمت ورود": round(last["close"], 4),
+                "هدف سود": round(tp, 4),
+                "حد ضرر": round(sl, 4),
+                "سطح اطمینان": min(score * 20, 100),
+                "تحلیل": " | ".join([k for k, v in conds.items() if v]),
+                "ریسک به ریوارد": rr
+            }
+        return None
+
 async def scan_all_crypto_symbols():
-    exchange = ccxt.kucoin({
-        'enableRateLimit': True,
-        'rateLimit': 1500  # حدوداً 1.5 ثانیه برای هر درخواست
-    })
-
+    exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 1500})
     await exchange.load_markets()
-    symbols = [s for s in exchange.symbols if s.endswith("/USDT")]
-    timeframes = TIMEFRAMES
-    results = []
+    symbols = [s for s in exchange.symbols if s.endswith("/USDT") and exchange.markets[s]['active']]
 
-    for sym in symbols:
-        for tf in timeframes:
-            try:
-                logging.info(f"در حال بررسی نماد: {sym} در تایم‌فریم {tf}")
-                result = await analyze_symbol(exchange, sym, tf)
-                if result:
-                    results.append(result)
-            except Exception as e:
-                logging.error(f"خطا در بررسی {sym}-{tf}: {e}")
-            await asyncio.sleep(1.2)  # کنترل سرعت برای جلوگیری از ارور Throttle
+    all_results = []
+
+    for i in range(0, len(symbols), CHUNK_SIZE):
+        chunk = symbols[i:i + CHUNK_SIZE]
+        logging.info(f"در حال بررسی دسته {i // CHUNK_SIZE + 1} از {len(symbols) // CHUNK_SIZE + 1}")
+
+        tasks = []
+        for symbol in chunk:
+            for tf in TIMEFRAMES:
+                tasks.append(analyze_symbol(exchange, symbol, tf))
+                await asyncio.sleep(WAIT_BETWEEN_REQUESTS)
+
+        results = await asyncio.gather(*tasks)
+        all_results.extend([r for r in results if r])
+
+        logging.info(f"پایان دسته، مکث {WAIT_BETWEEN_CHUNKS} ثانیه")
+        await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
+
     await exchange.close()
-    return results
+    return all_results
 
-# --- فارکس (اختیاری) ---
-async def scan_all_forex_symbols():
-    pass
+# اجرای نهایی
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    final_signals = loop.run_until_complete(scan_all_crypto_symbols())
+    print("\nسیگنال‌های نهایی:")
+    for s in final_signals:
+        print(s)
