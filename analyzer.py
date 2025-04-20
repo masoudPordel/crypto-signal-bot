@@ -1,12 +1,5 @@
-import logging
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
 import pandas as pd
 import numpy as np
-import requests
 from scipy.signal import argrelextrema
 import ccxt.async_support as ccxt
 import asyncio
@@ -14,23 +7,21 @@ import time
 import logging
 from datetime import datetime
 
-# --- تنظیمات ---
-TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
-CACHE = {}
-CACHE_TTL = 60  # ثانیه
-VOLUME_THRESHOLD = 10000
-VOLUME_SPIKE_MULTIPLIER = 1.5
-SL_FACTOR = 1.5
-TP_FACTOR = 2.0
-SIGNAL_LOG = "signals.csv"
-
+# --- لاگ ---
 logging.basicConfig(
     level=logging.INFO,
-    filename="errors.log",
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# --- اندیکاتورها ---
+# --- تنظیمات ---
+TIMEFRAMES = ["5m", "15m", "1h", "4h"]
+CACHE = {}
+CACHE_TTL = 60  # ثانیه
+VOLUME_THRESHOLD = 10000
+SIGNAL_LOG = "signals.csv"
+EMA_FILTER_PERIOD = 50  # قابل تنظیم
+
+# اندیکاتورها
 def compute_rsi(df, period=14):
     delta = df["close"].diff()
     gain = delta.where(delta > 0, 0).rolling(period).mean()
@@ -67,15 +58,13 @@ def compute_adx(df, period=14):
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
     return dx.rolling(window=period).mean()
 
-# --- الگوها ---
+# پرایس اکشن و الگوها
 def detect_pin_bar(df):
     df["body"] = abs(df["close"] - df["open"])
     df["range"] = df["high"] - df["low"]
     df["upper"] = df["high"] - df[["close", "open"]].max(axis=1)
     df["lower"] = df[["close", "open"]].min(axis=1) - df["low"]
-    return (df["body"] < 0.3 * df["range"]) & (
-        (df["upper"] > 2 * df["body"]) | (df["lower"] > 2 * df["body"])
-    )
+    return (df["body"] < 0.3 * df["range"]) & ((df["upper"] > 2 * df["body"]) | (df["lower"] > 2 * df["body"]))
 
 def detect_engulfing(df):
     prev_open = df["open"].shift(1)
@@ -88,40 +77,14 @@ def detect_engulfing(df):
     )
 
 def detect_elliott_wave(df):
-    df["ElliottHigh"] = False
-    df["ElliottLow"]  = False
-    highs = argrelextrema(df["close"].values, np.greater, order=5)[0]
-    lows  = argrelextrema(df["close"].values, np.less,   order=5)[0]
-    df.loc[df.index[highs], "ElliottHigh"] = True
-    df.loc[df.index[lows],  "ElliottLow"]  = True
+    df["WavePoint"] = np.nan
+    highs = argrelextrema(df['close'].values, np.greater, order=5)[0]
+    lows = argrelextrema(df['close'].values, np.less, order=5)[0]
+    df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
+    df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
     return df
 
-# --- فاندامنتال (CoinGecko) ---
-def get_symbol_id_map():
-    try:
-        url = "https://api.coingecko.com/api/v3/coins/list"
-        data = requests.get(url).json()
-        return {coin["symbol"].upper(): coin["id"] for coin in data}
-    except Exception as e:
-        logging.error(f"Error fetching symbol map: {e}")
-        return {}
-
-def fetch_fundamental_data(symbol_id):
-    try:
-        url = f"https://api.coingecko.com/api/v3/coins/{symbol_id}"
-        data = requests.get(url).json()
-        md = data["market_data"]
-        return {
-            "market_cap": md["market_cap"]["usd"],
-            "rank": data.get("market_cap_rank"),
-            "community_score": data.get("community_score"),
-            "developer_score": data.get("developer_score")
-        }
-    except Exception as e:
-        logging.error(f"Error fetching fundamental data for {symbol_id}: {e}")
-        return None
-
-# --- محاسبهٔ اندیکاتورها ---
+# محاسبه اندیکاتورها
 def compute_indicators(df):
     df["EMA12"] = df["close"].ewm(span=12).mean()
     df["EMA26"] = df["close"].ewm(span=26).mean()
@@ -136,49 +99,47 @@ def compute_indicators(df):
     df = detect_elliott_wave(df)
     return df
 
-# --- کش کندل‌ها ---
-async def get_ohlcv_cached(exchange, symbol, tf, limit=200):
+# کش دیتا
+async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
     key = f"{symbol}_{tf}"
     now = time.time()
     if key in CACHE and now - CACHE[key]["time"] < CACHE_TTL:
         return CACHE[key]["data"]
     try:
         data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
-        df = pd.DataFrame(data, columns=["timestamp","open","high","low","close","volume"])
+        df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
         df.set_index("timestamp", inplace=True)
         CACHE[key] = {"data": df.copy(), "time": now}
         return df
     except Exception as e:
-        logging.error(f"Fetch error: {symbol}-{tf}: {e}")
+        logging.error(f"خطا در دریافت داده: {symbol}-{tf}: {e}")
         return None
 
-# --- بررسی سیگنال ---
+# بررسی سیگنال
 async def analyze_symbol(exchange, symbol, tf):
-    # ۱) دیتای اصلی
-    
-df = await get_ohlcv_cached(exchange, symbol, tf)
-if df is None or len(df) < 50:
-    logging.info(f"[{symbol}-{tf}] داده نامعتبر یا کم است.")
-    return None
-    # ۲) فیلتر حجم و اسپایک
- if df["volume"].iloc[-1] < VOLUME_THRESHOLD:
-    logging.info(f"[{symbol}-{tf}] حجم پایین: {df['volume'].iloc[-1]}")
-    return None
+    df = await get_ohlcv_cached(exchange, symbol, tf)
+    if df is None or len(df) < 50:
+        logging.info(f"[{symbol}-{tf}] داده نامعتبر")
+        return None
+    if df["volume"].iloc[-1] < VOLUME_THRESHOLD:
+        logging.info(f"[{symbol}-{tf}] حجم پایین: {df['volume'].iloc[-1]}")
+        return None
 
-    # ۳) فیلتر روند کلان (EMA200 روزانه)
- df_d = await get_ohlcv_cached(exchange, symbol, "1d", limit=250)
-ema50 = df_d["close"].ewm(span=50).mean().iloc[-1]
-close_price = df_d["close"].iloc[-1]
-if close_price < ema50:
-    logging.info(f"[{symbol}] زیر EMA50 ({close_price:.2f} < {ema50:.2f})")
-    return None
+    # شرط EMA روزانه
+    df_d = await get_ohlcv_cached(exchange, symbol, "1d", limit=200)
+    if df_d is None or len(df_d) < EMA_FILTER_PERIOD:
+        logging.info(f"[{symbol}] داده روزانه کافی نیست.")
+        return None
+    ema_daily = df_d["close"].ewm(span=EMA_FILTER_PERIOD).mean().iloc[-1]
+    close_daily = df_d["close"].iloc[-1]
+    if close_daily < ema_daily:
+        logging.info(f"[{symbol}] زیر EMA{EMA_FILTER_PERIOD} روزانه.")
+        return None
 
-    # ۴) محاسبهٔ اندیکاتورها
     df = compute_indicators(df)
     last = df.iloc[-1]
 
-    # ۵) شروط تکنیکال (حالا شامل ElliottHigh و ElliottLow)
     conds = {
         "PinBar": bool(last["PinBar"]),
         "Engulfing": bool(last["Engulfing"]),
@@ -186,82 +147,45 @@ if close_price < ema50:
         "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
         "RSI_Oversold": last["RSI"] < 30,
         "ADX_StrongTrend": last["ADX"] > 25,
-        "ElliottHigh": bool(last["ElliottHigh"]),
-        "ElliottLow":  bool(last["ElliottLow"])
     }
+
     score = sum(conds.values())
-    if score >= 2:
-    logging.info(f"[{symbol}-{tf}] سیگنال معتبر با امتیاز {score}")
-else:
-    logging.info(f"[{symbol}-{tf}] سیگنال رد شد با امتیاز {score}")
-        return None
-logging.info(f"[{symbol}-{tf}] شروط فعال: {conds}")
+    logging.info(f"[{symbol}-{tf}] شرایط: {conds} - امتیاز: {score}")
+    if score >= 3:
+        sl = last["close"] - 1.5 * last["ATR"]
+        tp = last["close"] + 2 * last["ATR"]
+        rr = round((tp - last["close"]) / (last["close"] - sl), 2)
+        signal = {
+            "نماد": symbol,
+            "تایم‌فریم": tf,
+            "قیمت ورود": round(last["close"], 4),
+            "هدف سود": round(tp, 4),
+            "حد ضرر": round(sl, 4),
+            "سطح اطمینان": min(score * 20, 100),
+            "تحلیل": " | ".join([k for k, v in conds.items() if v]),
+            "ریسک به ریوارد": rr
+        }
+        logging.info(f"سیگنال نهایی: {signal}")
+        return signal
+    else:
+        logging.info(f"[{symbol}-{tf}] سیگنال رد شد.")
+    return None
 
-    # ۶) تأیید در TF بالاتر
-    idx = TIMEFRAMES.index(tf)
-    if idx < len(TIMEFRAMES) - 1:
-        higher_tf = TIMEFRAMES[idx+1]
-        df_h = await get_ohlcv_cached(exchange, symbol, higher_tf, limit=100)
-        if df_h is not None:
-            df_h = compute_indicators(df_h)
-            ema_cross_h = df_h["EMA12"].iloc[-2] < df_h["EMA26"].iloc[-2] and df_h["EMA12"].iloc[-1] > df_h["EMA26"].iloc[-1]
-            macd_cross_h = df_h["MACD"].iloc[-2] < df_h["Signal"].iloc[-2] and df_h["MACD"].iloc[-1] > df_h["Signal"].iloc[-1]
-            if not (ema_cross_h or macd_cross_h):
-                return None
-
-    # ۷) SL/TP و RR
-    sl = last["close"] - SL_FACTOR * last["ATR"]
-    tp = last["close"] + TP_FACTOR * last["ATR"]
-    rr = round((tp - last["close"]) / (last["close"] - sl), 2)
-
-    # ۸) ساخت سیگنال
-    signal = {
-        "نماد": symbol,
-        "تایم‌فریم": tf,
-        "قیمت ورود": round(last["close"], 6),
-        "حد ضرر": round(sl, 6),
-        "هدف سود": round(tp, 6),
-        "ریسک به ریوارد": rr,
-        "سطح اطمینان": min(score * 12.5, 100),  # حالا 8 شرط، هرکدوم 12.5 امتیاز
-        "تحلیل": " | ".join([k for k,v in conds.items() if v])
-    }
-
-    # ۹) افزودن فاندامنتال
-    symbol_map = get_symbol_id_map()
-    base = symbol.split("/")[0].upper()
-    symbol_id = symbol_map.get(base)
-    if symbol_id:
-        f = fetch_fundamental_data(symbol_id)
-        if f:
-            signal["رتبه فاندامنتال"] = f"Rank: {f['rank']}, Market Cap: ${f['market_cap']:,}"
-            signal["امتیاز توسعه‌دهنده"] = f["developer_score"]
-            signal["امتیاز جامعه"] = f["community_score"]
-
-    # ۱۰) ذخیره و بازگشت
-    df_out = pd.DataFrame([signal])
-    df_out["زمان"] = datetime.utcnow()
-    df_out.to_csv(
-        SIGNAL_LOG,
-        mode='a',
-        index=False,
-        header=not pd.io.common.file_exists(SIGNAL_LOG)
-    )
-    return signal
-
-# --- اسکن کریپتو ---
+# اسکن بازار
 async def scan_all_crypto_symbols():
     exchange = ccxt.kucoin()
     await exchange.load_markets()
-    syms = [s for s in exchange.symbols if s.endswith("/USDT")]
+    symbols = [s for s in exchange.symbols if s.endswith("/USDT")]
+
     tasks = []
-    for sym in syms:
+    for sym in symbols[:30]:
         for tf in TIMEFRAMES:
             tasks.append(analyze_symbol(exchange, sym, tf))
             await asyncio.sleep(0.1)
-    res = await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks)
     await exchange.close()
-    return [r for r in res if r]
+    return [r for r in results if r]
 
-# --- اسکن فارکس (خالی) ---
+# --- فارکس (اختیاری) ---
 async def scan_all_forex_symbols():
     return []
