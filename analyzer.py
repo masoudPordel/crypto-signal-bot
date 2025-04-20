@@ -17,7 +17,7 @@ logging.basicConfig(
 TIMEFRAMES = ["5m", "15m", "1h", "4h"]
 CACHE = {}
 CACHE_TTL = 60  # ثانیه
-VOLUME_THRESHOLD = 10000
+VOLUME_THRESHOLD = 1000
 SIGNAL_LOG = "signals.csv"
 EMA_FILTER_PERIOD = 50  # قابل تنظیم
 
