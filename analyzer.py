@@ -1,21 +1,22 @@
 import pandas as pd
 import numpy as np
+import requests
 from scipy.signal import argrelextrema
 import ccxt.async_support as ccxt
 import asyncio
 import time
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # --- تنظیمات ---
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
 CACHE = {}
-CACHE_TTL = 60  # ثانیه
-VOLUME_THRESHOLD = 10000  # فیلتر حجم
+CACHE_TTL = 60
+VOLUME_THRESHOLD = 10000
 SIGNAL_LOG = "signals.csv"
 
-# --- لاگ ---
 logging.basicConfig(level=logging.INFO, filename="errors.log", format="%(asctime)s - %(levelname)s - %(message)s")
+
 
 # --- اندیکاتورها ---
 def compute_rsi(df, period=14):
@@ -25,6 +26,7 @@ def compute_rsi(df, period=14):
     rs = gain / loss.replace(0, 1e-10)
     return 100 - (100 / (1 + rs))
 
+
 def compute_atr(df, period=14):
     tr = pd.concat([
         df["high"] - df["low"],
@@ -33,10 +35,12 @@ def compute_atr(df, period=14):
     ], axis=1).max(axis=1)
     return tr.rolling(period).mean()
 
+
 def compute_bollinger_bands(df, period=20, std_dev=2):
     sma = df["close"].rolling(period).mean()
     std = df["close"].rolling(period).std()
     return sma + std_dev * std, sma - std_dev * std
+
 
 def compute_adx(df, period=14):
     df["up"] = df["high"].diff()
@@ -54,13 +58,15 @@ def compute_adx(df, period=14):
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
     return dx.rolling(window=period).mean()
 
-# --- الگوها و پرایس اکشن ---
+
+# --- الگوها ---
 def detect_pin_bar(df):
     df["body"] = abs(df["close"] - df["open"])
     df["range"] = df["high"] - df["low"]
     df["upper"] = df["high"] - df[["close", "open"]].max(axis=1)
     df["lower"] = df[["close", "open"]].min(axis=1) - df["low"]
     return (df["body"] < 0.3 * df["range"]) & ((df["upper"] > 2 * df["body"]) | (df["lower"] > 2 * df["body"]))
+
 
 def detect_engulfing(df):
     prev_open = df["open"].shift(1)
@@ -72,6 +78,7 @@ def detect_engulfing(df):
          (df["close"] < prev_open) & (df["open"] > prev_close))
     )
 
+
 def detect_elliott_wave(df):
     df["WavePoint"] = np.nan
     highs = argrelextrema(df['close'].values, np.greater, order=5)[0]
@@ -79,6 +86,35 @@ def detect_elliott_wave(df):
     df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
     df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
     return df
+
+
+# --- فاندامنتال ---
+def get_symbol_id_map():
+    try:
+        url = "https://api.coingecko.com/api/v3/coins/list"
+        response = requests.get(url)
+        data = response.json()
+        return {coin['symbol'].upper(): coin['id'] for coin in data}
+    except Exception as e:
+        logging.error(f"Error fetching symbol map: {e}")
+        return {}
+
+
+def fetch_fundamental_data(symbol_id):
+    try:
+        url = f"https://api.coingecko.com/api/v3/coins/{symbol_id}"
+        response = requests.get(url)
+        data = response.json()
+        return {
+            "market_cap": data["market_data"]["market_cap"]["usd"],
+            "rank": data["market_cap_rank"],
+            "community_score": data["community_score"],
+            "developer_score": data["developer_score"]
+        }
+    except Exception as e:
+        logging.error(f"Error fetching fundamental data for {symbol_id}: {e}")
+        return None
+
 
 # --- اندیکاتور نهایی ---
 def compute_indicators(df):
@@ -95,7 +131,8 @@ def compute_indicators(df):
     df = detect_elliott_wave(df)
     return df
 
-# --- کش داده‌ها ---
+
+# --- کش دیتا ---
 async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
     key = f"{symbol}_{tf}"
     now = time.time()
@@ -112,6 +149,7 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
         logging.error(f"Fetch error: {symbol}-{tf}: {e}")
         return None
 
+
 # --- بررسی سیگنال ---
 async def analyze_symbol(exchange, symbol, tf):
     df = await get_ohlcv_cached(exchange, symbol, tf)
@@ -121,7 +159,6 @@ async def analyze_symbol(exchange, symbol, tf):
     df = compute_indicators(df)
     last = df.iloc[-1]
 
-    # شروط سیگنال
     conds = {
         "PinBar": bool(last["PinBar"]),
         "Engulfing": bool(last["Engulfing"]),
@@ -136,6 +173,7 @@ async def analyze_symbol(exchange, symbol, tf):
         sl = last["close"] - 1.5 * last["ATR"]
         tp = last["close"] + 2 * last["ATR"]
         rr = round((tp - last["close"]) / (last["close"] - sl), 2)
+
         signal = {
             "نماد": symbol,
             "تایم‌فریم": tf,
@@ -146,32 +184,45 @@ async def analyze_symbol(exchange, symbol, tf):
             "تحلیل": " | ".join([k for k, v in conds.items() if v]),
             "ریسک به ریوارد": rr
         }
+
+        # فاندامنتال
+        symbol_map = get_symbol_id_map()
+        base = symbol.split("/")[0].upper()
+        symbol_id = symbol_map.get(base)
+        if symbol_id:
+            fundamentals = fetch_fundamental_data(symbol_id)
+            if fundamentals:
+                signal["رتبه فاندامنتال"] = f"Rank: {fundamentals['rank']}, Market Cap: ${fundamentals['market_cap']:,}"
+                signal["امتیاز توسعه‌دهنده"] = fundamentals["developer_score"]
+                signal["امتیاز جامعه"] = fundamentals["community_score"]
+
         save_signal_to_csv(signal)
         return signal
+
     return None
 
-# --- ذخیره سیگنال ---
+
+# --- ذخیره ---
 def save_signal_to_csv(signal):
     df = pd.DataFrame([signal])
     df["زمان"] = datetime.utcnow()
     df.to_csv(SIGNAL_LOG, mode='a', index=False, header=not pd.io.common.file_exists(SIGNAL_LOG))
 
-# --- اسکن کریپتو ---
-async def scan_all_crypto_symbols():
+
+# --- اجرا برای تست ---
+async def run_scan():
     exchange = ccxt.kucoin()
     await exchange.load_markets()
     symbols = [s for s in exchange.symbols if s.endswith("/USDT")]
-
-    signals = []
     tasks = []
-    for sym in symbols[:30]:  # برای تست محدود شده به 30 نماد
+
+    for sym in symbols[:30]:
         for tf in TIMEFRAMES:
             tasks.append(analyze_symbol(exchange, sym, tf))
             await asyncio.sleep(0.1)
+
     results = await asyncio.gather(*tasks)
     await exchange.close()
     return [r for r in results if r]
 
-# --- اسکن فارکس (اختیاری) ---
-async def scan_all_forex_symbols():
-    return []
+# اگر خواستی همینو مستقیم اجرا کنم و خروجی تست بگیرم بگو.
