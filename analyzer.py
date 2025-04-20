@@ -1,3 +1,5 @@
+# analyzer.py
+
 import pandas as pd
 import numpy as np
 from scipy.signal import argrelextrema
@@ -7,24 +9,17 @@ import time
 import logging
 from datetime import datetime
 
-# --- لاگ ---
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO)
 
-# --- تنظیمات ---
 TIMEFRAMES = ["1h", "4h"]
 CACHE = {}
 CACHE_TTL = 60
 VOLUME_THRESHOLD = 1000
-SIGNAL_LOG = "signals.csv"
-
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
 
-# اندیکاتورها
+# Indicator Functions
 def compute_rsi(df, period=14):
     delta = df["close"].diff()
     gain = delta.where(delta > 0, 0).rolling(period).mean()
@@ -123,10 +118,8 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
 async def analyze_symbol(exchange, symbol, tf):
     df = await get_ohlcv_cached(exchange, symbol, tf)
     if df is None or len(df) < 50:
-        logging.info(f"[{symbol}-{tf}] داده نامعتبر")
         return None
     if df["volume"].iloc[-1] < VOLUME_THRESHOLD:
-        logging.info(f"[{symbol}-{tf}] حجم پایین")
         return None
 
     df = compute_indicators(df)
@@ -142,17 +135,16 @@ async def analyze_symbol(exchange, symbol, tf):
     }
 
     score = sum(conds.values())
-    logging.info(f"[{symbol}-{tf}] شرایط: {conds} - امتیاز: {score}")
     if score >= 2:
-        sl = last["close"] - 1.5 * last["ATR"]
-        tp = last["close"] + 2 * last["ATR"]
+        sl = float(last["close"] - 1.5 * last["ATR"])
+        tp = float(last["close"] + 2 * last["ATR"])
         rr = round((tp - last["close"]) / (last["close"] - sl), 2)
         signal = {
             "نماد": symbol,
             "تایم‌فریم": tf,
-            "قیمت ورود": round(last["close"], 4),
-            "هدف سود": round(tp, 4),
-            "حد ضرر": round(sl, 4),
+            "قیمت ورود": float(last["close"]),
+            "هدف سود": float(tp),
+            "حد ضرر": float(sl),
             "سطح اطمینان": min(score * 20, 100),
             "تحلیل": " | ".join([k for k, v in conds.items() if v]),
             "ریسک به ریوارد": rr
@@ -166,23 +158,16 @@ async def scan_all_crypto_symbols():
         'enableRateLimit': True,
         'rateLimit': 2000
     })
-
     await exchange.load_markets()
-
-    usdt_symbols = [s for s in exchange.symbols if s.endswith("/USDT")]
-    symbols = usdt_symbols[:1000]  # فقط 100 نماد اول
-
+    symbols = [s for s in exchange.symbols if s.endswith("/USDT")][:1000]
     results = []
+
     chunk_size = 10
     for i in range(0, len(symbols), chunk_size):
         chunk = symbols[i:i + chunk_size]
-        tasks = []
-        for symbol in chunk:
-            for tf in TIMEFRAMES:
-                tasks.append(analyze_symbol(exchange, symbol, tf))
+        tasks = [analyze_symbol(exchange, symbol, tf) for symbol in chunk for tf in TIMEFRAMES]
         chunk_results = await asyncio.gather(*tasks)
         results.extend([res for res in chunk_results if res])
-        logging.info(f"اسکن {i + chunk_size}/{len(symbols)} نماد کامل شد.")
         await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
 
     await exchange.close()
