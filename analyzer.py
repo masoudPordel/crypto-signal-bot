@@ -19,11 +19,10 @@ CACHE = {}
 CACHE_TTL = 60
 VOLUME_THRESHOLD = 1000
 SIGNAL_LOG = "signals.csv"
-EMA_FILTER_PERIOD = 50
 
-MAX_CONCURRENT_REQUESTS = 2
-WAIT_BETWEEN_REQUESTS = 2
-WAIT_BETWEEN_CHUNKS = 60
+MAX_CONCURRENT_REQUESTS = 10
+WAIT_BETWEEN_REQUESTS = 0.5
+WAIT_BETWEEN_CHUNKS = 3
 
 # اندیکاتورها
 def compute_rsi(df, period=14):
@@ -130,16 +129,6 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.info(f"[{symbol}-{tf}] حجم پایین")
         return None
 
-    df_d = await get_ohlcv_cached(exchange, symbol, "1d", limit=200)
-    if df_d is None or len(df_d) < EMA_FILTER_PERIOD:
-        logging.info(f"[{symbol}] داده روزانه کافی نیست.")
-        return None
-    ema_daily = df_d["close"].ewm(span=EMA_FILTER_PERIOD).mean().iloc[-1]
-    close_daily = df_d["close"].iloc[-1]
-    if close_daily < ema_daily:
-        logging.info(f"[{symbol}] زیر EMA روزانه.")
-        return None
-
     df = compute_indicators(df)
     last = df.iloc[-1]
 
@@ -179,16 +168,17 @@ async def scan_all_crypto_symbols():
     })
 
     await exchange.load_markets()
-    symbols = [s for s in exchange.symbols if s.endswith("/USDT")]
-    timeframes = TIMEFRAMES
-    results = []
 
+    usdt_symbols = [s for s in exchange.symbols if s.endswith("/USDT")]
+    symbols = usdt_symbols[:100]  # فقط 100 نماد اول
+
+    results = []
     chunk_size = 10
     for i in range(0, len(symbols), chunk_size):
         chunk = symbols[i:i + chunk_size]
         tasks = []
         for symbol in chunk:
-            for tf in timeframes:
+            for tf in TIMEFRAMES:
                 tasks.append(analyze_symbol(exchange, symbol, tf))
         chunk_results = await asyncio.gather(*tasks)
         results.extend([res for res in chunk_results if res])
@@ -197,38 +187,3 @@ async def scan_all_crypto_symbols():
 
     await exchange.close()
     return results
-
-async def scan_all_forex_symbols():
-    exchange = ccxt.fxcm({
-        'enableRateLimit': True,
-        'rateLimit': 2000
-    })
-
-    try:
-        await exchange.load_markets()
-    except Exception as e:
-        logging.error(f"خطا در بارگذاری بازار فارکس: {e}")
-        return []
-
-    symbols = [s for s in exchange.symbols if any(pair in s for pair in [
-        "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD", "USD/CAD"
-    ])]
-
-    timeframes = TIMEFRAMES
-    results = []
-
-    chunk_size = 5
-    for i in range(0, len(symbols), chunk_size):
-        chunk = symbols[i:i + chunk_size]
-        tasks = []
-        for symbol in chunk:
-            for tf in timeframes:
-                tasks.append(analyze_symbol(exchange, symbol, tf))
-        chunk_results = await asyncio.gather(*tasks)
-        results.extend([res for res in chunk_results if res])
-        logging.info(f"اسکن فارکس {i + chunk_size}/{len(symbols)} نماد کامل شد.")
-        await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
-
-    await exchange.close()
-    return results
-    
