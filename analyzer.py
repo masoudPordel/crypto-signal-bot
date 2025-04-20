@@ -156,22 +156,23 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=200):
 # --- بررسی سیگنال ---
 async def analyze_symbol(exchange, symbol, tf):
     # ۱) دیتای اصلی
-    df = await get_ohlcv_cached(exchange, symbol, tf, limit=100)
-    if df is None or len(df) < 50:
-        return None
-
+    
+df = await get_ohlcv_cached(exchange, symbol, tf)
+if df is None or len(df) < 50:
+    logging.info(f"[{symbol}-{tf}] داده نامعتبر یا کم است.")
+    return None
     # ۲) فیلتر حجم و اسپایک
-    avg_vol = df["volume"].rolling(20).mean().iloc[-1]
-    if df["volume"].iloc[-1] < VOLUME_THRESHOLD or df["volume"].iloc[-1] < avg_vol * VOLUME_SPIKE_MULTIPLIER:
-        return None
+ if df["volume"].iloc[-1] < VOLUME_THRESHOLD:
+    logging.info(f"[{symbol}-{tf}] حجم پایین: {df['volume'].iloc[-1]}")
+    return None
 
     # ۳) فیلتر روند کلان (EMA200 روزانه)
-    df_d = await get_ohlcv_cached(exchange, symbol, "1d", limit=250)
-    if df_d is None or len(df_d) < 50:
-        return None
-    ema200 = df_d["close"].ewm(span=50).mean().iloc[-1]
-    if df_d["close"].iloc[-1] < ema50:
-        return None
+ df_d = await get_ohlcv_cached(exchange, symbol, "1d", limit=250)
+ema50 = df_d["close"].ewm(span=50).mean().iloc[-1]
+close_price = df_d["close"].iloc[-1]
+if close_price < ema50:
+    logging.info(f"[{symbol}] زیر EMA50 ({close_price:.2f} < {ema50:.2f})")
+    return None
 
     # ۴) محاسبهٔ اندیکاتورها
     df = compute_indicators(df)
@@ -189,8 +190,12 @@ async def analyze_symbol(exchange, symbol, tf):
         "ElliottLow":  bool(last["ElliottLow"])
     }
     score = sum(conds.values())
-    if score < 2:
+    if score >= 2:
+    logging.info(f"[{symbol}-{tf}] سیگنال معتبر با امتیاز {score}")
+else:
+    logging.info(f"[{symbol}-{tf}] سیگنال رد شد با امتیاز {score}")
         return None
+logging.info(f"[{symbol}-{tf}] شروط فعال: {conds}")
 
     # ۶) تأیید در TF بالاتر
     idx = TIMEFRAMES.index(tf)
