@@ -28,38 +28,34 @@ def remove_lock():
 
 async def send_signals():
     logging.info("در حال بررسی بازار...")
-
     try:
-        crypto_signals = await scan_all_crypto_symbols()
-        all_signals = crypto_signals
+        all_signals = await scan_all_crypto_symbols()
 
         for signal in all_signals:
-            if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل", "ریسک به ریوارد")):
+            logging.debug("سیگنال دریافتی: %s", signal)
+            required_keys = ["نماد", "قیمت ورود", "هدف سود", "حد ضرر"]
+
+            if all(k in signal for k in required_keys):
                 entry_price = float(signal["قیمت ورود"])
                 tp = float(signal["هدف سود"])
                 sl = float(signal["حد ضرر"])
-                confidence = float(signal["سطح اطمینان"])
-                rr = float(signal["ریسک به ریوارد"])
                 signal_type = "خرید" if tp > entry_price else "فروش"
-                fundamental = signal.get("فاندامنتال", "ندارد")
 
                 message = f"""📢 سیگنال {signal_type.upper()}
 
-نماد: {signal['نماد']}
-تایم‌فریم: {signal['تایم‌فریم']}
+نماد: {signal.get('نماد')}
+تایم‌فریم: {signal.get('تایم‌فریم', 'نامشخص')}
 قیمت ورود: {entry_price}
 هدف سود: {tp}
 حد ضرر: {sl}
-سطح اطمینان: {confidence}%
-ریسک به ریوارد: {rr}
+سطح اطمینان: {signal.get('سطح اطمینان', 'نامشخص')}%
+ریسک به ریوارد: {signal.get('ریسک به ریوارد', 'نامشخص')}
 
 تحلیل تکنیکال:
-{signal['تحلیل']}
+{signal.get('تحلیل', 'ندارد')}
 
 تحلیل فاندامنتال:
-{fundamental}"""
-
-                logging.info("در حال ارسال سیگنال به تلگرام:\n%s", message)
+{signal.get('فاندامنتال', 'ندارد')}""")
 
                 try:
                     await bot.send_message(chat_id=CHAT_ID, text=message)
@@ -67,14 +63,14 @@ async def send_signals():
                 except Exception as e:
                     logging.error("خطا در ارسال پیام تلگرام: %s", e)
             else:
-                logging.warning("فرمت سیگنال ناقص: %s", signal)
+                logging.warning("سیگنال ناقص: %s", signal)
     except Exception as e:
-        logging.error("خطا در دریافت یا پردازش سیگنال‌ها: %s", e)
+        logging.error("خطا در ارسال سیگنال‌ها: %s", e)
 
 async def main():
     while True:
         await send_signals()
-        await asyncio.sleep(300)  # هر ۵ دقیقه بررسی می‌کنه
+        await asyncio.sleep(300)
 
 if __name__ == "__main__":
     check_already_running()
