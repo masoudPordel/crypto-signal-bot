@@ -231,3 +231,4 @@ async def scan_all_forex_symbols():
 
     await exchange.close()
     return results
+    
