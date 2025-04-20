@@ -151,7 +151,7 @@ async def analyze_symbol(exchange, symbol, tf):
 
     score = sum(conds.values())
     logging.info(f"[{symbol}-{tf}] شرایط: {conds} - امتیاز: {score}")
-    if score >= 3:
+    if score >= 2:
         sl = last["close"] - 1.5 * last["ATR"]
         tp = last["close"] + 2 * last["ATR"]
         rr = round((tp - last["close"]) / (last["close"] - sl), 2)
