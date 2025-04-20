@@ -15,33 +15,32 @@ sent_signals = set()
 
 async def send_signals():
     logging.info("در حال بررسی بازار...")
-
     try:
         crypto_signals = await scan_all_crypto_symbols()
         forex_signals = await scan_all_forex_symbols()
 
-        # هندل کردن None
-        crypto_signals = crypto_signals or []
-        forex_signals = forex_signals or []
-
         all_signals = crypto_signals + forex_signals
 
         for signal in all_signals:
-            if all(k in signal for k in (
-                "نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر",
-                "سطح اطمینان", "تحلیل", "ریسک به ریوارد", "فاندامنتال"
-            )):
+            if all(k in signal for k in ("نماد", "قیمت ورود", "تایم‌فریم", "هدف سود", "حد ضرر", "سطح اطمینان", "تحلیل", "ریسک به ریوارد", "فاندامنتال")):
                 signal_id = (signal["نماد"], signal["تایم‌فریم"], signal["قیمت ورود"])
                 if signal_id not in sent_signals:
                     sent_signals.add(signal_id)
 
+                    # تبدیل به float برای جلوگیری از np.float64
+                    entry_price = float(signal["قیمت ورود"])
+                    tp = float(signal["هدف سود"])
+                    sl = float(signal["حد ضرر"])
+                    confidence = float(signal["سطح اطمینان"])
+                    rr = float(signal["ریسک به ریوارد"])
+
                     message = f"""نماد: {signal['نماد']}
 تایم‌فریم: {signal['تایم‌فریم']}
-قیمت ورود: {signal['قیمت ورود']}
-هدف سود: {signal['هدف سود']}
-حد ضرر: {signal['حد ضرر']}
-سطح اطمینان: {signal['سطح اطمینان']}%
-ریسک به ریوارد: {signal['ریسک به ریوارد']}
+قیمت ورود: {entry_price}
+هدف سود: {tp}
+حد ضرر: {sl}
+سطح اطمینان: {confidence}%
+ریسک به ریوارد: {rr}
 
 تحلیل تکنیکال:
 {signal['تحلیل']}
@@ -50,17 +49,15 @@ async def send_signals():
 {signal['فاندامنتال']}"""
 
                     await bot.send_message(chat_id=CHAT_ID, text=message)
-
             else:
                 logging.warning("فرمت سیگنال ناقص: %s", signal)
-
     except Exception as e:
         logging.error("خطا در ارسال سیگنال‌ها: %s", e)
 
 async def main():
     while True:
         await send_signals()
-        await asyncio.sleep(300)  # بررسی هر ۵ دقیقه
+        await asyncio.sleep(300)  # بررسی هر ۵ دقیقه یک‌بار
 
 if __name__ == "__main__":
     asyncio.run(main())
