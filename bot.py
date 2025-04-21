@@ -85,11 +85,16 @@ async def send_signals():
     except Exception as e:
         logging.error("خطا در ارسال سیگنال‌ها: %s", e)
 
+from datetime import datetime
+
 async def main():
     while True:
+        start = datetime.now()
         await send_signals()
-        logging.info("منتظر 5 دقیقه تا بررسی بعدی...")
-        await asyncio.sleep(300)
+        elapsed = (datetime.now() - start).total_seconds()
+        remaining = max(0, 300 - elapsed)
+        logging.info(f"منتظر {remaining:.2f} ثانیه تا بررسی بعدی...")
+        await asyncio.sleep(remaining)
 
 if __name__ == "__main__":
     check_already_running()
