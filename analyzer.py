@@ -113,6 +113,17 @@ def compute_indicators(df):
     df = detect_elliott_wave(df)
     return df
 
+def detect_trend(df):  # فیلتر روند بازار
+    return df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
+
+def market_psychology(df):  # روانشناسی بازار: بررسی RSI در ناحیه اشباع خرید یا فروش
+    last_rsi = df["RSI"].iloc[-1]
+    if last_rsi < 30:
+        return "اشباع فروش"
+    elif last_rsi > 70:
+        return "اشباع خرید"
+    return "نرمال"
+
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
@@ -152,8 +163,11 @@ async def analyze_symbol(exchange, symbol, tf):
         "ADX_StrongTrend": last["ADX"] > 25,
     }
 
+    trend_valid = detect_trend(df)  # بررسی روند
+    psych_state = market_psychology(df)  # وضعیت روانشناسی بازار
+
     score = sum(conds.values())
-    if score >= 3:
+    if score >= 3 and trend_valid and psych_state != "اشباع خرید":
         entry = float(last["close"])
         sl = entry - 1.5 * float(last["ATR"])
         tp = entry + 2 * float(last["ATR"])
@@ -166,8 +180,10 @@ async def analyze_symbol(exchange, symbol, tf):
             "حد ضرر": sl,
             "سطح اطمینان": min(score * 20, 100),
             "تحلیل": " | ".join([k for k, v in conds.items() if v]),
+            "روانشناسی": psych_state,
+            "روند بازار": "صعودی" if trend_valid else "نزولی",
             "ریسک به ریوارد": rr,
-            "فاندامنتال": "ندارد"  # این خط برای حفظ سازگاری پیام تلگرام
+            "فاندامنتال": "ندارد"
         }
     return None
 
