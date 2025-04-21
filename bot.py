@@ -6,7 +6,7 @@ import os
 import sys
 from analyzer import scan_all_crypto_symbols
 
-# --- لاگ ---
+# تنظیمات لاگ
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -15,8 +15,9 @@ logging.basicConfig(
 )
 
 BOT_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
-CHAT_ID    = 632886964
-LOCK_FILE  = "bot.lock"
+CHAT_ID = 632886964
+
+LOCK_FILE = "bot.lock"
 
 bot = telegram.Bot(token=BOT_TOKEN)
 
@@ -32,45 +33,50 @@ def remove_lock():
         os.remove(LOCK_FILE)
 
 async def send_signals():
-    logging.info("🔄 در حال بررسی سیگنال‌های بازار...")
+    logging.info("شروع بررسی بازار...")
+    start_time = time.time()
     try:
-        signals = await scan_all_crypto_symbols()
-        for sig in signals:
-            # کلیدهای اصلی مورد نیاز
-            required = ["نماد", "قیمت ورود", "هدف سود", "حد ضرر"]
-            if all(k in sig for k in required):
-                entry_price = float(sig["قیمت ورود"])
-                tp          = float(sig["هدف سود"])
-                sl          = float(sig["حد ضرر"])
-                stype       = "خرید" if tp > entry_price else "فروش"
+        all_signals = await scan_all_crypto_symbols()
+        logging.info(f"بررسی بازار کامل شد. زمان اجرا: {time.time() - start_time:.2f} ثانیه")
 
-                message = f"""📢 سیگنال {stype.upper()}
+        for signal in all_signals:
+            required_keys = ["نماد", "قیمت ورود", "هدف سود", "حد ضرر"]
+            if all(k in signal for k in required_keys):
+                entry_price = float(signal["قیمت ورود"])
+                tp = float(signal["هدف سود"])
+                sl = float(signal["حد ضرر"])
+                signal_type = "خرید" if tp > entry_price else "فروش"
 
-نماد: {sig.get('نماد')}
-تایم‌فریم: {sig.get('تایم‌فریم', 'نامشخص')}
+                message = f"""📢 سیگنال {signal_type.upper()}
+
+نماد: {signal.get('نماد')}
+تایم‌فریم: {signal.get('تایم‌فریم', 'نامشخص')}
 قیمت ورود: {entry_price}
 هدف سود: {tp}
 حد ضرر: {sl}
-سطح اطمینان: {sig.get('سطح اطمینان', 'نامشخص')}%
-ریسک به ریوارد: {sig.get('ریسک به ریوارد', 'نامشخص')}
+سطح اطمینان: {signal.get('سطح اطمینان', 'نامشخص')}%
+ریسک به ریوارد: {signal.get('ریسک به ریوارد', 'نامشخص')}
 
 تحلیل تکنیکال:
-{sig.get('تحلیل', 'ندارد')}"""
-
+{signal.get('تحلیل', 'ندارد')}
+"""
                 try:
+                    logging.info(f"در حال ارسال پیام برای نماد: {signal['نماد']}")
                     await bot.send_message(chat_id=CHAT_ID, text=message)
-                    logging.info("✅ سیگنال با موفقیت ارسال شد.")
+                    logging.info(f"پیام ارسال شد برای {signal['نماد']}")
+                    await asyncio.sleep(1.2)  # جلوگیری از محدودیت ارسال پیام توسط تلگرام
                 except Exception as e:
-                    logging.error("❌ خطا در ارسال پیام تلگرام: %s", e)
+                    logging.error("خطا در ارسال پیام تلگرام: %s", e)
             else:
-                logging.warning("⚠️ سیگنال ناقص: %s", sig)
+                logging.warning("سیگنال ناقص: %s", signal)
     except Exception as e:
-        logging.error("❌ خطا در ارسال سیگنال‌ها: %s", e)
+        logging.error("خطا در ارسال سیگنال‌ها: %s", e)
 
 async def main():
     while True:
         await send_signals()
-        await asyncio.sleep(300)  # هر ۵ دقیقه یک‌بار
+        logging.info("منتظر 5 دقیقه تا بررسی بعدی...")
+        await asyncio.sleep(300)
 
 if __name__ == "__main__":
     check_already_running()
