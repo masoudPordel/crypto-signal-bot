@@ -8,29 +8,20 @@ import time
 import logging
 from datetime import datetime
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()],
-    force=True
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()], force=True)
 
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 TIMEFRAMES = ["1h", "4h"]
 CACHE = {}
 CACHE_TTL = 60
 VOLUME_THRESHOLD = 1000
-
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
 
 def get_top_500_symbols_from_cmc():
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
-    headers = {
-        'Accepts': 'application/json',
-        'X-CMC_PRO_API_KEY': CMC_API_KEY,
-    }
+    headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
     params = {'start': '1', 'limit': '500', 'convert': 'USD'}
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=10)
@@ -113,17 +104,6 @@ def compute_indicators(df):
     df = detect_elliott_wave(df)
     return df
 
-def detect_trend(df):  # فیلتر روند بازار
-    return df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
-
-def market_psychology(df):  # روانشناسی بازار: بررسی RSI در ناحیه اشباع خرید یا فروش
-    last_rsi = df["RSI"].iloc[-1]
-    if last_rsi < 30:
-        return "اشباع فروش"
-    elif last_rsi > 70:
-        return "اشباع خرید"
-    return "نرمال"
-
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
@@ -154,6 +134,15 @@ async def analyze_symbol(exchange, symbol, tf):
     df = compute_indicators(df)
     last = df.iloc[-1]
 
+    trend_valid = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
+
+    if last["RSI"] < 30:
+        psych_state = "اشباع فروش"
+    elif last["RSI"] > 70:
+        psych_state = "اشباع خرید"
+    else:
+        psych_state = "متعادل"
+
     conds = {
         "PinBar": bool(last["PinBar"]),
         "Engulfing": bool(last["Engulfing"]),
@@ -163,11 +152,9 @@ async def analyze_symbol(exchange, symbol, tf):
         "ADX_StrongTrend": last["ADX"] > 25,
     }
 
-    trend_valid = detect_trend(df)  # بررسی روند
-    psych_state = market_psychology(df)  # وضعیت روانشناسی بازار
-
     score = sum(conds.values())
-    if score >= 3 and trend_valid and psych_state != "اشباع خرید":
+
+    if score >= 3 and psych_state != "اشباع خرید" and (trend_valid or psych_state == "اشباع فروش"):
         entry = float(last["close"])
         sl = entry - 1.5 * float(last["ATR"])
         tp = entry + 2 * float(last["ATR"])
@@ -181,7 +168,7 @@ async def analyze_symbol(exchange, symbol, tf):
             "سطح اطمینان": min(score * 20, 100),
             "تحلیل": " | ".join([k for k, v in conds.items() if v]),
             "روانشناسی": psych_state,
-            "روند بازار": "صعودی" if trend_valid else "نزولی",
+            "روند بازار": "صعودی" if trend_valid else "نزولی یا رنج",
             "ریسک به ریوارد": rr,
             "فاندامنتال": "ندارد"
         }
@@ -190,25 +177,17 @@ async def analyze_symbol(exchange, symbol, tf):
 async def scan_all_crypto_symbols(on_signal=None):
     exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
     await exchange.load_markets()
-
     top_coins = get_top_500_symbols_from_cmc()
-    usdt_symbols = [
-        s for s in exchange.symbols
-        if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)
-    ]
+    usdt_symbols = [s for s in exchange.symbols if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)]
 
     chunk_size = 10
     for i in range(0, len(usdt_symbols), chunk_size):
         chunk = usdt_symbols[i:i + chunk_size]
-        tasks = [asyncio.create_task(analyze_symbol(exchange, sym, tf))
-                 for sym in chunk for tf in TIMEFRAMES]
-
+        tasks = [asyncio.create_task(analyze_symbol(exchange, sym, tf)) for sym in chunk for tf in TIMEFRAMES]
         for task in asyncio.as_completed(tasks):
             sig = await task
             if sig and on_signal:
                 await on_signal(sig)
-
         logging.info(f"پیشرفت: {min(i + chunk_size, len(usdt_symbols))}/{len(usdt_symbols)}")
         await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
-
     await exchange.close()
