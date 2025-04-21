@@ -34,20 +34,38 @@ def remove_lock():
 
 async def send_signals():
     logging.info("شروع بررسی بازار...")
+
+    # ارسال پیام تستی به تلگرام
+    try:
+        await bot.send_message(chat_id=CHAT_ID, text="ربات آماده به کار است.")
+    except Exception as e:
+        logging.error(f"خطا در ارسال پیام تستی: {e}")
+        return
+
     start_time = time.time()
+
     try:
         all_signals = await scan_all_crypto_symbols()
         logging.info(f"بررسی بازار کامل شد. زمان اجرا: {time.time() - start_time:.2f} ثانیه")
+        logging.info(f"تعداد سیگنال‌های دریافتی: {len(all_signals)}")
+
+        if not all_signals:
+            logging.warning("هیچ سیگنالی برای ارسال وجود ندارد.")
+            return
 
         for signal in all_signals:
+            # تبدیل تمام مقادیر سیگنال به رشته
+            signal = {k: str(v) for k, v in signal.items()}
+
             required_keys = ["نماد", "قیمت ورود", "هدف سود", "حد ضرر"]
             if all(k in signal for k in required_keys):
-                entry_price = float(signal["قیمت ورود"])
-                tp = float(signal["هدف سود"])
-                sl = float(signal["حد ضرر"])
-                signal_type = "خرید" if tp > entry_price else "فروش"
+                try:
+                    entry_price = float(signal["قیمت ورود"])
+                    tp = float(signal["هدف سود"])
+                    sl = float(signal["حد ضرر"])
+                    signal_type = "خرید" if tp > entry_price else "فروش"
 
-                message = f"""📢 سیگنال {signal_type.upper()}
+                    message = f"""📢 سیگنال {signal_type.upper()}
 
 نماد: {signal.get('نماد')}
 تایم‌فریم: {signal.get('تایم‌فریم', 'نامشخص')}
@@ -60,13 +78,12 @@ async def send_signals():
 تحلیل تکنیکال:
 {signal.get('تحلیل', 'ندارد')}
 """
-                try:
                     logging.info(f"در حال ارسال پیام برای نماد: {signal['نماد']}")
                     await bot.send_message(chat_id=CHAT_ID, text=message)
                     logging.info(f"پیام ارسال شد برای {signal['نماد']}")
-                    await asyncio.sleep(1.2)  # جلوگیری از محدودیت ارسال پیام توسط تلگرام
+                    await asyncio.sleep(1.2)  # جلوگیری از محدودیت ارسال پیام
                 except Exception as e:
-                    logging.error("خطا در ارسال پیام تلگرام: %s", e)
+                    logging.error("خطا در تبدیل یا ارسال پیام تلگرام: %s", e)
             else:
                 logging.warning("سیگنال ناقص: %s", signal)
     except Exception as e:
