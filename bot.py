@@ -1,45 +1,103 @@
+import time
 import asyncio
 import telegram
 import logging
-from strategy_engine import analyze
-import pandas as pd
-import random
+import os
+import sys
+from analyzer import scan_all_crypto_symbols
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+    force=True
+)
 
 BOT_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
 CHAT_ID = 632886964
 
-logging.basicConfig(level=logging.INFO)
+LOCK_FILE = "bot.lock"
+bot = telegram.Bot(token=BOT_TOKEN)
 
-async def generate_fake_data():
-    ts = pd.date_range(end=pd.Timestamp.now(), periods=100, freq="1H")
-    df = pd.DataFrame(index=ts)
-    df["open"] = np.random.rand(len(df)) * 100
-    df["high"] = df["open"] + np.random.rand(len(df)) * 5
-    df["low"] = df["open"] - np.random.rand(len(df)) * 5
-    df["close"] = df["open"] + np.random.randn(len(df))
-    df["volume"] = np.random.randint(1000, 10000, size=len(df))
-    return df
+def check_already_running():
+    if os.path.exists(LOCK_FILE):
+        logging.error("ربات در حال اجراست. ابتدا آن را متوقف کن.")
+        sys.exit()
+    with open(LOCK_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+def remove_lock():
+    if os.path.exists(LOCK_FILE):
+        os.remove(LOCK_FILE)
 
 async def send_signals():
-    await bot.send_message(chat_id=CHAT_ID, text="ربات آماده ارسال سیگنال است.")
-    df = await generate_fake_data()
-    signal = analyze(df)
+    logging.info("شروع بررسی بازار...")
 
-    if signal:
-        msg = f"""📢 سیگنال {"خرید" if float(signal["هدف سود"]) > float(signal["قیمت ورود"]) else "فروش"}
+    try:
+        await bot.send_message(chat_id=CHAT_ID, text="ربات آماده به کار است.")
+    except Exception as e:
+        logging.error(f"خطا در ارسال پیام تستی: {e}")
+        return
 
-نماد: {signal['نماد']}
-تایم‌فریم: {signal['تایم‌فریم']}
-قیمت ورود: {signal['قیمت ورود']}
-هدف سود: {signal['هدف سود']}
-حد ضرر: {signal['حد ضرر']}
-سطح اطمینان: {signal['سطح اطمینان']}%
-ریسک به ریوارد: {signal['ریسک به ریوارد']}
+    start_time = time.time()
 
-تحلیل:
-{signal['تحلیل']}
+    try:
+        all_signals = await scan_all_crypto_symbols()
+        logging.info(f"بررسی بازار کامل شد. زمان اجرا: {time.time() - start_time:.2f} ثانیه")
+        logging.info(f"تعداد سیگنال‌های دریافتی: {len(all_signals)}")
+
+        if not all_signals:
+            logging.warning("هیچ سیگنالی برای ارسال وجود ندارد.")
+            return
+
+        for signal in all_signals:
+            if signal is None:
+                logging.warning("یک سیگنال تهی (None) دریافت شد و نادیده گرفته شد.")
+                continue
+
+            signal = {k: str(v) for k, v in signal.items()}
+            required_keys = ["نماد", "قیمت ورود", "هدف سود", "حد ضرر"]
+
+            if all(k in signal for k in required_keys):
+                try:
+                    entry_price = float(signal["قیمت ورود"])
+                    tp = float(signal["هدف سود"])
+                    sl = float(signal["حد ضرر"])
+                    signal_type = "خرید" if tp > entry_price else "فروش"
+
+                    message = f"""📢 سیگنال {signal_type.upper()}
+
+نماد: {signal.get('نماد')}
+تایم‌فریم: {signal.get('تایم‌فریم', 'نامشخص')}
+قیمت ورود: {entry_price}
+هدف سود: {tp}
+حد ضرر: {sl}
+سطح اطمینان: {signal.get('سطح اطمینان', 'نامشخص')}%
+ریسک به ریوارد: {signal.get('ریسک به ریوارد', 'نامشخص')}
+
+تحلیل تکنیکال:
+{signal.get('تحلیل', 'ندارد')}
 """
-        await bot.send_message(chat_id=CHAT_ID, text=msg)
+                    logging.info(f"در حال ارسال پیام برای نماد: {signal['نماد']}")
+                    await bot.send_message(chat_id=CHAT_ID, text=message)
+                    logging.info(f"پیام ارسال شد برای {signal['نماد']}")
+                    await asyncio.sleep(1.2)
+                except Exception as e:
+                    logging.error("خطا در تبدیل یا ارسال پیام تلگرام: %s", e)
+            else:
+                logging.warning("سیگنال ناقص: %s", signal)
+    except Exception as e:
+        logging.error("خطا در ارسال سیگنال‌ها: %s", e)
+
+async def main():
+    while True:
+        await send_signals()
+        logging.info("منتظر 5 دقیقه تا بررسی بعدی...")
+        await asyncio.sleep(300)
 
 if __name__ == "__main__":
-    asyncio.run(send_signals())
+    check_already_running()
+    try:
+        asyncio.run(main())
+    finally:
+        remove_lock()
