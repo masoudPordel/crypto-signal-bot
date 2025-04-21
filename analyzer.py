@@ -163,18 +163,19 @@ async def analyze_symbol(exchange, symbol, tf):
     score = sum(conds.values())
     logging.info(f"[{symbol}-{tf}] conditions: {conds}, score={score}")
     if score >= 2:
-        sl = float(last["close"] - 1.5 * last["ATR"])
-        tp = float(last["close"] + 2 * last["ATR"])
-        rr = round((tp - last["close"]) / (last["close"] - sl), 2)
+        entry = float(last["close"])
+        sl = float(entry - 1.5 * float(last["ATR"]))
+        tp = float(entry + 2 * float(last["ATR"]))
+        rr = round((tp - entry) / (entry - sl), 2)
         signal = {
-            "نماد": symbol,
-            "تایم‌فریم": tf,
-            "قیمت ورود": float(last["close"]),
-            "هدف سود": tp,
-            "حد ضرر": sl,
-            "سطح اطمینان": min(score * 20, 100),
+            "نماد": str(symbol),
+            "تایم‌فریم": str(tf),
+            "قیمت ورود": float(entry),
+            "هدف سود": float(tp),
+            "حد ضرر": float(sl),
+            "سطح اطمینان": int(min(score * 20, 100)),
             "تحلیل": " | ".join([k for k,v in conds.items() if v]),
-            "ریسک به ریوارد": rr
+            "ریسک به ریوارد": float(rr)
         }
         logging.info(f"✅ Signal: {signal}")
         return signal
