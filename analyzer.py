@@ -8,7 +8,6 @@ import time
 import logging
 from datetime import datetime
 
-# --- لاگ ---
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -16,7 +15,6 @@ logging.basicConfig(
     force=True
 )
 
-# --- تنظیمات ---
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 TIMEFRAMES = ["1h", "4h"]
 CACHE = {}
@@ -27,27 +25,21 @@ MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
 
-# --- دریافت ۵۰۰ نماد برتر از CoinMarketCap ---
 def get_top_500_symbols_from_cmc():
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
     headers = {
         'Accepts': 'application/json',
         'X-CMC_PRO_API_KEY': CMC_API_KEY,
     }
-    params = {
-        'start': '1',
-        'limit': '500',
-        'convert': 'USD'
-    }
+    params = {'start': '1', 'limit': '500', 'convert': 'USD'}
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         data = resp.json()
         return [entry['symbol'] for entry in data['data']]
     except Exception as e:
-        logging.error(f"خطا در دریافت لیست CMC: {e}")
+        logging.error(f"CMC error: {e}")
         return []
 
-# --- اندیکاتورها ---
 def compute_rsi(df, period=14):
     delta = df["close"].diff()
     gain = delta.where(delta > 0, 0).rolling(period).mean()
@@ -102,21 +94,21 @@ def detect_engulfing(df):
 def detect_elliott_wave(df):
     df["WavePoint"] = np.nan
     highs = argrelextrema(df['close'].values, np.greater, order=5)[0]
-    lows  = argrelextrema(df['close'].values, np.less,   order=5)[0]
+    lows = argrelextrema(df['close'].values, np.less, order=5)[0]
     df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
-    df.loc[df.index[lows],  "WavePoint"] = df.loc[df.index[lows],  "close"]
+    df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
     return df
 
 def compute_indicators(df):
     df["EMA12"] = df["close"].ewm(span=12).mean()
     df["EMA26"] = df["close"].ewm(span=26).mean()
-    df["MACD"]  = df["EMA12"] - df["EMA26"]
-    df["Signal"]= df["MACD"].ewm(span=9).mean()
-    df["RSI"]   = compute_rsi(df)
-    df["ATR"]   = compute_atr(df)
-    df["ADX"]   = compute_adx(df)
+    df["MACD"] = df["EMA12"] - df["EMA26"]
+    df["Signal"] = df["MACD"].ewm(span=9).mean()
+    df["RSI"] = compute_rsi(df)
+    df["ATR"] = compute_atr(df)
+    df["ADX"] = compute_adx(df)
     df["BB_upper"], df["BB_lower"] = compute_bollinger_bands(df)
-    df["PinBar"]    = detect_pin_bar(df)
+    df["PinBar"] = detect_pin_bar(df)
     df["Engulfing"] = detect_engulfing(df)
     df = detect_elliott_wave(df)
     return df
@@ -163,32 +155,32 @@ async def analyze_symbol(exchange, symbol, tf):
     score = sum(conds.values())
     if score >= 2:
         entry = float(last["close"])
-        sl    = entry - 1.5 * float(last["ATR"])
-        tp    = entry + 2   * float(last["ATR"])
-        rr    = round((tp - entry) / (entry - sl), 2)
+        sl = entry - 1.5 * float(last["ATR"])
+        tp = entry + 2 * float(last["ATR"])
+        rr = round((tp - entry) / (entry - sl), 2)
         return {
-            "نماد":            symbol,
-            "تایم‌فریم":      tf,
-            "قیمت ورود":      entry,
-            "هدف سود":        tp,
-            "حد ضرر":         sl,
-            "سطح اطمینان":    min(score * 20, 100),
-            "تحلیل":          " | ".join([k for k,v in conds.items() if v]),
-            "ریسک به ریوارد": rr
+            "نماد": symbol,
+            "تایم‌فریم": tf,
+            "قیمت ورود": entry,
+            "هدف سود": tp,
+            "حد ضرر": sl,
+            "سطح اطمینان": min(score * 20, 100),
+            "تحلیل": " | ".join([k for k, v in conds.items() if v]),
+            "ریسک به ریوارد": rr,
+            "فاندامنتال": "ندارد"  # این خط برای حفظ سازگاری پیام تلگرام
         }
     return None
 
 async def scan_all_crypto_symbols(on_signal=None):
-    exchange = ccxt.kucoin({'enableRateLimit': True,'rateLimit':2000})
+    exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
     await exchange.load_markets()
 
-    top_coins   = get_top_500_symbols_from_cmc()
+    top_coins = get_top_500_symbols_from_cmc()
     usdt_symbols = [
         s for s in exchange.symbols
         if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)
     ]
 
-    results = []
     chunk_size = 10
     for i in range(0, len(usdt_symbols), chunk_size):
         chunk = usdt_symbols[i:i + chunk_size]
@@ -197,13 +189,10 @@ async def scan_all_crypto_symbols(on_signal=None):
 
         for task in asyncio.as_completed(tasks):
             sig = await task
-            if sig:
-                results.append(sig)
-                if on_signal:
-                    await on_signal(sig)
+            if sig and on_signal:
+                await on_signal(sig)
 
-        logging.info(f"اسکن {min(i+chunk_size, len(usdt_symbols))}/{len(usdt_symbols))} نماد کامل شد.")
+        logging.info(f"پیشرفت: {min(i + chunk_size, len(usdt_symbols))}/{len(usdt_symbols)}")
         await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
 
     await exchange.close()
-    return results
