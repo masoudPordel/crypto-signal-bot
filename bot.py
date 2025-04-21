@@ -4,8 +4,9 @@ import telegram
 import logging
 import os
 import sys
-from analyzer import scan_all_crypto_symbols
+from analyzer import scan_all_crypto_symbols  # اطمینان حاصل کن فایل analyzer.py در کنار این فایل وجود داره
 
+# تنظیمات لاگ
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -13,11 +14,13 @@ logging.basicConfig(
     force=True
 )
 
+# تنظیمات تلگرام
 BOT_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
 CHAT_ID = 632886964
-
-LOCK_FILE = "bot.lock"
 bot = telegram.Bot(token=BOT_TOKEN)
+
+# فایل لاک برای جلوگیری از اجرای چندباره
+LOCK_FILE = "bot.lock"
 
 def check_already_running():
     if os.path.exists(LOCK_FILE):
@@ -96,6 +99,7 @@ async def main():
         await asyncio.sleep(300)
 
 if __name__ == "__main__":
+    print("STARTED BOT SCRIPT")  # فقط برای اطمینان از اینکه این فایل اجرا شده
     check_already_running()
     try:
         asyncio.run(main())
