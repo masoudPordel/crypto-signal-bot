@@ -13,7 +13,7 @@ logging.basicConfig(
     force=True
 )
 
-BOT_TOKEN = "7914790659:AAGQenCqPQQyRUbBJDR0CH_wG_s7rluT2_I"
+BOT_TOKEN = "8111192844:AAHuVZYs6RolBhdqPpTWW9g7ksGRaq3p0WA"
 CHAT_ID = 632886964
 
 LOCK_FILE = "bot.lock"
