@@ -1,6 +1,3 @@
-# فایل کامل analyzer.py
-# بدون هیچ تغییری در استراتژی‌ها، فقط بهینه‌سازی شده برای برگشت درست سیگنال
-
 import requests
 import pandas as pd
 import numpy as np
@@ -11,6 +8,7 @@ import time
 import logging
 from datetime import datetime
 
+# --- لاگ ---
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -18,19 +16,29 @@ logging.basicConfig(
     force=True
 )
 
+# --- تنظیمات ---
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 TIMEFRAMES = ["1h", "4h"]
 CACHE = {}
 CACHE_TTL = 60
 VOLUME_THRESHOLD = 1000
+
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
 
+# --- دریافت ۵۰۰ نماد برتر از CoinMarketCap ---
 def get_top_500_symbols_from_cmc():
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
-    headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
-    params = {'start': '1', 'limit': '500', 'convert': 'USD'}
+    headers = {
+        'Accepts': 'application/json',
+        'X-CMC_PRO_API_KEY': CMC_API_KEY,
+    }
+    params = {
+        'start': '1',
+        'limit': '500',
+        'convert': 'USD'
+    }
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         data = resp.json()
@@ -39,6 +47,7 @@ def get_top_500_symbols_from_cmc():
         logging.error(f"خطا در دریافت لیست CMC: {e}")
         return []
 
+# --- اندیکاتورها ---
 def compute_rsi(df, period=14):
     delta = df["close"].diff()
     gain = delta.where(delta > 0, 0).rolling(period).mean()
@@ -152,12 +161,13 @@ async def analyze_symbol(exchange, symbol, tf):
     }
 
     score = sum(conds.values())
+    logging.info(f"[{symbol}-{tf}] conditions: {conds}, score={score}")
     if score >= 2:
         entry = float(last["close"])
         sl = float(entry - 1.5 * float(last["ATR"]))
         tp = float(entry + 2 * float(last["ATR"]))
         rr = round((tp - entry) / (entry - sl), 2)
-        return {
+        signal = {
             "نماد": str(symbol),
             "تایم‌فریم": str(tf),
             "قیمت ورود": float(entry),
@@ -167,6 +177,8 @@ async def analyze_symbol(exchange, symbol, tf):
             "تحلیل": " | ".join([k for k,v in conds.items() if v]),
             "ریسک به ریوارد": float(rr)
         }
+        logging.info(f"✅ Signal: {signal}")
+        return signal
     return None
 
 async def scan_all_crypto_symbols():
@@ -186,6 +198,7 @@ async def scan_all_crypto_symbols():
         tasks = [analyze_symbol(exchange, sym, tf) for sym in chunk for tf in TIMEFRAMES]
         res = await asyncio.gather(*tasks)
         results.extend([r for r in res if r])
+        logging.info(f"Scanned {i+chunk_size}/{len(usdt_symbols)} symbols")
         await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
 
     await exchange.close()
