@@ -143,7 +143,7 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
 
 async def analyze_symbol(exchange, symbol, tf):
     df = await get_ohlcv_cached(exchange, symbol, tf)
-    if df is None or len(df) < 50: 
+    if df is None or len(df) < 50:
         return None
     if df["volume"].iloc[-1] < VOLUME_THRESHOLD:
         return None
@@ -161,33 +161,30 @@ async def analyze_symbol(exchange, symbol, tf):
     }
 
     score = sum(conds.values())
-    logging.info(f"[{symbol}-{tf}] conditions: {conds}, score={score}")
     if score >= 2:
         entry = float(last["close"])
-        sl = float(entry - 1.5 * float(last["ATR"]))
-        tp = float(entry + 2 * float(last["ATR"]))
-        rr = round((tp - entry) / (entry - sl), 2)
-        signal = {
-            "نماد": str(symbol),
-            "تایم‌فریم": str(tf),
-            "قیمت ورود": float(entry),
-            "هدف سود": float(tp),
-            "حد ضرر": float(sl),
-            "سطح اطمینان": int(min(score * 20, 100)),
-            "تحلیل": " | ".join([k for k,v in conds.items() if v]),
-            "ریسک به ریوارد": float(rr)
+        sl    = entry - 1.5 * float(last["ATR"])
+        tp    = entry + 2   * float(last["ATR"])
+        rr    = round((tp - entry) / (entry - sl), 2)
+        return {
+            "نماد":            symbol,
+            "تایم‌فریم":      tf,
+            "قیمت ورود":      entry,
+            "هدف سود":        tp,
+            "حد ضرر":         sl,
+            "سطح اطمینان":    min(score * 20, 100),
+            "تحلیل":          " | ".join([k for k,v in conds.items() if v]),
+            "ریسک به ریوارد": rr
         }
-        logging.info(f"✅ Signal: {signal}")
-        return signal
     return None
 
-async def scan_all_crypto_symbols():
+async def scan_all_crypto_symbols(on_signal=None):
     exchange = ccxt.kucoin({'enableRateLimit': True,'rateLimit':2000})
     await exchange.load_markets()
 
-    top_coins = get_top_500_symbols_from_cmc()
+    top_coins   = get_top_500_symbols_from_cmc()
     usdt_symbols = [
-        s for s in exchange.symbols 
+        s for s in exchange.symbols
         if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)
     ]
 
@@ -195,10 +192,17 @@ async def scan_all_crypto_symbols():
     chunk_size = 10
     for i in range(0, len(usdt_symbols), chunk_size):
         chunk = usdt_symbols[i:i + chunk_size]
-        tasks = [analyze_symbol(exchange, sym, tf) for sym in chunk for tf in TIMEFRAMES]
-        res = await asyncio.gather(*tasks)
-        results.extend([r for r in res if r])
-        logging.info(f"Scanned {i+chunk_size}/{len(usdt_symbols)} symbols")
+        tasks = [asyncio.create_task(analyze_symbol(exchange, sym, tf))
+                 for sym in chunk for tf in TIMEFRAMES]
+
+        for task in asyncio.as_completed(tasks):
+            sig = await task
+            if sig:
+                results.append(sig)
+                if on_signal:
+                    await on_signal(sig)
+
+        logging.info(f"اسکن {min(i+chunk_size, len(usdt_symbols))}/{len(usdt_symbols))} نماد کامل شد.")
         await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
 
     await exchange.close()
