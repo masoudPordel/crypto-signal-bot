@@ -154,23 +154,23 @@ async def analyze_symbol(exchange, symbol, tf):
 
     score = sum(conds.values())
 
-    if score >= 3 and psych_state != "اشباع خرید" and (trend_valid or psych_state == "اشباع فروش"):
+    if score >= 4 and psych_state != "اشباع خرید" and (trend_valid or psych_state == "اشباع فروش"):
         entry = float(last["close"])
         sl = entry - 1.5 * float(last["ATR"])
         tp = entry + 2 * float(last["ATR"])
         rr = round((tp - entry) / (entry - sl), 2)
         return {
-‎            "نماد": symbol,
-‎            "تایم‌فریم": tf,
-‎            "قیمت ورود": entry,
-‎            "هدف سود": tp,
-‎            "حد ضرر": sl,
-‎            "سطح اطمینان": min(score * 20, 100),
-‎            "تحلیل": " | ".join([k for k, v in conds.items() if v]),
-‎            "روانشناسی": psych_state,
-‎            "روند بازار": "صعودی" if trend_valid else "نزولی یا رنج",
-‎            "ریسک به ریوارد": rr,
-‎            "فاندامنتال": "ندارد"
+            "نماد": symbol,
+            "تایم‌فریم": tf,
+            "قیمت ورود": entry,
+            "هدف سود": tp,
+            "حد ضرر": sl,
+            "سطح اطمینان": min(score * 20, 100),
+            "تحلیل": " | ".join([k for k, v in conds.items() if v]),
+            "روانشناسی": psych_state,
+            "روند بازار": "صعودی" if trend_valid else "نزولی یا رنج",
+            "ریسک به ریوارد": rr,
+            "فاندامنتال": "ندارد"
         }
     return None
 
