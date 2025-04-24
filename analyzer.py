@@ -1,4 +1,3 @@
-import os
 import requests
 import pandas as pd
 import numpy as np
@@ -7,59 +6,31 @@ import ccxt.async_support as ccxt
 import asyncio
 import time
 import logging
-import pickle
 from datetime import datetime
 
-# Logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()], force=True)
 
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
-
-# Constants
 TIMEFRAMES = ["1h", "4h"]
+CACHE = {}
 CACHE_TTL = 60
 VOLUME_THRESHOLD = 1000
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
-CACHE_FILE_PATH = "cache.pkl"
-
-# Persistent Cache
-def load_cache():
-    if os.path.exists(CACHE_FILE_PATH):
-        try:
-            with open(CACHE_FILE_PATH, "rb") as f:
-                return pickle.load(f)
-        except Exception as e:
-            logging.warning(f"Cache load error: {e}")
-    return {}
-
-def save_cache():
-    with open(CACHE_FILE_PATH, "wb") as f:
-        pickle.dump(CACHE, f)
-
-CACHE = load_cache()
-
-def retry_request(func, retries=3, delay=3):
-    for i in range(retries):
-        try:
-            return func()
-        except Exception as e:
-            logging.warning(f"Retry {i+1}/{retries} failed: {e}")
-            time.sleep(delay)
-    raise Exception(f"Failed after {retries} retries.")
 
 def get_top_500_symbols_from_cmc():
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
     headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
     params = {'start': '1', 'limit': '500', 'convert': 'USD'}
-    def request_func():
+    try:
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         data = resp.json()
         return [entry['symbol'] for entry in data['data']]
-    return retry_request(request_func, retries=3)
+    except Exception as e:
+        logging.error(f"CMC error: {e}")
+        return []
 
-# Indicator calculations (همون قبلی‌ها بدون تغییر برای حفظ دقت)
 def compute_rsi(df, period=14):
     delta = df["close"].diff()
     gain = delta.where(delta > 0, 0).rolling(period).mean()
@@ -133,7 +104,6 @@ def compute_indicators(df):
     df = detect_elliott_wave(df)
     return df
 
-# Async handling
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
@@ -149,7 +119,6 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
             df.set_index("timestamp", inplace=True)
             CACHE[key] = {"data": df.copy(), "time": now}
-            save_cache()
             return df
         except Exception as e:
             logging.error(f"Fetch error {symbol}-{tf}: {e}")
@@ -164,9 +133,16 @@ async def analyze_symbol(exchange, symbol, tf):
 
     df = compute_indicators(df)
     last = df.iloc[-1]
+
     trend_valid = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
 
-    psych_state = "اشباع فروش" if last["RSI"] < 30 else "اشباع خرید" if last["RSI"] > 70 else "متعادل"
+    if last["RSI"] < 30:
+        psych_state = "اشباع فروش"
+    elif last["RSI"] > 70:
+        psych_state = "اشباع خرید"
+    else:
+        psych_state = "متعادل"
+
     conds = {
         "PinBar": bool(last["PinBar"]),
         "Engulfing": bool(last["Engulfing"]),
@@ -177,23 +153,24 @@ async def analyze_symbol(exchange, symbol, tf):
     }
 
     score = sum(conds.values())
-    if score >= 3 and psych_state != "اشباع خرید" and (trend_valid or psych_state == "اشباع فروش"):
+
+    if score >= 4 and psych_state != "اشباع خرید" and (trend_valid or psych_state == "اشباع فروش"):
         entry = float(last["close"])
         sl = entry - 1.5 * float(last["ATR"])
         tp = entry + 2 * float(last["ATR"])
         rr = round((tp - entry) / (entry - sl), 2)
         return {
-            "نماد": symbol,
-            "تایم‌فریم": tf,
-            "قیمت ورود": entry,
-            "هدف سود": tp,
-            "حد ضرر": sl,
-            "سطح اطمینان": min(score * 20, 100),
-            "تحلیل": " | ".join([k for k, v in conds.items() if v]),
-            "روانشناسی": psych_state,
-            "روند بازار": "صعودی" if trend_valid else "نزولی یا رنج",
-            "ریسک به ریوارد": rr,
-            "فاندامنتال": "ندارد"
+‎            "نماد": symbol,
+‎            "تایم‌فریم": tf,
+‎            "قیمت ورود": entry,
+‎            "هدف سود": tp,
+‎            "حد ضرر": sl,
+‎            "سطح اطمینان": min(score * 20, 100),
+‎            "تحلیل": " | ".join([k for k, v in conds.items() if v]),
+‎            "روانشناسی": psych_state,
+‎            "روند بازار": "صعودی" if trend_valid else "نزولی یا رنج",
+‎            "ریسک به ریوارد": rr,
+‎            "فاندامنتال": "ندارد"
         }
     return None
 
