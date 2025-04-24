@@ -9,14 +9,11 @@ import time
 import logging
 import pickle
 from datetime import datetime
-from dotenv import load_dotenv
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()], force=True)
 
-# Load .env variables
-load_dotenv()
-CMC_API_KEY = os.getenv("7fc7dc4d-2d30-4c83-9836-875f9e0f74c7")
+CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 
 # Constants
 TIMEFRAMES = ["1h", "4h"]
