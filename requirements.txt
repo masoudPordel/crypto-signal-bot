@@ -9,4 +9,3 @@ numpy
 backtrader
 scipy
 ccxt
-python-dotenv
