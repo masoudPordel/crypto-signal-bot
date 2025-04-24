@@ -154,7 +154,7 @@ async def analyze_symbol(exchange, symbol, tf):
 
     score = sum(conds.values())
 
-    if score >= 3 and psych_state != "اشباع خرید" and (trend_valid or psych_state == "اشباع فروش"):
+    if score >= 4 and psych_state != "اشباع خرید" and (trend_valid or psych_state == "اشباع فروش"):
         entry = float(last["close"])
         sl = entry - 1.5 * float(last["ATR"])
         tp = entry + 2 * float(last["ATR"])
