@@ -8,7 +8,12 @@ import time
 import logging
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()], force=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+    force=True
+)
 
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 TIMEFRAMES = ["1h", "4h"]
@@ -72,14 +77,19 @@ def detect_pin_bar(df):
     df["range"] = df["high"] - df["low"]
     df["upper"] = df["high"] - df[["close", "open"]].max(axis=1)
     df["lower"] = df[["close", "open"]].min(axis=1) - df["low"]
-    return (df["body"] < 0.3 * df["range"]) & ((df["upper"] > 2 * df["body"]) | (df["lower"] > 2 * df["body"]))
+    return (df["body"] < 0.3 * df["range"]) & (
+        (df["upper"] > 2 * df["body"]) | (df["lower"] > 2 * df["body"])
+    )
 
 def detect_engulfing(df):
     prev_o = df["open"].shift(1)
     prev_c = df["close"].shift(1)
     return (
-        ((df["close"] > df["open"]) & (prev_c < prev_o) & (df["close"] > prev_o) & (df["open"] < prev_c)) |
-        ((df["close"] < df["open"]) & (prev_c > prev_o) & (df["close"] < prev_o) & (df["open"] > prev_c))
+        ((df["close"] > df["open"]) & (prev_c < prev_o) &
+         (df["close"] > prev_o) & (df["open"] < prev_c))
+        |
+        ((df["close"] < df["open"]) & (prev_c > prev_o) &
+         (df["close"] < prev_o) & (df["open"] > prev_c))
     )
 
 def detect_elliott_wave(df):
@@ -97,7 +107,7 @@ def detect_support_resistance(df, window=10):
     support = lows[(lows.shift(1) > lows) & (lows.shift(-1) > lows)]
     recent_resistance = resistance[-window:].max()
     recent_support = support[-window:].min()
-    return recent_support, recent_resistance
+    return recent_support, recent_support, recent_resistance, recent_support
 
 def compute_indicators(df):
     df["EMA12"] = df["close"].ewm(span=12).mean()
@@ -142,60 +152,118 @@ async def analyze_symbol(exchange, symbol, tf):
 
     df = compute_indicators(df)
     last = df.iloc[-1]
-    trend_valid = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
+    # trend for long
+    long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
+    # trend for short
+    short_trend = df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1]
 
-    support, resistance = detect_support_resistance(df)
+    # support/resistance
+    support, _, resistance, _ = detect_support_resistance(df)
+    # skip long if near resistance
     if abs(last["close"] - resistance) / last["close"] < 0.01:
-        logging.info(f"{symbol}-{tf} نزدیک مقاومت هست، سیگنال رد شد.")
+        logging.info(f"{symbol}-{tf}: نزدیک مقاومت، سیگنال رد شد")
+        return None
+    # skip short if near support
+    if abs(last["close"] - support) / last["close"] < 0.01:
+        logging.info(f"{symbol}-{tf}: نزدیک حمایت، سیگنال شورت رد شد")
+        # continue to check for long in next calls
+        # but for symmetry we return None here
         return None
 
-    if last["RSI"] < 30:
-        psych_state = "اشباع فروش"
-    elif last["RSI"] > 70:
-        psych_state = "اشباع خرید"
-    else:
-        psych_state = "متعادل"
+    # prepare pinbar and engulfing direction
+    body = last["body"]
+    bullish_pin = last["PinBar"] and last["lower"] > 2 * body
+    bearish_pin = last["PinBar"] and last["upper"] > 2 * body
+    bullish_engulf = last["Engulfing"] and last["close"] > last["open"]
+    bearish_engulf = last["Engulfing"] and last["close"] < last["open"]
 
-    conds = {
-        "PinBar": bool(last["PinBar"]),
-        "Engulfing": bool(last["Engulfing"]),
+    # RSI psychological state
+    rsi = last["RSI"]
+    psych_long = "اشباع فروش" if rsi < 30 else "اشباع خرید" if rsi > 70 else "متعادل"
+    psych_short = "اشباع خرید" if rsi > 70 else "اشباع فروش" if rsi < 30 else "متعادل"
+
+    # conditions for long
+    conds_long = {
+        "PinBar": bullish_pin,
+        "Engulfing": bullish_engulf,
         "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1],
         "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
-        "RSI_Oversold": last["RSI"] < 30,
+        "RSI_Oversold": rsi < 30,
         "ADX_StrongTrend": last["ADX"] > 25,
     }
+    score_long = sum(conds_long.values())
 
-    score = sum(conds.values())
-    if score >= 4 and psych_state != "اشباع خرید" and (trend_valid or psych_state == "اشباع فروش"):
+    # conditions for short
+    conds_short = {
+        "PinBar": bearish_pin,
+        "Engulfing": bearish_engulf,
+        "EMA_Cross": df["EMA12"].iloc[-2] > df["EMA26"].iloc[-2] and df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1],
+        "MACD_Cross": df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1],
+        "RSI_Overbought": rsi > 70,
+        "ADX_StrongTrend": last["ADX"] > 25,
+    }
+    score_short = sum(conds_short.values())
+
+    # generate long signal
+    if score_long >= 4 and psych_long != "اشباع خرید" and (long_trend or psych_long == "اشباع فروش"):
         entry = float(last["close"])
         sl = entry - 1.5 * float(last["ATR"])
         tp = entry + 2 * float(last["ATR"])
         rr = round((tp - entry) / (entry - sl), 2)
         return {
+            "نوع معامله": "Long",
             "نماد": symbol,
             "تایم‌فریم": tf,
             "قیمت ورود": entry,
-            "هدف سود": tp,
             "حد ضرر": sl,
-            "سطح اطمینان": min(score * 20, 100),
-            "تحلیل": " | ".join([k for k, v in conds.items() if v]),
-            "روانشناسی": psych_state,
-            "روند بازار": "صعودی" if trend_valid else "نزولی یا رنج",
+            "هدف سود": tp,
             "ریسک به ریوارد": rr,
+            "سطح اطمینان": min(score_long * 20, 100),
+            "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
+            "روانشناسی": psych_long,
+            "روند بازار": "صعودی",
             "فاندامنتال": "ندارد"
         }
+
+    # generate short signal
+    if score_short >= 4 and psych_short != "اشباع فروش" and (short_trend or psych_short == "اشباع خرید"):
+        entry = float(last["close"])
+        sl = entry + 1.5 * float(last["ATR"])
+        tp = entry - 2 * float(last["ATR"])
+        rr = round((entry - tp) / (sl - entry), 2)
+        return {
+            "نوع معامله": "Short",
+            "نماد": symbol,
+            "تایم‌فریم": tf,
+            "قیمت ورود": entry,
+            "حد ضرر": sl,
+            "هدف سود": tp,
+            "ریسک به ریوارد": rr,
+            "سطح اطمینان": min(score_short * 20, 100),
+            "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
+            "روانشناسی": psych_short,
+            "روند بازار": "نزولی",
+            "فاندامنتال": "ندارد"
+        }
+
     return None
 
 async def scan_all_crypto_symbols(on_signal=None):
     exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
     await exchange.load_markets()
     top_coins = get_top_500_symbols_from_cmc()
-    usdt_symbols = [s for s in exchange.symbols if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)]
+    usdt_symbols = [
+        s for s in exchange.symbols
+        if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)
+    ]
 
     chunk_size = 10
     for i in range(0, len(usdt_symbols), chunk_size):
         chunk = usdt_symbols[i:i + chunk_size]
-        tasks = [asyncio.create_task(analyze_symbol(exchange, sym, tf)) for sym in chunk for tf in TIMEFRAMES]
+        tasks = [
+            asyncio.create_task(analyze_symbol(exchange, sym, tf))
+            for sym in chunk for tf in TIMEFRAMES
+        ]
         for task in asyncio.as_completed(tasks):
             sig = await task
             if sig and on_signal:
