@@ -225,7 +225,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short = sum(conds_short.values())
 
     # Long entry
-    if score_long >= 4 and psych_long != "اشباع خرید" and (
+    if score_long >= 3 and psych_long != "اشباع خرید" and (
         long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)
     ):
         entry = float(last["close"])
@@ -248,7 +248,7 @@ async def analyze_symbol(exchange, symbol, tf):
         }
 
     # Short entry
-    if score_short >= 4 and psych_short != "اشباع فروش" and (
+    if score_short >= 3 and psych_short != "اشباع فروش" and (
         short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)
     ):
         entry = float(last["close"])
