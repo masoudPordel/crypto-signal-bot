@@ -90,6 +90,15 @@ def detect_elliott_wave(df):
     df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
     return df
 
+def detect_support_resistance(df, window=10):
+    highs = df['high']
+    lows = df['low']
+    resistance = highs[(highs.shift(1) < highs) & (highs.shift(-1) < highs)]
+    support = lows[(lows.shift(1) > lows) & (lows.shift(-1) > lows)]
+    recent_resistance = resistance[-window:].max()
+    recent_support = support[-window:].min()
+    return recent_support, recent_resistance
+
 def compute_indicators(df):
     df["EMA12"] = df["close"].ewm(span=12).mean()
     df["EMA26"] = df["close"].ewm(span=26).mean()
@@ -133,8 +142,12 @@ async def analyze_symbol(exchange, symbol, tf):
 
     df = compute_indicators(df)
     last = df.iloc[-1]
-
     trend_valid = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
+
+    support, resistance = detect_support_resistance(df)
+    if abs(last["close"] - resistance) / last["close"] < 0.01:
+        logging.info(f"{symbol}-{tf} نزدیک مقاومت هست، سیگنال رد شد.")
+        return None
 
     if last["RSI"] < 30:
         psych_state = "اشباع فروش"
@@ -153,8 +166,7 @@ async def analyze_symbol(exchange, symbol, tf):
     }
 
     score = sum(conds.values())
-
-    if score >= 3 and psych_state != "اشباع خرید" and (trend_valid or psych_state == "اشباع فروش"):
+    if score >= 4 and psych_state != "اشباع خرید" and (trend_valid or psych_state == "اشباع فروش"):
         entry = float(last["close"])
         sl = entry - 1.5 * float(last["ATR"])
         tp = entry + 2 * float(last["ATR"])
