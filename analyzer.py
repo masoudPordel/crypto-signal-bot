@@ -6,7 +6,7 @@ import ccxt.async_support as ccxt
 import asyncio
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logging.basicConfig(
     level=logging.INFO,
@@ -147,103 +147,112 @@ async def analyze_symbol(exchange, symbol, tf):
     df = await get_ohlcv_cached(exchange, symbol, tf)
     if df is None or len(df) < 50:
         return None
-    if df["volume"].iloc[-1] < VOLUME_THRESHOLD:
+
+    # dynamic volume filter (avg of last 20)
+    vol_avg20 = df["volume"].rolling(20).mean().iloc[-1]
+    if df["volume"].iloc[-1] < max(VOLUME_THRESHOLD, vol_avg20):
         return None
 
     df = compute_indicators(df)
     last = df.iloc[-1]
-    # trend for long
+
     long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
-    # trend for short
     short_trend = df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1]
 
-    # support/resistance
+    # multi-timeframe confirmation for 1h via 4h
+    if tf == "1h":
+        df4 = await get_ohlcv_cached(exchange, symbol, "4h")
+        if df4 is not None and len(df4) >= 50:
+            ema12_4h = df4["close"].ewm(span=12).mean().iloc[-1]
+            ema26_4h = df4["close"].ewm(span=26).mean().iloc[-1]
+            trend4h = ema12_4h > ema26_4h
+            if long_trend and not trend4h:
+                return None
+            if short_trend and trend4h:
+                return None
+
+    # support/resistance filter
     support, _, resistance, _ = detect_support_resistance(df)
-    # skip long if near resistance
-    if abs(last["close"] - resistance) / last["close"] < 0.01:
-        logging.info(f"{symbol}-{tf}: نزدیک مقاومت، سیگنال رد شد")
+    if long_trend and abs(last["close"] - resistance) / last["close"] < 0.01:
         return None
-    # skip short if near support
-    if abs(last["close"] - support) / last["close"] < 0.01:
-        logging.info(f"{symbol}-{tf}: نزدیک حمایت، سیگنال شورت رد شد")
-        # continue to check for long in next calls
-        # but for symmetry we return None here
+    if short_trend and abs(last["close"] - support) / last["close"] < 0.01:
         return None
 
-    # prepare pinbar and engulfing direction
+    # candle pattern signals
     body = last["body"]
     bullish_pin = last["PinBar"] and last["lower"] > 2 * body
     bearish_pin = last["PinBar"] and last["upper"] > 2 * body
     bullish_engulf = last["Engulfing"] and last["close"] > last["open"]
     bearish_engulf = last["Engulfing"] and last["close"] < last["open"]
 
-    # RSI psychological state
     rsi = last["RSI"]
     psych_long = "اشباع فروش" if rsi < 30 else "اشباع خرید" if rsi > 70 else "متعادل"
     psych_short = "اشباع خرید" if rsi > 70 else "اشباع فروش" if rsi < 30 else "متعادل"
 
-    # conditions for long
     conds_long = {
         "PinBar": bullish_pin,
         "Engulfing": bullish_engulf,
-        "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1],
+        "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and long_trend,
         "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
         "RSI_Oversold": rsi < 30,
         "ADX_StrongTrend": last["ADX"] > 25,
     }
-    score_long = sum(conds_long.values())
-
-    # conditions for short
     conds_short = {
         "PinBar": bearish_pin,
         "Engulfing": bearish_engulf,
-        "EMA_Cross": df["EMA12"].iloc[-2] > df["EMA26"].iloc[-2] and df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1],
+        "EMA_Cross": df["EMA12"].iloc[-2] > df["EMA26"].iloc[-2] and short_trend,
         "MACD_Cross": df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1],
         "RSI_Overbought": rsi > 70,
         "ADX_StrongTrend": last["ADX"] > 25,
     }
+
+    score_long = sum(conds_long.values())
     score_short = sum(conds_short.values())
 
-    # generate long signal
-    if score_long >= 4 and psych_long != "اشباع خرید" and (long_trend or psych_long == "اشباع فروش"):
+    # long entry (allow countertrend if ADX < 25 and psych oversold)
+    if score_long >= 4 and psych_long != "اشباع خرید" and (
+        long_trend or (psych_long == "اشباع فروش" and last["ADX"] < 25)
+    ):
         entry = float(last["close"])
-        sl = entry - 1.5 * float(last["ATR"])
-        tp = entry + 2 * float(last["ATR"])
-        rr = round((tp - entry) / (entry - sl), 2)
+        sl    = entry - 1.5 * float(last["ATR"])
+        tp    = entry + 2 * float(last["ATR"])
+        rr    = round((tp - entry) / (entry - sl), 2)
         return {
-            "نوع معامله": "Long",
-            "نماد": symbol,
-            "تایم‌فریم": tf,
-            "قیمت ورود": entry,
-            "حد ضرر": sl,
-            "هدف سود": tp,
-            "ریسک به ریوارد": rr,
-            "سطح اطمینان": min(score_long * 20, 100),
-            "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
-            "روانشناسی": psych_long,
-            "روند بازار": "صعودی",
-            "فاندامنتال": "ندارد"
+            "نوع معامله":     "Long",
+            "نماد":            symbol,
+            "تایم‌فریم":       tf,
+            "قیمت ورود":       entry,
+            "حد ضرر":          sl,
+            "هدف سود":         tp,
+            "ریسک به ریوارد":  rr,
+            "سطح اطمینان":     min(score_long * 20, 100),
+            "تحلیل":           " | ".join([k for k,v in conds_long.items() if v]),
+            "روانشناسی":       psych_long,
+            "روند بازار":      "صعودی",
+            "فاندامنتال":      "ندارد"
         }
 
-    # generate short signal
-    if score_short >= 4 and psych_short != "اشباع فروش" and (short_trend or psych_short == "اشباع خرید"):
+    # short entry (allow countertrend if ADX < 25 and psych overbought)
+    if score_short >= 4 and psych_short != "اشباع فروش" and (
+        short_trend or (psych_short == "اشباع خرید" and last["ADX"] < 25)
+    ):
         entry = float(last["close"])
-        sl = entry + 1.5 * float(last["ATR"])
-        tp = entry - 2 * float(last["ATR"])
-        rr = round((entry - tp) / (sl - entry), 2)
+        sl    = entry + 1.5 * float(last["ATR"])
+        tp    = entry - 2 * float(last["ATR"])
+        rr    = round((entry - tp) / (sl - entry), 2)
         return {
-            "نوع معامله": "Short",
-            "نماد": symbol,
-            "تایم‌فریم": tf,
-            "قیمت ورود": entry,
-            "حد ضرر": sl,
-            "هدف سود": tp,
-            "ریسک به ریوارد": rr,
-            "سطح اطمینان": min(score_short * 20, 100),
-            "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
-            "روانشناسی": psych_short,
-            "روند بازار": "نزولی",
-            "فاندامنتال": "ندارد"
+            "نوع معامله":     "Short",
+            "نماد":            symbol,
+            "تایم‌فریم":       tf,
+            "قیمت ورود":       entry,
+            "حد ضرر":          sl,
+            "هدف سود":         tp,
+            "ریسک به ریوارد":  rr,
+            "سطح اطمینان":     min(score_short * 20, 100),
+            "تحلیل":           " | ".join([k for k,v in conds_short.items() if v]),
+            "روانشناسی":       psych_short,
+            "روند بازار":      "نزولی",
+            "فاندامنتال":      "ندارد"
         }
 
     return None
@@ -268,6 +277,67 @@ async def scan_all_crypto_symbols(on_signal=None):
             sig = await task
             if sig and on_signal:
                 await on_signal(sig)
-        logging.info(f"پیشرفت: {min(i + chunk_size, len(usdt_symbols))}/{len(usdt_symbols)}")
+        logging.info(f"پیشرفت: {min(i+chunk_size, len(usdt_symbols))}/{len(usdt_symbols)}")
         await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
     await exchange.close()
+
+# --------------------------------------------
+# Backtest and Walkforward functions appended
+# --------------------------------------------
+
+def backtest_symbol(symbol, timeframe, start_date, end_date):
+    import ccxt  # sync ccxt for backtest
+    exchange = ccxt.kucoin({'enableRateLimit': True})
+    since = exchange.parse8601(start_date)
+    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=1000)
+    df = pd.DataFrame(ohlcv, columns=["timestamp","open","high","low","close","volume"])
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+    df.set_index("timestamp", inplace=True)
+
+    results = []
+    for i in range(50, len(df)-1):
+        window_df = df.iloc[:i+1].copy()
+        # sync call to analyze_symbol logic
+        sig = analyze_symbol_sync(window_df)  # you need to implement a sync wrapper
+        if not sig:
+            continue
+        entry, sl, tp = sig["قیمت ورود"], sig["حد ضرر"], sig["هدف سود"]
+        future = df.iloc[i+1:]
+        hit_tp = future['high']  .ge(tp).idxmax() if any(future['high']  >= tp) else None
+        hit_sl = future['low']   .le(sl).idxmax() if any(future['low']   <= sl) else None
+
+        if hit_tp and (not hit_sl or hit_tp <= hit_sl):
+            win = True
+        elif hit_sl:
+            win = False
+        else:
+            win = False
+
+        results.append(win)
+
+    win_rate = np.mean(results) if results else None
+    print(f"Backtest {symbol} {timeframe}: Win Rate = {win_rate:.2%}")
+    return win_rate
+
+def walkforward(symbol, timeframe, total_days=90, train_days=60, test_days=30):
+    end = datetime.utcnow()
+    start = end - timedelta(days=total_days)
+    wf = []
+    while start + timedelta(days=train_days+test_days) <= end:
+        train_end = start + timedelta(days=train_days)
+        test_end  = train_end + timedelta(days=test_days)
+        wr = backtest_symbol(symbol, timeframe, train_end.isoformat(), test_end.isoformat())
+        wf.append({
+            "train_start": start,
+            "train_end":   train_end,
+            "test_start":  train_end,
+            "test_end":    test_end,
+            "win_rate":    wr
+        })
+        start += timedelta(days=test_days)
+    print("Walkforward Results:")
+    print(pd.DataFrame(wf))
+
+# Example usage:
+# if __name__ == "__main__":
+#     walkforward("BTC/USDT", "1h")
