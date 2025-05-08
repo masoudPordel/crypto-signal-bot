@@ -190,10 +190,8 @@ async def analyze_symbol(exchange, symbol, tf):
 
     # support/resistance filter
     support, _, resistance, _ = detect_support_resistance(df)
-    if long_trend  and abs(last["close"] - resistance)/last["close"] < S_R_BUFFER:
-        return None
-    if short_trend and abs(last["close"] - support)/last["close"] < S_R_BUFFER:
-        return None
+     if long_trend and abs(last["close"]-resistance)/last["close"] < S_R_BUFFER: return None
+    if short_trend and abs(last["close"]-support)/last["close"] < S_R_BUFFER: return None
 
     # candle patterns
     body           = last["body"]
