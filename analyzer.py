@@ -24,7 +24,7 @@ logging.basicConfig(
 
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 # تایم‌فریم‌های اصلی
-TIMEFRAMES = ["1h", "4h", "1d", "15m", "30m"]
+TIMEFRAMES = ["1h", "4h", "1d", "15m", "30m", "5m"]
 
 # فیلترهای شُل‌تر
 VOLUME_WINDOW = 15        # میانگین حجم روی ۱۵ کندل
