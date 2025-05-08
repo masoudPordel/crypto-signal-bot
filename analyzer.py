@@ -1,3 +1,6 @@
+سلام
+این نسخه نهایی شد
+فقط نمیدونم چرا سیگنال های فروشش همه برعکس میشه و اشتباه از آب در میاد!
 import os
 # Ensure UTF-8 encoding for console output
 os.environ["PYTHONIOENCODING"] = "utf-8"
