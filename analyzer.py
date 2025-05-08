@@ -187,7 +187,7 @@ async def analyze_symbol(exchange, symbol, tf):
 
     # support/resistance filter
     support, _, resistance, _ = detect_support_resistance(df)
-    if long_trend and abs(last["close"] - resistance)/last["close"] < S_R_BUFFER:
+    if long_trend  and abs(last["close"] - resistance)/last["close"] < S_R_BUFFER:
         return None
     if short_trend and abs(last["close"] - support)/last["close"] < S_R_BUFFER:
         return None
@@ -249,7 +249,7 @@ async def analyze_symbol(exchange, symbol, tf):
 
     # Short entry
     if score_short >= 3 and psych_short != "اشباع فروش" and (
-        short_trend or (psych_short == "اشباع خرید"
+        short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)
     ):
         entry = float(last["close"])
         sl    = entry + 1.5 * float(last["ATR"])
