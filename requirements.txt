@@ -9,4 +9,4 @@ numpy
 backtrader
 scipy
 ccxt
-sklearn
+scikit-learn
