@@ -38,7 +38,7 @@ VOLUME_THRESHOLD = 2
 MAX_CONCURRENT_REQUESTS = 20
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
-VOLATILITY_THRESHOLD = 0.004
+VOLATILITY_THRESHOLD = 0.002
 LIQUIDITY_SPREAD_THRESHOLD = 0.005
 
 # ضرایب مقیاس‌پذیری حجم
@@ -225,7 +225,7 @@ class PatternDetector:
         return all(recent_closes > resistance)
 
     @staticmethod
-    def is_valid_breakout(df, level, direction="support", vol_threshold=2.0):
+    def is_valid_breakout(df, level, direction="support", vol_threshold=1.5):
         last_vol = df['volume'].iloc[-1]
         vol_avg = df['volume'].rolling(VOLUME_WINDOW).mean().iloc[-1]
         if last_vol < vol_threshold * vol_avg:
@@ -410,19 +410,15 @@ async def analyze_symbol(exchange, symbol, tf):
 
     if tf == "1h":
         df4 = await get_ohlcv_cached(exchange, symbol, "4h")
-        df1d = await get_ohlcv_cached(exchange, symbol, "1d")
-        if df4 is not None and len(df4) >= 50 and df1d is not None and len(df1d) >= 50:
+        if df4 is not None and len(df4) >= 50:
             e12_4 = df4["close"].ewm(span=12).mean().iloc[-1]
             e26_4 = df4["close"].ewm(span=26).mean().iloc[-1]
-            e12_1d = df1d["close"].ewm(span=12).mean().iloc[-1]
-            e26_1d = df1d["close"].ewm(span=26).mean().iloc[-1]
             trend4 = e12_4 > e26_4
-            trend1d = e12_1d > e26_1d
-            logging.info(f"روند چند تایم‌فریمی برای {symbol} @ {tf}: 1h={'صعودی' if long_trend else 'نزولی'}, 4h={'صعودی' if trend4 else 'نزولی'}, 1d={'صعودی' if trend1d else 'نزولی'}")
-            if long_trend and (not trend4 or not trend1d):
+            logging.info(f"روند چند تایم‌فریمی برای {symbol} @ {tf}: 1h={'صعودی' if long_trend else 'نزولی'}, 4h={'صعودی' if trend4 else 'نزولی'}")
+            if long_trend and not trend4:
                 logging.warning(f"رد {symbol} @ {tf}: عدم تطابق روند چند تایم‌فریمی")
                 return None
-            if short_trend and (trend4 or trend1d):
+            if short_trend and trend4:
                 logging.warning(f"رد {symbol} @ {tf}: عدم تطابق روند چند تایم‌فریمی")
                 return None
         else:
@@ -454,11 +450,8 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.warning(f"رد {symbol} @ {tf}: رویداد مهم بازار")
         return None
 
-    if last["ADX"] < ADX_THRESHOLD / 2:
+    if last["ADX"] < 10:
         logging.warning(f"رد {symbol} @ {tf}: ADX خیلی پایین (current={last['ADX']:.2f})")
-        return None
-    if 40 <= last["RSI"] <= 60:
-        logging.warning(f"رد {symbol} @ {tf}: RSI در محدوده خنثی (current={last['RSI']:.2f})")
         return None
 
     body = last["body"]
@@ -504,7 +497,7 @@ async def analyze_symbol(exchange, symbol, tf):
 
     features = [rsi, last["ADX"], last["volume"] / vol_avg]
 
-    if score_long >= 3 and psych_long != "اشباع خرید" and (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and has_trend and confirm_combined_indicators(df, "Long") and await multi_timeframe_confirmation(df, symbol, exchange):
+    if score_long >= 2 and psych_long != "اشباع خرید" and (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and has_trend and confirm_combined_indicators(df, "Long") and await multi_timeframe_confirmation(df, symbol, exchange):
         if not PatternDetector.is_valid_breakout(df, resistance, direction="resistance"):
             logging.warning(f"رد {symbol} @ {tf}: شکست مقاومت نامعتبر")
             return None
@@ -535,7 +528,7 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.info(f"سیگنال تولید شد: {signal}")
         return signal
 
-    if score_short >= 3 and psych_short != "اشباع فروش" and (short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)) and has_trend and confirm_combined_indicators(df, "Short") and await multi_timeframe_confirmation(df, symbol, exchange):
+    if score_short >= 2 and psych_short != "اشباع فروش" and (short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)) and has_trend and confirm_combined_indicators(df, "Short") and await multi_timeframe_confirmation(df, symbol, exchange):
         if not PatternDetector.is_valid_breakout(df, support, direction="support"):
             logging.warning(f"رد {symbol} @ {tf}: شکست حمایت نامعتبر")
             return None
