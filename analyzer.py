@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
-COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"    
+COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"  
 TIMEFRAMES = ["1h", "4h", "1d", "15m", "30m", "5m"]
 
 # پارامترها
@@ -179,9 +179,9 @@ def is_valid_breakout(df, support, vol_threshold=1.5):
     vol_avg = df['volume'].rolling(VOLUME_WINDOW).mean().iloc[-1]
     return last_vol > vol_threshold * vol_avg and is_support_broken(df, support)
 
-def check_liquidity(exchange, symbol):
+async def check_liquidity(exchange, symbol):
     try:
-        ticker = exchange.fetch_ticker(symbol)
+        ticker = await exchange.fetch_ticker(symbol)  # استفاده از await برای فراخوانی همروند
         bid = ticker['bid']
         ask = ticker['ask']
         spread = (ask - bid) / ((bid + ask) / 2)
@@ -196,7 +196,7 @@ def check_market_events(symbol):
         resp = requests.get(url, timeout=10)
         data = resp.json()
         if 'market_data' in data and 'last_updated' in data:
-            return "ندارد"  # اگه API پیشرفته‌تری بخوای، می‌تونی اخبار رو پارس کنی
+            return "ندارد"
         return "رویداد مهم"
     except Exception as e:
         logging.error(f"Coingecko error: {e}")
@@ -293,7 +293,7 @@ async def analyze_symbol(exchange, symbol, tf):
         return None
 
     # نقدینگی
-    if not check_liquidity(exchange, symbol):
+    if not await check_liquidity(exchange, symbol):
         logging.warning(f"Reject {symbol} @ {tf}: Insufficient liquidity (spread too high)")
         return None
 
@@ -394,7 +394,7 @@ async def analyze_symbol(exchange, symbol, tf):
 
     logging.warning(f"Reject {symbol} @ {tf}: Insufficient score or psychological condition")
     return None
-    
+
 async def scan_all_crypto_symbols(on_signal=None):
     exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
     await exchange.load_markets()
@@ -428,11 +428,10 @@ async def scan_all_crypto_symbols(on_signal=None):
 # Backtest & Walkforward
 # -------------------
 
-def backtest_symbol(symbol, timeframe, start_date, end_date):
-    import ccxt
+async def backtest_symbol(symbol, timeframe, start_date, end_date):
     exchange = ccxt.kucoin({'enableRateLimit': True})
     since = exchange.parse8601(start_date)
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=1000)
+    ohlcv = await exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=1000)
     df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
     df.set_index("timestamp", inplace=True)
@@ -440,11 +439,7 @@ def backtest_symbol(symbol, timeframe, start_date, end_date):
     results = []
     for i in range(50, len(df)-1):
         window_df = df.iloc[:i+1].copy()
-        try:
-            loop = asyncio.get_event_loop()
-            sig = loop.run_until_complete(analyze_symbol(exchange, symbol, timeframe, window_df))
-        except:
-            sig = None
+        sig = await analyze_symbol(exchange, symbol, timeframe)
         if not sig:
             continue
 
@@ -462,14 +457,14 @@ def backtest_symbol(symbol, timeframe, start_date, end_date):
     logging.info(f"Backtest {symbol} {timeframe}: Win Rate = {win_rate:.2%}")
     return win_rate
 
-def walkforward(symbol, timeframe, total_days=90, train_days=60, test_days=30):
+async def walkforward(symbol, timeframe, total_days=90, train_days=60, test_days=30):
     end = datetime.utcnow()
     start = end - timedelta(days=total_days)
     wf = []
     while start + timedelta(days=train_days+test_days) <= end:
         train_end = start + timedelta(days=train_days)
         test_end = train_end + timedelta(days=test_days)
-        wr = backtest_symbol(symbol, timeframe, train_end.isoformat(), test_end.isoformat())
+        wr = await backtest_symbol(symbol, timeframe, train_end.isoformat(), test_end.isoformat())
         wf.append({
             "train_start": start,
             "train_end": train_end,
@@ -482,8 +477,10 @@ def walkforward(symbol, timeframe, total_days=90, train_days=60, test_days=30):
     logging.info(pd.DataFrame(wf).to_string())
     return wf
 
-# Example usage:
-# if __name__ == "__main__":
-#     asyncio.run(scan_all_crypto_symbols())
-#     # یا
-#     backtest_symbol("BTC/USDT", "1h", "2024-01-01T00:00:00Z", "2024-02-01T00:00:00Z")
+# تابع اصلی برای اجرای همروند
+async def main():
+    await scan_all_crypto_symbols()
+
+# اجرای کد
+if __name__ == "__main__":
+    asyncio.run(main())
