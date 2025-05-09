@@ -28,25 +28,25 @@ COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"  # کلید خودت رو جا
 TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
 # پارامترهای اصلی
-VOLUME_WINDOW = 10
-S_R_BUFFER = 0.01  # کاهش به 1%
+VOLUME_WINDOW = 10  # کاهش از 15 به 10
+S_R_BUFFER = 0.01
 ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
-CACHE_TTL = 300  # افزایش به 5 دقیقه
-VOLUME_THRESHOLD = 2  # کاهش از 3 به 2
-MAX_CONCURRENT_REQUESTS = 20  # افزایش به 20
-WAIT_BETWEEN_REQUESTS = 0.5  # کاهش به 0.5 ثانیه
+CACHE_TTL = 300
+VOLUME_THRESHOLD = 2
+MAX_CONCURRENT_REQUESTS = 20
+WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.004
-LIQUIDITY_SPREAD_THRESHOLD = 0.005  # افزایش به 0.5%
+LIQUIDITY_SPREAD_THRESHOLD = 0.005
 
-# ضرایب مقیاس‌پذیری حجم
+# ضرایب مقیاس‌پذیری حجم (شل‌تر شده)
 VOLUME_SCALING = {
-    "30m": 0.03,  # کاهش از 0.08
-    "1h": 0.05,   # کاهش از 0.1
-    "4h": 0.15,    # کاهش از 0.25
-    "1d": 0.25     # کاهش از 0.35
+    "30m": 0.03,  # کاهش از 0.05
+    "1h": 0.05,   # کاهش از 0.08
+    "4h": 0.15,   # کاهش از 0.2
+    "1d": 0.25    # کاهش از 0.3
 }
 
 # متغیرهای شمارشگر رد شدن‌ها
@@ -239,11 +239,9 @@ class PatternDetector:
         body = abs(last_candle['close'] - last_candle['open'])
         wick_lower = min(last_candle['close'], last_candle['open']) - last_candle['low']
         wick_upper = last_candle['high'] - max(last_candle['close'], last_candle['open'])
-        # شرط سخت‌گیرانه‌تر برای کندل شکست
         if body < 0.6 * (last_candle['high'] - last_candle['low']) or wick_lower > 0.2 * body or wick_upper > 0.2 * body:
             logging.warning(f"شکست رد شد: کندل ضعیف (body={body}, wick_lower={wick_lower}, wick_upper={wick_upper})")
             return False
-        # شرط اضافی: کندل بعدی هم باید شکست رو تأیید کنه
         if len(df) > 3:
             if direction == "support" and df.iloc[-3]['close'] >= level:
                 logging.warning(f"شکست رد شد: قیمت به بالای حمایت برگشته (close={df.iloc[-3]['close']}, support={level})")
@@ -380,7 +378,7 @@ X_train = np.array([[30, 25, 2], [70, 20, 1], [50, 30, 1.5], [20, 40, 3]])  # [R
 y_train = np.array([1, 0, 0, 1])  # 1 = سیگنال خوب، 0 = سیگنال بد
 signal_filter.train(X_train, y_train)
 
-# تحلیل نماد با لاگ زمان‌بندی
+# تحلیل نماد با لاگ زمان‌بندی و دیباگ
 async def analyze_symbol(exchange, symbol, tf):
     global VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
@@ -393,7 +391,8 @@ async def analyze_symbol(exchange, symbol, tf):
 
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = VOLUME_SCALING.get(tf, 0.2)
-    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor)
+    dynamic_threshold = max(500, VOLUME_THRESHOLD, vol_avg * scale_factor)  # اضافه کردن 500 به‌عنوان حداقل
+    logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={df['volume'].iloc[-1]:.2f}")
     if df["volume"].iloc[-1] < dynamic_threshold:
         VOLUME_REJECTS += 1
         if df["volume"].iloc[-1] < vol_avg * 0.1:
