@@ -1,5 +1,4 @@
 import os
-# Ensure UTF-8 encoding for console output
 os.environ["PYTHONIOENCODING"] = "utf-8"
 os.environ["LC_ALL"] = "en_US.UTF-8"
 
@@ -13,7 +12,6 @@ import time
 import logging
 from datetime import datetime, timedelta
 
-# Logging setup with explicit UTF-8
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -23,30 +21,29 @@ logging.basicConfig(
 )
 
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
-COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu" 
+COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"
 TIMEFRAMES = ["1h", "4h", "1d", "15m", "30m", "5m"]
 
-# پارامترها
 VOLUME_WINDOW = 15
 S_R_BUFFER = 0.015
 ADX_THRESHOLD = 30
+ADX_TREND_THRESHOLD = 25
 CACHE = {}
 CACHE_TTL = 60
-VOLUME_THRESHOLD = 10  # آستانه حجم فعلی
+VOLUME_THRESHOLD = 10
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
-VOLATILITY_THRESHOLD = 0.004  # کاهش آستانه نوسانات به 0.004
-LIQUIDITY_SPREAD_THRESHOLD = 0.002
+VOLATILITY_THRESHOLD = 0.004
+LIQUIDITY_SPREAD_THRESHOLD = 0.0015
 
-# ضرایب مقیاس‌پذیری برای آستانه حجم بر اساس تایم‌فریم
 VOLUME_SCALING = {
-    "5m": 0.10,  # 10% از میانگین حجم برای تایم‌فریم ۵ دقیقه
-    "15m": 0.15, # 15% برای ۱۵ دقیقه
-    "30m": 0.3,  # 30% برای ۳۰ دقیقه
-    "1h": 0.4,   # 40% برای ۱ ساعت
-    "4h": 0.5,   # 50% برای ۴ ساعت (کاهش از 60% به 50%)
-    "1d": 0.6    # 60% برای ۱ روز (کاهش از 80% به 60%)
+    "5m": 0.10,
+    "15m": 0.15,
+    "30m": 0.3,
+    "1h": 0.4,
+    "4h": 0.5,
+    "1d": 0.6
 }
 
 def get_top_500_symbols_from_cmc():
@@ -132,7 +129,6 @@ def detect_elliott_wave(df):
     return df
 
 def detect_support_resistance(df, window=10):
-    # Pivot Points
     high = df['high'].rolling(window).max()
     low = df['low'].rolling(window).min()
     close = df['close'].rolling(window).mean()
@@ -140,12 +136,10 @@ def detect_support_resistance(df, window=10):
     resistance = pivot + (high - low) * 0.382
     support = pivot - (high - low) * 0.382
 
-    # Volume Profile
     volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
     vol_threshold = volume_profile.quantile(0.75)
     high_vol_levels = volume_profile[volume_profile > vol_threshold].index
 
-    # سطوح اخیر
     recent_highs = df['high'][(df['high'].shift(1) < df['high']) & (df['high'].shift(-1) < df['high'])].iloc[-window:]
     recent_lows = df['low'][(df['low'].shift(1) > df['low']) & (df['low'].shift(-1) > df['low'])].iloc[-window:]
     recent_resistance = recent_highs.max() if not recent_highs.empty else resistance
@@ -184,10 +178,29 @@ def is_support_broken(df, support, lookback=2):
     recent_closes = df['close'].iloc[-lookback:]
     return all(recent_closes < support)
 
-def is_valid_breakout(df, support, vol_threshold=1.5):
+def is_valid_breakout(df, support, vol_threshold=2.0):
     last_vol = df['volume'].iloc[-1]
     vol_avg = df['volume'].rolling(VOLUME_WINDOW).mean().iloc[-1]
-    return last_vol > vol_threshold * vol_avg and is_support_broken(df, support)
+    if last_vol < vol_threshold * vol_avg or not is_support_broken(df, support):
+        return False
+
+    last_candle = df.iloc[-1]
+    prev_candle = df.iloc[-2]
+    body = abs(last_candle['close'] - last_candle['open'])
+    wick_lower = min(last_candle['close'], last_candle['open']) - last_candle['low']
+    wick_upper = last_candle['high'] - max(last_candle['close'], last_candle['open'])
+
+    if wick_lower > 0.5 * body or wick_upper > 0.5 * body:
+        logging.warning(f"Fake breakout detected: Long wick (wick_lower={wick_lower}, wick_upper={wick_upper}, body={body})")
+        return False
+
+    if len(df) > 2:
+        next_candle = df.iloc[-2]
+        if next_candle['close'] >= support:
+            logging.warning(f"Fake breakout detected: Price returned above support (close={next_candle['close']}, support={support})")
+            return False
+
+    return True
 
 async def check_liquidity(exchange, symbol):
     try:
@@ -227,6 +240,20 @@ def compute_indicators(df):
     df = detect_elliott_wave(df)
     return df
 
+def confirm_combined_indicators(df, trend_type):
+    last = df.iloc[-1]
+    rsi = last["RSI"]
+    stochastic = last["Stochastic"]
+    bullish_engulf = last["Engulfing"] and last["close"] > last["open"]
+    bearish_engulf = last["Engulfing"] and last["close"] < last["open"]
+    macd_cross_long = df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1]
+    macd_cross_short = df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1]
+
+    if trend_type == "Long":
+        return rsi < 30 and macd_cross_long and bullish_engulf
+    else:
+        return rsi > 70 and macd_cross_short and bearish_engulf
+
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
@@ -254,12 +281,11 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.warning(f"Reject {symbol} @ {tf}: No data or insufficient data length (<50)")
         return None
 
-    # فیلتر حجم با شرط داینامیک و مقیاس‌پذیری
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
-    scale_factor = VOLUME_SCALING.get(tf, 0.4)  # استفاده از ضریب مقیاس‌پذیری
+    scale_factor = VOLUME_SCALING.get(tf, 0.4)
     dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor)
     if df["volume"].iloc[-1] < dynamic_threshold:
-        if df["volume"].iloc[-1] < vol_avg * 0.1:  # هشدار اگه حجم کمتر از 10% میانگین باشه
+        if df["volume"].iloc[-1] < vol_avg * 0.1:
             logging.warning(f"Reject {symbol} @ {tf}: Volume too low (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold}, very low volume)")
         else:
             logging.warning(f"Reject {symbol} @ {tf}: Volume too low (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold})")
@@ -271,7 +297,6 @@ async def analyze_symbol(exchange, symbol, tf):
     long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
     short_trend = not long_trend
 
-    # تأیید چندتایم‌فریمی
     if tf == "1h":
         df4 = await get_ohlcv_cached(exchange, symbol, "4h")
         df1d = await get_ohlcv_cached(exchange, symbol, "1d")
@@ -292,13 +317,11 @@ async def analyze_symbol(exchange, symbol, tf):
             logging.warning(f"Reject {symbol} @ {tf}: Insufficient multi-timeframe data")
             return None
 
-    # فیلتر نوسانات
     volatility = df["ATR"].iloc[-1] / df["close"].iloc[-1]
     if volatility < VOLATILITY_THRESHOLD:
         logging.warning(f"Reject {symbol} @ {tf}: Volatility too low (current={volatility:.4f}, threshold={VOLATILITY_THRESHOLD})")
         return None
 
-    # حمایت و مقاومت
     support, resistance, vol_levels = detect_support_resistance(df)
     if long_trend and abs(last["close"] - resistance) / last["close"] < S_R_BUFFER:
         logging.warning(f"Reject {symbol} @ {tf}: Too close to resistance (distance={abs(last['close'] - resistance)/last['close']:.4f})")
@@ -307,26 +330,22 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.warning(f"Reject {symbol} @ {tf}: Too close to support (distance={abs(last['close'] - support)/last['close']:.4f})")
         return None
 
-    # نقدینگی
     liquidity = await check_liquidity(exchange, symbol)
     if not liquidity:
         logging.warning(f"Reject {symbol} @ {tf}: Insufficient liquidity (spread too high)")
         return None
 
-    # رویدادهای بازار
     fundamental = check_market_events(symbol.split('/')[0])
     if fundamental == "رویداد مهم":
         logging.warning(f"Reject {symbol} @ {tf}: Significant market event detected")
         return None
 
-    # الگوهای کندلی
     body = last["body"]
     bullish_pin = last["PinBar"] and last["lower"] > 2 * body
     bearish_pin = last["PinBar"] and last["upper"] > 2 * body
     bullish_engulf = last["Engulfing"] and last["close"] > last["open"]
     bearish_engulf = last["Engulfing"] and last["close"] < last["open"]
 
-    # روان‌شناسی
     rsi = last["RSI"]
     stochastic = last["Stochastic"]
     psych_long = "اشباع فروش" if rsi < 30 and stochastic < 20 else "اشباع خرید" if rsi > 70 and stochastic > 80 else "متعادل"
@@ -353,11 +372,11 @@ async def analyze_symbol(exchange, symbol, tf):
 
     score_long = sum(conds_long.values())
     score_short = sum(conds_short.values())
+    has_trend = last["ADX"] > ADX_TREND_THRESHOLD
 
-    # Long entry
-    if score_long >= 3 and psych_long != "اشباع خرید" and (
+    if score_long >= 4 and psych_long != "اشباع خرید" and (
         long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)
-    ):
+    ) and has_trend and confirm_combined_indicators(df, "Long"):
         entry = float(last["close"])
         atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
         sl = entry - 2 * atr_avg
@@ -378,10 +397,9 @@ async def analyze_symbol(exchange, symbol, tf):
             "فاندامنتال": fundamental
         }
 
-    # Short entry
-    if score_short >= 3 and psych_short != "اشباع فروش" and (
+    if score_short >= 4 and psych_short != "اشباع فروش" and (
         short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)
-    ):
+    ) and has_trend and confirm_combined_indicators(df, "Short"):
         if is_valid_breakout(df, support) and not detect_rsi_divergence(df) and not (
             detect_hammer(df) or (last["Engulfing"] and last["close"] > last["open"])
         ):
@@ -408,7 +426,7 @@ async def analyze_symbol(exchange, symbol, tf):
             logging.warning(f"Reject {symbol} @ {tf}: Invalid breakout or bullish pattern detected")
             return None
 
-    logging.warning(f"Reject {symbol} @ {tf}: Insufficient score or psychological condition")
+    logging.warning(f"Reject {symbol} @ {tf}: Insufficient score, psychological condition, no trend (ADX={last['ADX']:.2f}), or combined indicators not met")
     return None
 
 async def scan_all_crypto_symbols(on_signal=None):
@@ -425,24 +443,22 @@ async def scan_all_crypto_symbols(on_signal=None):
     for idx in range(total_chunks):
         logging.info(f"Scanning chunk {idx+1}/{total_chunks}")
         chunk = usdt_symbols[idx*chunk_size : (idx+1)*chunk_size]
-        tasks = [
-            asyncio.create_task(analyze_symbol(exchange, sym, tf))
-            for sym in chunk for tf in TIMEFRAMES
-        ]
-        for task in asyncio.as_completed(tasks):
-            sig = await task
-            if sig:
-                logging.info(f"Signal generated: {sig}")
+        tasks = [analyze_symbol(exchange, sym, tf) for sym in chunk for tf in TIMEFRAMES]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for result in results:
+            if isinstance(result, Exception):
+                logging.error(f"Error in task: {result}")
+                continue
+            if result:
+                logging.info(f"Signal generated: {result}")
                 if on_signal:
-                    await on_signal(sig)
+                    await on_signal(result)
+        
         logging.info(f"Completed chunk {idx+1}/{total_chunks}")
         await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
 
     await exchange.close()
-
-# -------------------
-# Backtest & Walkforward
-# -------------------
 
 async def backtest_symbol(symbol, timeframe, start_date, end_date):
     exchange = ccxt.kucoin({'enableRateLimit': True})
@@ -493,10 +509,8 @@ async def walkforward(symbol, timeframe, total_days=90, train_days=60, test_days
     logging.info(pd.DataFrame(wf).to_string())
     return wf
 
-# تابع اصلی برای اجرای همروند
 async def main():
     await scan_all_crypto_symbols()
 
-# اجرای کد
 if __name__ == "__main__":
     asyncio.run(main())
