@@ -391,7 +391,7 @@ async def analyze_symbol(exchange, symbol, tf):
 
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = VOLUME_SCALING.get(tf, 0.2)
-    dynamic_threshold = max(25, VOLUME_THRESHOLD, vol_avg * scale_factor)  # کاهش از 50 به 25
+    dynamic_threshold = max(25, VOLUME_THRESHOLD, vol_avg * scale_factor)
     logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={df['volume'].iloc[-1]:.2f}")
     if df["volume"].iloc[-1] < dynamic_threshold and df["volume"].iloc[-1] < 0.05 * vol_avg:
         VOLUME_REJECTS += 1
@@ -402,6 +402,9 @@ async def analyze_symbol(exchange, symbol, tf):
 
     df = compute_indicators(df)
     last = df.iloc[-1]
+    volatility = df["ATR"].iloc[-1] / df["close"].iloc[-1]
+    logging.info(f"اندیکاتورها برای {symbol} @ {tf}: RSI={last['RSI']:.2f}, ADX={last['ADX']:.2f}, volatility={volatility:.4f}")
+
     long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
     short_trend = not long_trend
 
@@ -415,6 +418,7 @@ async def analyze_symbol(exchange, symbol, tf):
             e26_1d = df1d["close"].ewm(span=26).mean().iloc[-1]
             trend4 = e12_4 > e26_4
             trend1d = e12_1d > e26_1d
+            logging.info(f"روند چند تایم‌فریمی برای {symbol} @ {tf}: 1h={'صعودی' if long_trend else 'نزولی'}, 4h={'صعودی' if trend4 else 'نزولی'}, 1d={'صعودی' if trend1d else 'نزولی'}")
             if long_trend and (not trend4 or not trend1d):
                 logging.warning(f"رد {symbol} @ {tf}: عدم تطابق روند چند تایم‌فریمی")
                 return None
@@ -425,12 +429,12 @@ async def analyze_symbol(exchange, symbol, tf):
             logging.warning(f"رد {symbol} @ {tf}: داده چند تایم‌فریمی کافی نیست")
             return None
 
-    volatility = df["ATR"].iloc[-1] / df["close"].iloc[-1]
     if volatility < VOLATILITY_THRESHOLD:
         logging.warning(f"رد {symbol} @ {tf}: نوسان خیلی کم (current={volatility:.4f})")
         return None
 
     support, resistance, vol_levels = PatternDetector.detect_support_resistance(df)
+    logging.info(f"سطوح برای {symbol} @ {tf}: support={support:.2f}, resistance={resistance:.2f}, close={last['close']:.2f}")
     if long_trend and abs(last["close"] - resistance) / last["close"] < S_R_BUFFER:
         SR_REJECTS += 1
         logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به مقاومت (distance={abs(last['close'] - resistance)/last['close']:.4f})")
@@ -450,7 +454,6 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.warning(f"رد {symbol} @ {tf}: رویداد مهم بازار")
         return None
 
-    # فیلترهای تأیید نهایی
     if last["ADX"] < ADX_THRESHOLD / 2:
         logging.warning(f"رد {symbol} @ {tf}: ADX خیلی پایین (current={last['ADX']:.2f})")
         return None
