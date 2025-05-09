@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
-COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu" 
+COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"
 TIMEFRAMES = ["1h", "4h", "1d", "15m", "30m", "5m"]
 
 # پارامترها
@@ -32,12 +32,12 @@ S_R_BUFFER = 0.015
 ADX_THRESHOLD = 30
 CACHE = {}
 CACHE_TTL = 60
-VOLUME_THRESHOLD = 500  # کاهش آستانه حجم برای رد کمتر
+VOLUME_THRESHOLD = 100  # کاهش آستانه حجم به 100
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
-VOLATILITY_THRESHOLD = 0.005  # کاهش آستانه نوسانات
-LIQUIDITY_SPREAD_THRESHOLD = 0.002  # شل‌تر کردن شرط اسپرد
+VOLATILITY_THRESHOLD = 0.005
+LIQUIDITY_SPREAD_THRESHOLD = 0.002
 
 def get_top_500_symbols_from_cmc():
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
@@ -181,7 +181,7 @@ def is_valid_breakout(df, support, vol_threshold=1.5):
 
 async def check_liquidity(exchange, symbol):
     try:
-        ticker = await exchange.fetch_ticker(symbol)  # استفاده از await برای فراخوانی همروند
+        ticker = await exchange.fetch_ticker(symbol)
         bid = ticker['bid']
         ask = ticker['ask']
         spread = (ask - bid) / ((bid + ask) / 2)
@@ -244,10 +244,11 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.warning(f"Reject {symbol} @ {tf}: No data or insufficient data length (<50)")
         return None
 
-    # فیلتر حجم
+    # فیلتر حجم با شرط داینامیک
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
-    if df["volume"].iloc[-1] < max(VOLUME_THRESHOLD, vol_avg):
-        logging.warning(f"Reject {symbol} @ {tf}: Volume too low (current={df['volume'].iloc[-1]}, threshold={max(VOLUME_THRESHOLD, vol_avg)})")
+    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * 0.5)  # 50% از میانگین حجم
+    if df["volume"].iloc[-1] < dynamic_threshold:
+        logging.warning(f"Reject {symbol} @ {tf}: Volume too low (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold})")
         return None
 
     df = compute_indicators(df)
