@@ -28,7 +28,7 @@ COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"  # کلید خودت رو جا
 TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
 # پارامترهای اصلی
-VOLUME_WINDOW = 10  # کاهش از 15 به 10
+VOLUME_WINDOW = 10
 S_R_BUFFER = 0.01
 ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
@@ -41,12 +41,12 @@ WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.004
 LIQUIDITY_SPREAD_THRESHOLD = 0.005
 
-# ضرایب مقیاس‌پذیری حجم (شل‌تر شده)
+# ضرایب مقیاس‌پذیری حجم (به‌روزرسانی‌شده)
 VOLUME_SCALING = {
-    "30m": 0.03,  # کاهش از 0.05
-    "1h": 0.05,   # کاهش از 0.08
-    "4h": 0.15,   # کاهش از 0.2
-    "1d": 0.25    # کاهش از 0.3
+    "30m": 0.02,  # کاهش از 0.03
+    "1h": 0.05,
+    "4h": 0.15,
+    "1d": 0.25
 }
 
 # متغیرهای شمارشگر رد شدن‌ها
@@ -391,15 +391,14 @@ async def analyze_symbol(exchange, symbol, tf):
 
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = VOLUME_SCALING.get(tf, 0.2)
-    dynamic_threshold = max(500, VOLUME_THRESHOLD, vol_avg * scale_factor)  # اضافه کردن 500 به‌عنوان حداقل
+    dynamic_threshold = max(200, VOLUME_THRESHOLD, vol_avg * scale_factor)  # کاهش از 500 به 200
     logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={df['volume'].iloc[-1]:.2f}")
-    if df["volume"].iloc[-1] < dynamic_threshold:
+    if df["volume"].iloc[-1] < dynamic_threshold and df["volume"].iloc[-1] < 0.1 * vol_avg:
         VOLUME_REJECTS += 1
-        if df["volume"].iloc[-1] < vol_avg * 0.1:
-            logging.warning(f"رد {symbol} @ {tf}: حجم خیلی کم (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
-        else:
-            logging.warning(f"رد {symbol} @ {tf}: حجم کم (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
+        logging.warning(f"رد {symbol} @ {tf}: حجم خیلی کم (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
         return None
+    elif df["volume"].iloc[-1] < dynamic_threshold:
+        logging.warning(f"رد {symbol} @ {tf}: حجم کم (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
 
     df = compute_indicators(df)
     last = df.iloc[-1]
