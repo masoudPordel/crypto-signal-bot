@@ -28,7 +28,7 @@ COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"  # کلید خودت رو جا
 TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
 # پارامترهای اصلی
-VOLUME_WINDOW = 15
+VOLUME_WINDOW = 10
 S_R_BUFFER = 0.01  # کاهش به 1%
 ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
@@ -43,10 +43,10 @@ LIQUIDITY_SPREAD_THRESHOLD = 0.005  # افزایش به 0.5%
 
 # ضرایب مقیاس‌پذیری حجم
 VOLUME_SCALING = {
-    "30m": 0.05,  # کاهش از 0.08
-    "1h": 0.08,   # کاهش از 0.1
-    "4h": 0.2,    # کاهش از 0.25
-    "1d": 0.3     # کاهش از 0.35
+    "30m": 0.03,  # کاهش از 0.08
+    "1h": 0.05,   # کاهش از 0.1
+    "4h": 0.15,    # کاهش از 0.25
+    "1d": 0.25     # کاهش از 0.35
 }
 
 # متغیرهای شمارشگر رد شدن‌ها
