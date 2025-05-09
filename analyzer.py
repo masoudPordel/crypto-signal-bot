@@ -374,7 +374,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short = sum(conds_short.values())
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
 
-    if score_long >= 4 and psych_long != "اشباع خرید" and (
+    if score_long >= 3 and psych_long != "اشباع خرید" and (
         long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)
     ) and has_trend and confirm_combined_indicators(df, "Long"):
         entry = float(last["close"])
@@ -397,7 +397,7 @@ async def analyze_symbol(exchange, symbol, tf):
             "فاندامنتال": fundamental
         }
 
-    if score_short >= 4 and psych_short != "اشباع فروش" and (
+    if score_short >= 3 and psych_short != "اشباع فروش" and (
         short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)
     ) and has_trend and confirm_combined_indicators(df, "Short"):
         if is_valid_breakout(df, support) and not detect_rsi_divergence(df) and not (
