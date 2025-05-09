@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
-COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"
+COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu" 
 TIMEFRAMES = ["1h", "4h", "1d", "15m", "30m", "5m"]
 
 # پارامترها
@@ -32,12 +32,22 @@ S_R_BUFFER = 0.015
 ADX_THRESHOLD = 30
 CACHE = {}
 CACHE_TTL = 60
-VOLUME_THRESHOLD = 100  # کاهش آستانه حجم به 100
+VOLUME_THRESHOLD = 50  # کاهش بیشتر آستانه حجم
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.005
 LIQUIDITY_SPREAD_THRESHOLD = 0.002
+
+# ضرایب مقیاس‌پذیری برای آستانه حجم بر اساس تایم‌فریم
+VOLUME_SCALING = {
+    "5m": 0.2,   # 20% از میانگین حجم برای تایم‌فریم ۵ دقیقه
+    "15m": 0.3,  # 30% برای ۱۵ دقیقه
+    "30m": 0.4,  # 40% برای ۳۰ دقیقه
+    "1h": 0.5,   # 50% برای ۱ ساعت
+    "4h": 0.7,   # 70% برای ۴ ساعت
+    "1d": 1.0    # 100% برای ۱ روز
+}
 
 def get_top_500_symbols_from_cmc():
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
@@ -244,9 +254,10 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.warning(f"Reject {symbol} @ {tf}: No data or insufficient data length (<50)")
         return None
 
-    # فیلتر حجم با شرط داینامیک
+    # فیلتر حجم با شرط داینامیک و مقیاس‌پذیری
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
-    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * 0.5)  # 50% از میانگین حجم
+    scale_factor = VOLUME_SCALING.get(tf, 0.5)  # استفاده از ضریب مقیاس‌پذیری
+    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor)
     if df["volume"].iloc[-1] < dynamic_threshold:
         logging.warning(f"Reject {symbol} @ {tf}: Volume too low (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold})")
         return None
