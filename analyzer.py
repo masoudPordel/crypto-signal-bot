@@ -32,7 +32,7 @@ S_R_BUFFER = 0.015
 ADX_THRESHOLD = 30
 CACHE = {}
 CACHE_TTL = 60
-VOLUME_THRESHOLD = 50  # کاهش بیشتر آستانه حجم
+VOLUME_THRESHOLD = 10  # کاهش بیشتر آستانه حجم به 10
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
@@ -41,12 +41,12 @@ LIQUIDITY_SPREAD_THRESHOLD = 0.002
 
 # ضرایب مقیاس‌پذیری برای آستانه حجم بر اساس تایم‌فریم
 VOLUME_SCALING = {
-    "5m": 0.2,   # 20% از میانگین حجم برای تایم‌فریم ۵ دقیقه
-    "15m": 0.3,  # 30% برای ۱۵ دقیقه
-    "30m": 0.4,  # 40% برای ۳۰ دقیقه
-    "1h": 0.5,   # 50% برای ۱ ساعت
-    "4h": 0.7,   # 70% برای ۴ ساعت
-    "1d": 1.0    # 100% برای ۱ روز
+    "5m": 0.15,  # 15% از میانگین حجم برای تایم‌فریم ۵ دقیقه
+    "15m": 0.2,  # 20% برای ۱۵ دقیقه
+    "30m": 0.3,  # 30% برای ۳۰ دقیقه
+    "1h": 0.4,   # 40% برای ۱ ساعت
+    "4h": 0.6,   # 60% برای ۴ ساعت
+    "1d": 0.8    # 80% برای ۱ روز
 }
 
 def get_top_500_symbols_from_cmc():
@@ -256,10 +256,13 @@ async def analyze_symbol(exchange, symbol, tf):
 
     # فیلتر حجم با شرط داینامیک و مقیاس‌پذیری
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
-    scale_factor = VOLUME_SCALING.get(tf, 0.5)  # استفاده از ضریب مقیاس‌پذیری
+    scale_factor = VOLUME_SCALING.get(tf, 0.4)  # استفاده از ضریب مقیاس‌پذیری
     dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor)
     if df["volume"].iloc[-1] < dynamic_threshold:
-        logging.warning(f"Reject {symbol} @ {tf}: Volume too low (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold})")
+        if df["volume"].iloc[-1] < vol_avg * 0.1:  # هشدار اگه حجم کمتر از 10% میانگین باشه
+            logging.warning(f"Reject {symbol} @ {tf}: Volume too low (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold}, very low volume)")
+        else:
+            logging.warning(f"Reject {symbol} @ {tf}: Volume too low (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold})")
         return None
 
     df = compute_indicators(df)
