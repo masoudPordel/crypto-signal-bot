@@ -30,17 +30,17 @@ ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
 CACHE_TTL = 60
-VOLUME_THRESHOLD = 5  # کاهش از 10 به 5
+VOLUME_THRESHOLD = 5
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.004
 LIQUIDITY_SPREAD_THRESHOLD = 0.0015
 
-# ضرایب مقیاس‌پذیری برای آستانه حجم (کاهش برای تایم‌فریم‌های پایین)
+# ضرایب مقیاس‌پذیری برای آستانه حجم (کاهش بیشتر برای تایم‌فریم‌های کوتاه)
 VOLUME_SCALING = {
-    "5m": 0.05,  # کاهش از 0.10 به 0.05
-    "15m": 0.10, # کاهش از 0.15 به 0.10
+    "5m": 0.01,  # کاهش به 0.01 برای تایم‌فریم 5 دقیقه
+    "15m": 0.05, # کاهش به 0.05 برای تایم‌فریم 15 دقیقه
     "30m": 0.3,
     "1h": 0.4,
     "4h": 0.5,
@@ -251,9 +251,11 @@ def confirm_combined_indicators(df, trend_type):
     macd_cross_short = df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1]
 
     if trend_type == "Long":
-        return rsi < 30 and macd_cross_long and bullish_engulf
+        conditions = [rsi < 30, macd_cross_long, bullish_engulf]
+        return sum(conditions) >= 2  # حداقل 2 شرط از 3
     else:
-        return rsi > 70 and macd_cross_short and bearish_engulf
+        conditions = [rsi > 70, macd_cross_short, bearish_engulf]
+        return sum(conditions) >= 2  # حداقل 2 شرط از 3
 
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
@@ -375,7 +377,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short = sum(conds_short.values())
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
 
-    if score_long >= 3 and psych_long != "اشباع خرید" and (  # کاهش از 4 به 3
+    if score_long >= 3 and psych_long != "اشباع خرید" and (
         long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)
     ) and has_trend and confirm_combined_indicators(df, "Long"):
         entry = float(last["close"])
@@ -398,7 +400,7 @@ async def analyze_symbol(exchange, symbol, tf):
             "فاندامنتال": fundamental
         }
 
-    if score_short >= 3 and psych_short != "اشباع فروش" and (  # کاهش از 4 به 3
+    if score_short >= 3 and psych_short != "اشباع فروش" and (
         short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)
     ) and has_trend and confirm_combined_indicators(df, "Short"):
         if is_valid_breakout(df, support) and not detect_rsi_divergence(df) and not (
