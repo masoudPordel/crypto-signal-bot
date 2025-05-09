@@ -50,6 +50,19 @@ VOLUME_SCALING = {
     "1d": 0.4
 }
 
+# دریافت ۵۰۰ نماد برتر از CoinMarketCap
+def get_top_500_symbols_from_cmc():
+    url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
+    headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
+    params = {'start': '1', 'limit': '500', 'convert': 'USD'}
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        data = resp.json()
+        return [entry['symbol'] for entry in data['data']]
+    except Exception as e:
+        logging.error(f"خطا در دریافت از CMC: {e}")
+        return []
+
 # کلاس برای مدیریت اندیکاتورها
 class IndicatorCalculator:
     @staticmethod
@@ -221,7 +234,7 @@ def compute_indicators(df):
     df["BB_upper"], df["BB_lower"] = IndicatorCalculator.compute_bollinger_bands(df)
     df["PinBar"] = PatternDetector.detect_pin_bar(df)
     df["Engulfing"] = PatternDetector.detect_engulfing(df)
-    df = PatternDetector.detect_elliott_wave(df)  # تکمیل خط ناقص
+    df = PatternDetector.detect_elliott_wave(df)
     return df
 
 # تأیید اندیکاتورهای ترکیبی
@@ -449,29 +462,31 @@ async def analyze_symbol(exchange, symbol, tf):
 # اسکن همه نمادها با مدیریت بهتر منابع
 async def scan_all_crypto_symbols(on_signal=None):
     exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
-    await exchange.load_markets()
-    top_coins = get_top_500_symbols_from_cmc()
-    usdt_symbols = [s for s in exchange.symbols if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)]
-    chunk_size = 10
-    total_chunks = (len(usdt_symbols) + chunk_size - 1) // chunk_size
-    for idx in range(total_chunks):
-        logging.info(f"اسکن دسته {idx+1}/{total_chunks}")
-        chunk = usdt_symbols[idx*chunk_size:(idx+1)*chunk_size]
-        tasks = [analyze_symbol(exchange, sym, tf) for sym in chunk for tf in TIMEFRAMES]
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)  # اطمینان از رعایت Rate Limit
-        async with semaphore:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-        for result in results:
-            if isinstance(result, Exception):
-                logging.error(f"خطا در تسک: {result}")
-                continue
-            if result:
-                logging.info(f"سیگنال تولید شد: {result}")
-                if on_signal:
-                    await on_signal(result)
-        logging.info(f"اتمام دسته {idx+1}/{total_chunks}")
-        await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
-    await exchange.close()
+    try:
+        await exchange.load_markets()
+        top_coins = get_top_500_symbols_from_cmc()
+        usdt_symbols = [s for s in exchange.symbols if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)]
+        chunk_size = 10
+        total_chunks = (len(usdt_symbols) + chunk_size - 1) // chunk_size
+        for idx in range(total_chunks):
+            logging.info(f"اسکن دسته {idx+1}/{total_chunks}")
+            chunk = usdt_symbols[idx*chunk_size:(idx+1)*chunk_size]
+            tasks = [analyze_symbol(exchange, sym, tf) for sym in chunk for tf in TIMEFRAMES]
+            semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+            async with semaphore:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    logging.error(f"خطا در تسک: {result}")
+                    continue
+                if result:
+                    logging.info(f"سیگنال تولید شد: {result}")
+                    if on_signal:
+                        await on_signal(result)
+            logging.info(f"اتمام دسته {idx+1}/{total_chunks}")
+            await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
+    finally:
+        await exchange.close()  # آزاد کردن منابع به‌صورت صریح
 
 # بک‌تست
 def log_signal_result(signal, result):
@@ -480,30 +495,32 @@ def log_signal_result(signal, result):
 
 async def backtest_symbol(symbol, timeframe, start_date, end_date):
     exchange = ccxt.kucoin({'enableRateLimit': True})
-    since = exchange.parse8601(start_date)
-    ohlcv = await exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=1000)
-    df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-    df.set_index("timestamp", inplace=True)
-    results = []
-    for i in range(50, len(df)-1):
-        window_df = df.iloc[:i+1].copy()
-        sig = await analyze_symbol(exchange, symbol, timeframe)
-        if not sig:
-            continue
-        entry, sl, tp = sig["قیمت ورود"], sig["حد ضرر"], sig["هدف سود"]
-        future = df.iloc[i+1:]
-        hit_tp = future['high'].ge(tp).idxmax() if any(future['high'] >= tp) else None
-        hit_sl = future['low'].le(sl).idxmax() if any(future['low'] <= sl) else None
-        if hit_tp and (not hit_sl or hit_tp <= hit_sl):
-            results.append(True)
-            log_signal_result(sig, "سود")
-        else:
-            results.append(False)
-            log_signal_result(sig, "ضرر")
-    win_rate = np.mean(results) if results else None
-    logging.info(f"بک‌تست {symbol} {timeframe}: نرخ برد = {win_rate:.2%}")
-    return win_rate
+    try:
+        since = exchange.parse8601(start_date)
+        ohlcv = await exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=1000)
+        df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df.set_index("timestamp", inplace=True)
+        results = []
+        for i in range(50, len(df)-1):
+            window_df = df.iloc[:i+1].copy()
+            sig = await analyze_symbol(exchange, symbol, timeframe)
+            if not sig:
+                continue
+            entry, sl, tp = sig["قیمت ورود"], sig["حد ضرر"], sig["هدف سود"]
+            future = df.iloc[i+1:]
+            hit_tp = future['high'].ge(tp).idxmax() if any(future['high'] >= tp) else None
+            hit_sl = future['low'].le(sl).idxmax() if any(future['low'] <= sl) else None
+            if hit_tp and (not hit_sl or hit_tp <= hit_sl):
+                results.append(True)
+                log_signal_result(sig, "سود")
+            else:
+                results.append(False)
+                log_signal_result(sig, "ضرر")
+        win_rate = np.mean(results) if results else None
+        logging.info(f"بک‌تست {symbol} {timeframe}: نرخ برد = {win_rate:.2%}")
+    finally:
+        await exchange.close()
 
 # تست پیش‌رونده (Walkforward)
 async def walkforward(symbol, timeframe, total_days=90, train_days=60, test_days=30):
