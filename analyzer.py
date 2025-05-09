@@ -241,11 +241,13 @@ async def analyze_symbol(exchange, symbol, tf):
     logging.info(f"Start analyze {symbol} @ {tf}")
     df = await get_ohlcv_cached(exchange, symbol, tf)
     if df is None or len(df) < 50:
+        logging.warning(f"Reject {symbol} @ {tf}: No data or insufficient data length (<50)")
         return None
 
     # فیلتر حجم
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     if df["volume"].iloc[-1] < max(VOLUME_THRESHOLD, vol_avg):
+        logging.warning(f"Reject {symbol} @ {tf}: Volume too low (current={df['volume'].iloc[-1]}, threshold={max(VOLUME_THRESHOLD, vol_avg)})")
         return None
 
     df = compute_indicators(df)
@@ -265,26 +267,40 @@ async def analyze_symbol(exchange, symbol, tf):
             e26_1d = df1d["close"].ewm(span=26).mean().iloc[-1]
             trend4 = e12_4 > e26_4
             trend1d = e12_1d > e26_1d
-            if long_trend and (not trend4 or not trend1d): return None
-            if short_trend and (trend4 or trend1d): return None
+            if long_trend and (not trend4 or not trend1d):
+                logging.warning(f"Reject {symbol} @ {tf}: Multi-timeframe trend mismatch (long trend not confirmed)")
+                return None
+            if short_trend and (trend4 or trend1d):
+                logging.warning(f"Reject {symbol} @ {tf}: Multi-timeframe trend mismatch (short trend not confirmed)")
+                return None
+        else:
+            logging.warning(f"Reject {symbol} @ {tf}: Insufficient multi-timeframe data")
+            return None
 
     # فیلتر نوسانات
     volatility = df["ATR"].iloc[-1] / df["close"].iloc[-1]
     if volatility < VOLATILITY_THRESHOLD:
+        logging.warning(f"Reject {symbol} @ {tf}: Volatility too low (current={volatility:.4f}, threshold={VOLATILITY_THRESHOLD})")
         return None
 
     # حمایت و مقاومت
     support, resistance, vol_levels = detect_support_resistance(df)
-    if long_trend and abs(last["close"] - resistance) / last["close"] < S_R_BUFFER: return None
-    if short_trend and abs(last["close"] - support) / last["close"] < S_R_BUFFER: return None
+    if long_trend and abs(last["close"] - resistance) / last["close"] < S_R_BUFFER:
+        logging.warning(f"Reject {symbol} @ {tf}: Too close to resistance (distance={abs(last['close'] - resistance)/last['close']:.4f})")
+        return None
+    if short_trend and abs(last["close"] - support) / last["close"] < S_R_BUFFER:
+        logging.warning(f"Reject {symbol} @ {tf}: Too close to support (distance={abs(last['close'] - support)/last['close']:.4f})")
+        return None
 
     # نقدینگی
     if not check_liquidity(exchange, symbol):
+        logging.warning(f"Reject {symbol} @ {tf}: Insufficient liquidity (spread too high)")
         return None
 
     # رویدادهای بازار
     fundamental = check_market_events(symbol.split('/')[0])
     if fundamental == "رویداد مهم":
+        logging.warning(f"Reject {symbol} @ {tf}: Significant market event detected")
         return None
 
     # الگوهای کندلی
@@ -323,11 +339,11 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short = sum(conds_short.values())
 
     # Long entry
-    if score_long >= 3 and psych_long != "اشباع خرید" and (
+    if score_long >= 4 and psych_long != "اشباع خرید" and (
         long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)
     ):
         entry = float(last["close"])
-        atr_avg = df["ATR"].rolling(5).mean().iloc[-1]  # میانگین ATR 5 کندل
+        atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
         sl = entry - 2 * atr_avg
         tp = entry + 3 * atr_avg
         rr = round((tp - entry) / (entry - sl), 2)
@@ -347,7 +363,7 @@ async def analyze_symbol(exchange, symbol, tf):
         }
 
     # Short entry
-    if score_short >= 3 and psych_short != "اشباع فروش" and (
+    if score_short >= 4 and psych_short != "اشباع فروش" and (
         short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)
     ):
         if is_valid_breakout(df, support) and not detect_rsi_divergence(df) and not (
@@ -372,9 +388,13 @@ async def analyze_symbol(exchange, symbol, tf):
                 "روند بازار": "نزولی",
                 "فاندامنتال": fundamental
             }
+        else:
+            logging.warning(f"Reject {symbol} @ {tf}: Invalid breakout or bullish pattern detected")
+            return None
 
+    logging.warning(f"Reject {symbol} @ {tf}: Insufficient score or psychological condition")
     return None
-
+    
 async def scan_all_crypto_symbols(on_signal=None):
     exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
     await exchange.load_markets()
