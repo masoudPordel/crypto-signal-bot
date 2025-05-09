@@ -391,7 +391,7 @@ async def analyze_symbol(exchange, symbol, tf):
 
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = VOLUME_SCALING.get(tf, 0.2)
-    dynamic_threshold = max(50, VOLUME_THRESHOLD, vol_avg * scale_factor)  # کاهش از 100 به 50
+    dynamic_threshold = max(25, VOLUME_THRESHOLD, vol_avg * scale_factor)  # کاهش از 50 به 25
     logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={df['volume'].iloc[-1]:.2f}")
     if df["volume"].iloc[-1] < dynamic_threshold and df["volume"].iloc[-1] < 0.05 * vol_avg:
         VOLUME_REJECTS += 1
