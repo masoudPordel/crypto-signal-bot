@@ -25,35 +25,40 @@ logging.basicConfig(
 # کلیدهای API
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"  # کلید خودت رو جایگزین کن
-TIMEFRAMES = ["30m", "1h", "4h", "1d"]  # حذف 5m و 15m
+TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
 # پارامترهای اصلی
 VOLUME_WINDOW = 15
-S_R_BUFFER = 0.01  # کاهش به 0.015
+S_R_BUFFER = 0.01  # کاهش به 1%
 ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
-CACHE_TTL = 300
-VOLUME_THRESHOLD = 2  # کاهش از 5 به 3
-MAX_CONCURRENT_REQUESTS = 20
-WAIT_BETWEEN_REQUESTS = 0.5  # افزایش به 1 ثانیه
+CACHE_TTL = 300  # افزایش به 5 دقیقه
+VOLUME_THRESHOLD = 2  # کاهش از 3 به 2
+MAX_CONCURRENT_REQUESTS = 20  # افزایش به 20
+WAIT_BETWEEN_REQUESTS = 0.5  # کاهش به 0.5 ثانیه
 WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.004
-LIQUIDITY_SPREAD_THRESHOLD = 0.005
+LIQUIDITY_SPREAD_THRESHOLD = 0.005  # افزایش به 0.5%
 
 # ضرایب مقیاس‌پذیری حجم
 VOLUME_SCALING = {
-    "30m": 0.05,  # کاهش از 0.1
-    "1h": 0.08,
-    "4h": 0.2,   # کاهش از 0.3
-    "1d": 0.3    # کاهش از 0.4
+    "30m": 0.05,  # کاهش از 0.08
+    "1h": 0.08,   # کاهش از 0.1
+    "4h": 0.2,    # کاهش از 0.25
+    "1d": 0.3     # کاهش از 0.35
 }
+
+# متغیرهای شمارشگر رد شدن‌ها
+LIQUIDITY_REJECTS = 0
+VOLUME_REJECTS = 0
+SR_REJECTS = 0
 
 # دریافت ۵۰۰ نماد برتر از CoinMarketCap
 def get_top_500_symbols_from_cmc():
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
     headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
-    params = {'start': '1', 'limit': '500', 'convert': 'USD'}  # 500 نماد
+    params = {'start': '1', 'limit': '500', 'convert': 'USD'}
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         data = resp.json()
@@ -165,7 +170,6 @@ class PatternDetector:
         recent_highs_price = argrelextrema(prices.values, np.greater, order=lookback)[0]
         recent_lows_rsi = argrelextrema(rsi.values, np.less, order=lookback)[0]
         recent_highs_rsi = argrelextrema(rsi.values, np.greater, order=lookback)[0]
-        # واگرایی صعودی (برای Long)
         if len(recent_lows_price) > 1 and len(recent_lows_rsi) > 1:
             last_price_low = prices.iloc[recent_lows_price[-1]]
             prev_price_low = prices.iloc[recent_lows_price[-2]]
@@ -174,7 +178,6 @@ class PatternDetector:
             bullish_divergence = last_price_low < prev_price_low and last_rsi_low > prev_rsi_low
         else:
             bullish_divergence = False
-        # واگرایی نزولی (برای Short)
         if len(recent_highs_price) > 1 and len(recent_highs_rsi) > 1:
             last_price_high = prices.iloc[recent_highs_price[-1]]
             prev_price_high = prices.iloc[recent_highs_price[-2]]
@@ -193,7 +196,6 @@ class PatternDetector:
         recent_highs_price = argrelextrema(prices.values, np.greater, order=lookback)[0]
         recent_lows_macd = argrelextrema(macd.values, np.less, order=lookback)[0]
         recent_highs_macd = argrelextrema(macd.values, np.greater, order=lookback)[0]
-        # واگرایی صعودی (برای Long)
         if len(recent_lows_price) > 1 and len(recent_lows_macd) > 1:
             last_price_low = prices.iloc[recent_lows_price[-1]]
             prev_price_low = prices.iloc[recent_lows_price[-2]]
@@ -202,7 +204,6 @@ class PatternDetector:
             bullish_divergence = last_price_low < prev_price_low and last_macd_low > prev_macd_low
         else:
             bullish_divergence = False
-        # واگرایی نزولی (برای Short)
         if len(recent_highs_price) > 1 and len(recent_highs_macd) > 1:
             last_price_high = prices.iloc[recent_highs_price[-1]]
             prev_price_high = prices.iloc[recent_highs_price[-2]]
@@ -238,16 +239,18 @@ class PatternDetector:
         body = abs(last_candle['close'] - last_candle['open'])
         wick_lower = min(last_candle['close'], last_candle['open']) - last_candle['low']
         wick_upper = last_candle['high'] - max(last_candle['close'], last_candle['open'])
-        # فیلتر کندلی: کندل باید بدنه بزرگ و فتیله کوچک داشته باشه
-        if body < 0.5 * (last_candle['high'] - last_candle['low']) or wick_lower > 0.3 * body or wick_upper > 0.3 * body:
+        # شرط سخت‌گیرانه‌تر برای کندل شکست
+        if body < 0.6 * (last_candle['high'] - last_candle['low']) or wick_lower > 0.2 * body or wick_upper > 0.2 * body:
             logging.warning(f"شکست رد شد: کندل ضعیف (body={body}, wick_lower={wick_lower}, wick_upper={wick_upper})")
             return False
-        if len(df) > 2 and direction == "support" and df.iloc[-2]['close'] >= level:
-            logging.warning(f"شکست رد شد: قیمت به بالای حمایت برگشته (close={df.iloc[-2]['close']}, support={level})")
-            return False
-        if len(df) > 2 and direction == "resistance" and df.iloc[-2]['close'] <= level:
-            logging.warning(f"شکست رد شد: قیمت به زیر مقاومت برگشته (close={df.iloc[-2]['close']}, resistance={level})")
-            return False
+        # شرط اضافی: کندل بعدی هم باید شکست رو تأیید کنه
+        if len(df) > 3:
+            if direction == "support" and df.iloc[-3]['close'] >= level:
+                logging.warning(f"شکست رد شد: قیمت به بالای حمایت برگشته (close={df.iloc[-3]['close']}, support={level})")
+                return False
+            if direction == "resistance" and df.iloc[-3]['close'] <= level:
+                logging.warning(f"شکست رد شد: قیمت به زیر مقاومت برگشته (close={df.iloc[-3]['close']}, resistance={level})")
+                return False
         return True
 
 # فیلتر نهایی با Decision Tree
@@ -270,12 +273,14 @@ class SignalFilter:
 
 # بررسی نقدینگی
 async def check_liquidity(exchange, symbol):
+    global LIQUIDITY_REJECTS
     try:
         ticker = await exchange.fetch_ticker(symbol)
         bid = ticker['bid']
         ask = ticker['ask']
         spread = (ask - bid) / ((bid + ask) / 2)
         if spread >= LIQUIDITY_SPREAD_THRESHOLD:
+            LIQUIDITY_REJECTS += 1
             logging.warning(f"رد {symbol}: نقدینگی کافی نیست (spread={spread:.4f}, threshold={LIQUIDITY_SPREAD_THRESHOLD})")
             return False
         return True
@@ -371,15 +376,17 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
 
 # آموزش Decision Tree (برای تست اولیه)
 signal_filter = SignalFilter()
-# دیتای نمونه برای آموزش (در عمل باید داده واقعی بدی)
 X_train = np.array([[30, 25, 2], [70, 20, 1], [50, 30, 1.5], [20, 40, 3]])  # [RSI, ADX, Volume Ratio]
 y_train = np.array([1, 0, 0, 1])  # 1 = سیگنال خوب، 0 = سیگنال بد
 signal_filter.train(X_train, y_train)
 
-# تحلیل نماد با فیلترهای جدید
+# تحلیل نماد با لاگ زمان‌بندی
 async def analyze_symbol(exchange, symbol, tf):
+    global VOLUME_REJECTS, SR_REJECTS
+    start_time = time.time()
     logging.info(f"شروع تحلیل {symbol} @ {tf}")
     df = await get_ohlcv_cached(exchange, symbol, tf)
+    logging.info(f"دریافت داده برای {symbol} @ {tf} در {time.time() - start_time:.2f} ثانیه")
     if df is None or len(df) < 50:
         logging.warning(f"رد {symbol} @ {tf}: داده کافی نیست (<50)")
         return None
@@ -388,6 +395,7 @@ async def analyze_symbol(exchange, symbol, tf):
     scale_factor = VOLUME_SCALING.get(tf, 0.2)
     dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor)
     if df["volume"].iloc[-1] < dynamic_threshold:
+        VOLUME_REJECTS += 1
         if df["volume"].iloc[-1] < vol_avg * 0.1:
             logging.warning(f"رد {symbol} @ {tf}: حجم خیلی کم (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
         else:
@@ -426,9 +434,11 @@ async def analyze_symbol(exchange, symbol, tf):
 
     support, resistance, vol_levels = PatternDetector.detect_support_resistance(df)
     if long_trend and abs(last["close"] - resistance) / last["close"] < S_R_BUFFER:
+        SR_REJECTS += 1
         logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به مقاومت (distance={abs(last['close'] - resistance)/last['close']:.4f})")
         return None
     if short_trend and abs(last["close"] - support) / last["close"] < S_R_BUFFER:
+        SR_REJECTS += 1
         logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به حمایت (distance={abs(last['close'] - support)/last['close']:.4f})")
         return None
 
@@ -461,7 +471,6 @@ async def analyze_symbol(exchange, symbol, tf):
     psych_long = "اشباع فروش" if rsi < 40 else "اشباع خرید" if rsi > 60 else "متعادل"
     psych_short = "اشباع خرید" if rsi > 60 else "اشباع فروش" if rsi < 40 else "متعادل"
 
-    # تشخیص واگرایی
     bullish_rsi_div, bearish_rsi_div = PatternDetector.detect_rsi_divergence(df)
     bullish_macd_div, bearish_macd_div = PatternDetector.detect_macd_divergence(df)
 
@@ -492,15 +501,12 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short = sum(conds_short.values())
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
 
-    # فیلتر Decision Tree
     features = [rsi, last["ADX"], last["volume"] / vol_avg]
 
     if score_long >= 3 and psych_long != "اشباع خرید" and (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and has_trend and confirm_combined_indicators(df, "Long") and await multi_timeframe_confirmation(df, symbol, exchange):
-        # بررسی شکست مقاومت برای Long
         if not PatternDetector.is_valid_breakout(df, resistance, direction="resistance"):
             logging.warning(f"رد {symbol} @ {tf}: شکست مقاومت نامعتبر")
             return None
-        # فیلتر نهایی با Decision Tree
         if not signal_filter.predict(features):
             logging.warning(f"رد {symbol} @ {tf}: فیلتر Decision Tree رد شد")
             return None
@@ -529,14 +535,12 @@ async def analyze_symbol(exchange, symbol, tf):
         return signal
 
     if score_short >= 3 and psych_short != "اشباع فروش" and (short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)) and has_trend and confirm_combined_indicators(df, "Short") and await multi_timeframe_confirmation(df, symbol, exchange):
-        # بررسی شکست حمایت برای Short
         if not PatternDetector.is_valid_breakout(df, support, direction="support"):
             logging.warning(f"رد {symbol} @ {tf}: شکست حمایت نامعتبر")
             return None
         if bearish_rsi_div or bearish_macd_div or PatternDetector.detect_hammer(df) or (last["Engulfing"] and last["close"] > last["open"]):
             logging.warning(f"رد {symbol} @ {tf}: واگرایی یا الگوی صعودی")
             return None
-        # فیلتر نهایی با Decision Tree
         if not signal_filter.predict(features):
             logging.warning(f"رد {symbol} @ {tf}: فیلتر Decision Tree رد شد")
             return None
@@ -572,7 +576,7 @@ async def scan_all_crypto_symbols(on_signal=None):
     exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
     try:
         await exchange.load_markets()
-        top_coins = get_top_500_symbols_from_cmc()  # 500 نماد
+        top_coins = get_top_500_symbols_from_cmc()
         usdt_symbols = [s for s in exchange.symbols if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)]
         chunk_size = 10
         total_chunks = (len(usdt_symbols) + chunk_size - 1) // chunk_size
@@ -593,6 +597,7 @@ async def scan_all_crypto_symbols(on_signal=None):
                         await on_signal(result)
             logging.info(f"اتمام دسته {idx+1}/{total_chunks}")
             await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
+        logging.info(f"آمار رد شدن‌ها: نقدینگی={LIQUIDITY_REJECTS}, حجم={VOLUME_REJECTS}, حمایت/مقاومت={SR_REJECTS}")
     finally:
         await exchange.close()
 
