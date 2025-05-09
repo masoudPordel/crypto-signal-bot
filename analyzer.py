@@ -25,7 +25,7 @@ COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"
 TIMEFRAMES = ["1h", "4h", "1d", "15m", "30m", "5m"]
 
 VOLUME_WINDOW = 15
-S_R_BUFFER = 0.015
+S_R_BUFFER = 0.02
 ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
@@ -41,10 +41,10 @@ LIQUIDITY_SPREAD_THRESHOLD = 0.0015
 VOLUME_SCALING = {
     "5m": 0.01,  # کاهش به 0.01 برای تایم‌فریم 5 دقیقه
     "15m": 0.05, # کاهش به 0.05 برای تایم‌فریم 15 دقیقه
-    "30m": 0.3,
-    "1h": 0.4,
-    "4h": 0.5,
-    "1d": 0.6
+    "30m": 0.2,
+    "1h": 0.2,
+    "4h": 0.3,
+    "1d": 0.4
 }
 
 def get_top_500_symbols_from_cmc():
