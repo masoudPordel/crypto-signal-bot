@@ -24,7 +24,7 @@ logging.basicConfig(
 
 # کلیدهای API
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
-COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"  # کلید خودت رو جایگزین کن
+COINMARKETCAL_API_KEY = "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa"  # کلید API CoinMarketCal
 TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
 # پارامترهای اصلی
@@ -286,18 +286,57 @@ async def check_liquidity(exchange, symbol):
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return False
 
-# بررسی رویدادهای بازار
+# بررسی رویدادهای بازار با API CoinMarketCal
 def check_market_events(symbol):
-    url = f"https://api.coingecko.com/api/v3/coins/{symbol.lower()}?x_cg_api_key={COINGECKO_API_KEY}"
+    url = "https://developers.coinmarketcal.com/v1/events"
+    headers = {
+        "x-api-key": COINMARKETCAL_API_KEY,
+        "Accept": "application/json",
+        "Accept-Encoding": "deflate, gzip"
+    }
+    params = {
+        "coins": symbol.lower(),  # نماد ارز (مثلاً btc)
+        "max": 5,  # حداکثر 5 رویداد اخیر
+        "dateRangeStart": (datetime.utcnow() - timedelta(days=7)).isoformat(),  # از 7 روز پیش
+        "dateRangeEnd": (datetime.utcnow() + timedelta(days=7)).isoformat()  # تا 7 روز آینده
+    }
     try:
-        resp = requests.get(url, timeout=10)
-        data = resp.json()
-        if 'market_data' in data and 'last_updated' in data:
-            return "ندارد"
-        return "رویداد مهم"
+        time.sleep(0.5)  # تأخیر برای رعایت نرخ درخواست
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        resp.raise_for_status()  # بررسی خطای HTTP
+        events = resp.json()
+        
+        event_score = 0
+        if not events or "body" not in events or not events["body"]:
+            logging.info(f"فاندامنتال برای {symbol}: هیچ رویداد مهمی یافت نشد")
+            return 0  # اگه رویدادی نبود، امتیاز خنثی
+        
+        for event in events["body"]:
+            title = event.get("title", "").lower()
+            description = event.get("description", "").lower()
+            
+            # امتیازدهی بر اساس نوع رویداد
+            if "burn" in title or "token burn" in description:
+                event_score += 15  # توکن‌سوزی: امتیاز مثبت
+                logging.info(f"رویداد مثبت برای {symbol}: توکن‌سوزی (امتیاز +15)")
+            elif "listing" in title or "exchange" in description:
+                event_score += 10  # لیست شدن: امتیاز مثبت
+                logging.info(f"رویداد مثبت برای {symbol}: لیست شدن (امتیاز +10)")
+            elif "partnership" in title or "collaboration" in description:
+                event_score += 5  # همکاری: امتیاز مثبت کوچک
+                logging.info(f"رویداد مثبت برای {symbol}: همکاری (امتیاز +5)")
+            elif "hack" in title or "security breach" in description:
+                event_score -= 20  # هک: امتیاز منفی
+                logging.info(f"رویداد منفی برای {symbol}: هک (امتیاز -20)")
+            elif "lawsuit" in title or "negative" in description:
+                event_score -= 15  # اخبار منفی: امتیاز منفی
+                logging.info(f"رویداد منفی برای {symbol}: اخبار منفی (امتیاز -15)")
+
+        logging.info(f"فاندامنتال برای {symbol}: امتیاز کل رویداد = {event_score}")
+        return event_score
     except Exception as e:
-        logging.error(f"خطا در دریافت از CoinGecko: {e}")
-        return "ندارد"
+        logging.error(f"خطا در دریافت رویدادها از CoinMarketCal برای {symbol}: {e}")
+        return 0  # در صورت خطا، امتیاز خنثی
 
 # محاسبات اندیکاتورها
 def compute_indicators(df):
@@ -445,9 +484,9 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.warning(f"رد {symbol} @ {tf}: نقدینگی کافی نیست")
         return None
 
-    fundamental = check_market_events(symbol.split('/')[0])
-    if fundamental == "رویداد مهم":
-        logging.warning(f"رد {symbol} @ {tf}: رویداد مهم بازار")
+    fundamental_score = check_market_events(symbol.split('/')[0])
+    if fundamental_score < -10:  # اگه امتیاز فاندامنتال خیلی منفی باشه، رد می‌شه
+        logging.warning(f"رد {symbol} @ {tf}: رویداد منفی یا نامشخص (امتیاز فاندامنتال = {fundamental_score})")
         return None
 
     if last["ADX"] < 10:
@@ -491,8 +530,8 @@ async def analyze_symbol(exchange, symbol, tf):
         "MACD_Divergence": bearish_macd_div,
     }
 
-    score_long = sum(conds_long.values())
-    score_short = sum(conds_short.values())
+    score_long = sum(conds_long.values()) + fundamental_score
+    score_short = sum(conds_short.values()) + fundamental_score
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
 
     features = [rsi, last["ADX"], last["volume"] / vol_avg]
@@ -523,7 +562,7 @@ async def analyze_symbol(exchange, symbol, tf):
             "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
             "روانشناسی": psych_long,
             "روند بازار": "صعودی",
-            "فاندامنتال": fundamental
+            "فاندامنتال": f"امتیاز: {fundamental_score}"
         }
         logging.info(f"سیگنال تولید شد: {signal}")
         return signal
@@ -557,7 +596,7 @@ async def analyze_symbol(exchange, symbol, tf):
             "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
             "روانشناسی": psych_short,
             "روند بازار": "نزولی",
-            "فاندامنتال": fundamental
+            "فاندامنتال": f"امتیاز: {fundamental_score}"
         }
         logging.info(f"سیگنال تولید شد: {signal}")
         return signal
