@@ -30,16 +30,17 @@ ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
 CACHE_TTL = 60
-VOLUME_THRESHOLD = 10
+VOLUME_THRESHOLD = 5  # کاهش از 10 به 5
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.004
 LIQUIDITY_SPREAD_THRESHOLD = 0.0015
 
+# ضرایب مقیاس‌پذیری برای آستانه حجم (کاهش برای تایم‌فریم‌های پایین)
 VOLUME_SCALING = {
-    "5m": 0.10,
-    "15m": 0.15,
+    "5m": 0.05,  # کاهش از 0.10 به 0.05
+    "15m": 0.10, # کاهش از 0.15 به 0.10
     "30m": 0.3,
     "1h": 0.4,
     "4h": 0.5,
@@ -374,7 +375,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short = sum(conds_short.values())
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
 
-    if score_long >= 3 and psych_long != "اشباع خرید" and (
+    if score_long >= 3 and psych_long != "اشباع خرید" and (  # کاهش از 4 به 3
         long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)
     ) and has_trend and confirm_combined_indicators(df, "Long"):
         entry = float(last["close"])
@@ -397,7 +398,7 @@ async def analyze_symbol(exchange, symbol, tf):
             "فاندامنتال": fundamental
         }
 
-    if score_short >= 3 and psych_short != "اشباع فروش" and (
+    if score_short >= 3 and psych_short != "اشباع فروش" and (  # کاهش از 4 به 3
         short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)
     ) and has_trend and confirm_combined_indicators(df, "Short"):
         if is_valid_breakout(df, support) and not detect_rsi_divergence(df) and not (
