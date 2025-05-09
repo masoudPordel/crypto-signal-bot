@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
-COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu" 
+COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"
 TIMEFRAMES = ["1h", "4h", "1d", "15m", "30m", "5m"]
 
 # پارامترها
@@ -32,7 +32,7 @@ S_R_BUFFER = 0.015
 ADX_THRESHOLD = 30
 CACHE = {}
 CACHE_TTL = 60
-VOLUME_THRESHOLD = 10  # کاهش بیشتر آستانه حجم به 10
+VOLUME_THRESHOLD = 10  # آستانه حجم فعلی
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
@@ -41,8 +41,8 @@ LIQUIDITY_SPREAD_THRESHOLD = 0.002
 
 # ضرایب مقیاس‌پذیری برای آستانه حجم بر اساس تایم‌فریم
 VOLUME_SCALING = {
-    "5m": 0.15,  # 15% از میانگین حجم برای تایم‌فریم ۵ دقیقه
-    "15m": 0.2,  # 20% برای ۱۵ دقیقه
+    "5m": 0.10,  # 10% از میانگین حجم برای تایم‌فریم ۵ دقیقه
+    "15m": 0.15, # 15% برای ۱۵ دقیقه
     "30m": 0.3,  # 30% برای ۳۰ دقیقه
     "1h": 0.4,   # 40% برای ۱ ساعت
     "4h": 0.6,   # 60% برای ۴ ساعت
@@ -355,7 +355,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short = sum(conds_short.values())
 
     # Long entry
-    if score_long >= 4 and psych_long != "اشباع خرید" and (
+    if score_long >= 3 and psych_long != "اشباع خرید" and (  # کاهش حداقل امتیاز به 3
         long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)
     ):
         entry = float(last["close"])
@@ -379,7 +379,7 @@ async def analyze_symbol(exchange, symbol, tf):
         }
 
     # Short entry
-    if score_short >= 4 and psych_short != "اشباع فروش" and (
+    if score_short >= 3 and psych_short != "اشباع فروش" and (  # کاهش حداقل امتیاز به 3
         short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)
     ):
         if is_valid_breakout(df, support) and not detect_rsi_divergence(df) and not (
