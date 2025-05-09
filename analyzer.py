@@ -29,24 +29,24 @@ TIMEFRAMES = ["30m", "1h", "4h", "1d"]  # حذف 5m و 15m
 
 # پارامترهای اصلی
 VOLUME_WINDOW = 15
-S_R_BUFFER = 0.015  # کاهش به 0.015
+S_R_BUFFER = 0.01  # کاهش به 0.015
 ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
 CACHE_TTL = 300
-VOLUME_THRESHOLD = 3  # کاهش از 5 به 3
+VOLUME_THRESHOLD = 2  # کاهش از 5 به 3
 MAX_CONCURRENT_REQUESTS = 20
 WAIT_BETWEEN_REQUESTS = 0.5  # افزایش به 1 ثانیه
 WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.004
-LIQUIDITY_SPREAD_THRESHOLD = 0.002
+LIQUIDITY_SPREAD_THRESHOLD = 0.005
 
 # ضرایب مقیاس‌پذیری حجم
 VOLUME_SCALING = {
-    "30m": 0.08,  # کاهش از 0.1
-    "1h": 0.1,
-    "4h": 0.25,   # کاهش از 0.3
-    "1d": 0.35    # کاهش از 0.4
+    "30m": 0.05,  # کاهش از 0.1
+    "1h": 0.08,
+    "4h": 0.2,   # کاهش از 0.3
+    "1d": 0.3    # کاهش از 0.4
 }
 
 # دریافت ۵۰۰ نماد برتر از CoinMarketCap
