@@ -41,9 +41,9 @@ WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.004
 LIQUIDITY_SPREAD_THRESHOLD = 0.005
 
-# ضرایب مقیاس‌پذیری حجم (به‌روزرسانی‌شده)
+# ضرایب مقیاس‌پذیری حجم
 VOLUME_SCALING = {
-    "30m": 0.01,  # کاهش از 0.02
+    "30m": 0.01,
     "1h": 0.05,
     "4h": 0.15,
     "1d": 0.25
@@ -391,9 +391,9 @@ async def analyze_symbol(exchange, symbol, tf):
 
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = VOLUME_SCALING.get(tf, 0.2)
-    dynamic_threshold = max(100, VOLUME_THRESHOLD, vol_avg * scale_factor)  # کاهش از 200 به 100
+    dynamic_threshold = max(50, VOLUME_THRESHOLD, vol_avg * scale_factor)  # کاهش از 100 به 50
     logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={df['volume'].iloc[-1]:.2f}")
-    if df["volume"].iloc[-1] < dynamic_threshold and df["volume"].iloc[-1] < 0.05 * vol_avg:  # تغییر از 0.1 به 0.05
+    if df["volume"].iloc[-1] < dynamic_threshold and df["volume"].iloc[-1] < 0.05 * vol_avg:
         VOLUME_REJECTS += 1
         logging.warning(f"رد {symbol} @ {tf}: حجم خیلی کم (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
         return None
