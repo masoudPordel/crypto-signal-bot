@@ -11,7 +11,7 @@ import ccxt.async_support as ccxt
 import asyncio
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Logging setup with explicit UTF-8
 logging.basicConfig(
@@ -23,21 +23,21 @@ logging.basicConfig(
 )
 
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
-# تایم‌فریم‌های اصلی
+COINGECKO_API_KEY = "CG-cnXmskNzo7Bi2Lzj3j3QY6Gu"    
 TIMEFRAMES = ["1h", "4h", "1d", "15m", "30m", "5m"]
 
-# فیلترهای شُل‌تر
-VOLUME_WINDOW = 15        # میانگین حجم روی ۱۵ کندل
-S_R_BUFFER    = 0.015     # فاصله‌ی ۱.۵٪ از حمایت/مقاومت
-ADX_THRESHOLD = 30        # آستانه‌ی ADX
-
-# پارامترهای قبلی
+# پارامترها
+VOLUME_WINDOW = 15
+S_R_BUFFER = 0.015
+ADX_THRESHOLD = 30
 CACHE = {}
 CACHE_TTL = 60
 VOLUME_THRESHOLD = 1000
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
+VOLATILITY_THRESHOLD = 0.01  # حداقل نوسان مورد نیاز (1%)
+LIQUIDITY_SPREAD_THRESHOLD = 0.001  # حداکثر اسپرد (0.1%)
 
 def get_top_500_symbols_from_cmc():
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
@@ -53,16 +53,16 @@ def get_top_500_symbols_from_cmc():
 
 def compute_rsi(df, period=14):
     delta = df["close"].diff()
-    gain  = delta.where(delta > 0,  0).rolling(period).mean()
-    loss  = -delta.where(delta < 0, 0).rolling(period).mean()
-    rs    = gain / loss.replace(0, 1e-10)
+    gain = delta.where(delta > 0, 0).rolling(period).mean()
+    loss = -delta.where(delta < 0, 0).rolling(period).mean()
+    rs = gain / loss.replace(0, 1e-10)
     return 100 - (100 / (1 + rs))
 
 def compute_atr(df, period=14):
     tr = pd.concat([
         df["high"] - df["low"],
         abs(df["high"] - df["close"].shift()),
-        abs(df["low"]  - df["close"].shift())
+        abs(df["low"] - df["close"].shift())
     ], axis=1).max(axis=1)
     return tr.rolling(period).mean()
 
@@ -72,26 +72,32 @@ def compute_bollinger_bands(df, period=20, std_dev=2):
     return sma + std_dev * std, sma - std_dev * std
 
 def compute_adx(df, period=14):
-    df["up"]   = df["high"].diff()
+    df["up"] = df["high"].diff()
     df["down"] = -df["low"].diff()
-    df["+DM"]  = np.where((df["up"] > df["down"]) & (df["up"] > 0), df["up"], 0.0)
-    df["-DM"]  = np.where((df["down"] > df["up"]) & (df["down"] > 0), df["down"], 0.0)
+    df["+DM"] = np.where((df["up"] > df["down"]) & (df["up"] > 0), df["up"], 0.0)
+    df["-DM"] = np.where((df["down"] > df["up"]) & (df["down"] > 0), df["down"], 0.0)
     tr = pd.concat([
         df["high"] - df["low"],
         abs(df["high"] - df["close"].shift()),
-        abs(df["low"]  - df["close"].shift())
+        abs(df["low"] - df["close"].shift())
     ], axis=1).max(axis=1)
     tr_smooth = tr.rolling(window=period).sum()
-    plus_di  = 100 * (df["+DM"].rolling(window=period).sum() / tr_smooth)
+    plus_di = 100 * (df["+DM"].rolling(window=period).sum() / tr_smooth)
     minus_di = 100 * (df["-DM"].rolling(window=period).sum() / tr_smooth)
-    dx       = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
     return dx.rolling(window=period).mean()
 
+def compute_stochastic(df, period=14):
+    low_min = df["low"].rolling(window=period).min()
+    high_max = df["high"].rolling(window=period).max()
+    k = 100 * (df["close"] - low_min) / (high_max - low_min).replace(0, 1e-10)
+    return k
+
 def detect_pin_bar(df):
-    df["body"]  = abs(df["close"] - df["open"])
+    df["body"] = abs(df["close"] - df["open"])
     df["range"] = df["high"] - df["low"]
-    df["upper"] = df["high"] - df[["close","open"]].max(axis=1)
-    df["lower"] = df[["close","open"]].min(axis=1) - df["low"]
+    df["upper"] = df["high"] - df[["close", "open"]].max(axis=1)
+    df["lower"] = df[["close", "open"]].min(axis=1) - df["low"]
     return (df["body"] < 0.3 * df["range"]) & (
         (df["upper"] > 2 * df["body"]) | (df["lower"] > 2 * df["body"])
     )
@@ -101,40 +107,113 @@ def detect_engulfing(df):
     prev_c = df["close"].shift(1)
     return (
         ((df["close"] > df["open"]) & (prev_c < prev_o) &
-         (df["close"] > prev_o)   & (df["open"] < prev_c))
+         (df["close"] > prev_o) & (df["open"] < prev_c))
         |
         ((df["close"] < df["open"]) & (prev_c > prev_o) &
-         (df["close"] < prev_o)   & (df["open"] > prev_c))
+         (df["close"] < prev_o) & (df["open"] > prev_c))
     )
 
 def detect_elliott_wave(df):
     df["WavePoint"] = np.nan
     highs = argrelextrema(df['close'].values, np.greater, order=5)[0]
-    lows  = argrelextrema(df['close'].values, np.less,    order=5)[0]
+    lows = argrelextrema(df['close'].values, np.less, order=5)[0]
     df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
-    df.loc[df.index[lows],  "WavePoint"] = df.loc[df.index[lows],  "close"]
+    df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
     return df
 
 def detect_support_resistance(df, window=10):
-    highs      = df['high']
-    lows       = df['low']
-    resistance = highs[(highs.shift(1) < highs) & (highs.shift(-1) < highs)]
-    support    = lows[(lows.shift(1) > lows)   & (lows.shift(-1) > lows)]
-    recent_R   = resistance[-window:].max()
-    recent_S   = support[-window:].min()
-    return recent_S, recent_S, recent_R, recent_S
+    # Pivot Points
+    high = df['high'].rolling(window).max()
+    low = df['low'].rolling(window).min()
+    close = df['close'].rolling(window).mean()
+    pivot = (high + low + close) / 3
+    resistance = pivot + (high - low) * 0.382
+    support = pivot - (high - low) * 0.382
+
+    # Volume Profile
+    volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
+    vol_threshold = volume_profile.quantile(0.75)
+    high_vol_levels = volume_profile[volume_profile > vol_threshold].index
+
+    # سطوح اخیر
+    recent_highs = df['high'][(df['high'].shift(1) < df['high']) & (df['high'].shift(-1) < df['high'])].iloc[-window:]
+    recent_lows = df['low'][(df['low'].shift(1) > df['low']) & (df['low'].shift(-1) > df['low'])].iloc[-window:]
+    recent_resistance = recent_highs.max() if not recent_highs.empty else resistance
+    recent_support = recent_lows.min() if not recent_lows.empty else support
+
+    if 'support_levels' not in globals():
+        globals()['support_levels'] = []
+        globals()['resistance_levels'] = []
+    if recent_support not in support_levels:
+        support_levels.append(recent_support)
+    if recent_resistance not in resistance_levels:
+        resistance_levels.append(recent_resistance)
+
+    return recent_support, recent_resistance, high_vol_levels
+
+def detect_hammer(df):
+    body = abs(df['close'] - df['open'])
+    range_ = df['high'] - df['low']
+    lower_wick = df['low'] - df[['close', 'open']].min(axis=1)
+    return (body < 0.3 * range_) & (lower_wick > 2 * body) & (df['close'] > df['open'])
+
+def detect_rsi_divergence(df, lookback=5):
+    rsi = compute_rsi(df)
+    prices = df['close']
+    recent_lows_price = argrelextrema(prices.values, np.less, order=lookback)[0]
+    recent_lows_rsi = argrelextrema(rsi.values, np.less, order=lookback)[0]
+    if len(recent_lows_price) > 1 and len(recent_lows_rsi) > 1:
+        last_price_low = prices.iloc[recent_lows_price[-1]]
+        prev_price_low = prices.iloc[recent_lows_price[-2]]
+        last_rsi_low = rsi.iloc[recent_lows_rsi[-1]]
+        prev_rsi_low = rsi.iloc[recent_lows_rsi[-2]]
+        return last_price_low < prev_price_low and last_rsi_low > prev_rsi_low
+    return False
+
+def is_support_broken(df, support, lookback=2):
+    recent_closes = df['close'].iloc[-lookback:]
+    return all(recent_closes < support)
+
+def is_valid_breakout(df, support, vol_threshold=1.5):
+    last_vol = df['volume'].iloc[-1]
+    vol_avg = df['volume'].rolling(VOLUME_WINDOW).mean().iloc[-1]
+    return last_vol > vol_threshold * vol_avg and is_support_broken(df, support)
+
+def check_liquidity(exchange, symbol):
+    try:
+        ticker = exchange.fetch_ticker(symbol)
+        bid = ticker['bid']
+        ask = ticker['ask']
+        spread = (ask - bid) / ((bid + ask) / 2)
+        return spread < LIQUIDITY_SPREAD_THRESHOLD
+    except Exception as e:
+        logging.error(f"Liquidity check error for {symbol}: {e}")
+        return False
+
+def check_market_events(symbol):
+    url = f"https://api.coingecko.com/api/v3/coins/{symbol.lower()}?x_cg_api_key={COINGECKO_API_KEY}"
+    try:
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
+        if 'market_data' in data and 'last_updated' in data:
+            return "ندارد"  # اگه API پیشرفته‌تری بخوای، می‌تونی اخبار رو پارس کنی
+        return "رویداد مهم"
+    except Exception as e:
+        logging.error(f"Coingecko error: {e}")
+        return "ندارد"
 
 def compute_indicators(df):
-    df["EMA12"]      = df["close"].ewm(span=12).mean()
-    df["EMA26"]      = df["close"].ewm(span=26).mean()
-    df["MACD"]       = df["EMA12"] - df["EMA26"]
-    df["Signal"]     = df["MACD"].ewm(span=9).mean()
-    df["RSI"]        = compute_rsi(df)
-    df["ATR"]        = compute_atr(df)
-    df["ADX"]        = compute_adx(df)
+    df["EMA12"] = df["close"].ewm(span=12).mean()
+    df["EMA26"] = df["close"].ewm(span=26).mean()
+    df["MACD"] = df["EMA12"] - df["EMA26"]
+    df["Signal"] = df["MACD"].ewm(span=9).mean()
+    df["RSI"] = compute_rsi(df)
+    df["ATR"] = compute_atr(df)
+    df["ADX"] = compute_adx(df)
+    df["Stochastic"] = compute_stochastic(df)
     df["BB_upper"], df["BB_lower"] = compute_bollinger_bands(df)
-    df["PinBar"]     = detect_pin_bar(df)
-    df["Engulfing"]  = detect_engulfing(df)
+    df["PinBar"] = detect_pin_bar(df)
+    df["Engulfing"] = detect_engulfing(df)
     df = detect_elliott_wave(df)
     return df
 
@@ -149,7 +228,7 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
             return CACHE[key]["data"]
         try:
             data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
-            df = pd.DataFrame(data, columns=["timestamp","open","high","low","close","volume"])
+            df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume"])
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
             df.set_index("timestamp", inplace=True)
             CACHE[key] = {"data": df.copy(), "time": now}
@@ -164,7 +243,7 @@ async def analyze_symbol(exchange, symbol, tf):
     if df is None or len(df) < 50:
         return None
 
-    # dynamic volume filter
+    # فیلتر حجم
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     if df["volume"].iloc[-1] < max(VOLUME_THRESHOLD, vol_avg):
         return None
@@ -172,54 +251,75 @@ async def analyze_symbol(exchange, symbol, tf):
     df = compute_indicators(df)
     last = df.iloc[-1]
 
-    long_trend  = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
+    long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
     short_trend = not long_trend
 
-    # multi-timeframe confirmation
+    # تأیید چندتایم‌فریمی
     if tf == "1h":
         df4 = await get_ohlcv_cached(exchange, symbol, "4h")
-        if df4 is not None and len(df4) >= 50:
+        df1d = await get_ohlcv_cached(exchange, symbol, "1d")
+        if df4 is not None and len(df4) >= 50 and df1d is not None and len(df1d) >= 50:
             e12_4 = df4["close"].ewm(span=12).mean().iloc[-1]
             e26_4 = df4["close"].ewm(span=26).mean().iloc[-1]
+            e12_1d = df1d["close"].ewm(span=12).mean().iloc[-1]
+            e26_1d = df1d["close"].ewm(span=26).mean().iloc[-1]
             trend4 = e12_4 > e26_4
-            if long_trend  and not trend4: return None
-            if short_trend and  trend4: return None
+            trend1d = e12_1d > e26_1d
+            if long_trend and (not trend4 or not trend1d): return None
+            if short_trend and (trend4 or trend1d): return None
 
-    # support/resistance filter
-    support, _, resistance, _ = detect_support_resistance(df)
-    if long_trend and abs(last["close"]-resistance)/last["close"] < S_R_BUFFER: return None
-    if short_trend and abs(last["close"]-support)/last["close"] < S_R_BUFFER: return None
+    # فیلتر نوسانات
+    volatility = df["ATR"].iloc[-1] / df["close"].iloc[-1]
+    if volatility < VOLATILITY_THRESHOLD:
+        return None
 
-    # candle patterns
-    body           = last["body"]
-    bullish_pin    = last["PinBar"]   and last["lower"] > 2*body
-    bearish_pin    = last["PinBar"]   and last["upper"] > 2*body
+    # حمایت و مقاومت
+    support, resistance, vol_levels = detect_support_resistance(df)
+    if long_trend and abs(last["close"] - resistance) / last["close"] < S_R_BUFFER: return None
+    if short_trend and abs(last["close"] - support) / last["close"] < S_R_BUFFER: return None
+
+    # نقدینگی
+    if not check_liquidity(exchange, symbol):
+        return None
+
+    # رویدادهای بازار
+    fundamental = check_market_events(symbol.split('/')[0])
+    if fundamental == "رویداد مهم":
+        return None
+
+    # الگوهای کندلی
+    body = last["body"]
+    bullish_pin = last["PinBar"] and last["lower"] > 2 * body
+    bearish_pin = last["PinBar"] and last["upper"] > 2 * body
     bullish_engulf = last["Engulfing"] and last["close"] > last["open"]
     bearish_engulf = last["Engulfing"] and last["close"] < last["open"]
 
-    # RSI psychology
-    rsi          = last["RSI"]
-    psych_long   = "اشباع فروش" if rsi < 30 else "اشباع خرید" if rsi > 70 else "متعادل"
-    psych_short  = "اشباع خرید" if rsi > 70 else "اشباع فروش" if rsi < 30 else "متعادل"
+    # روان‌شناسی
+    rsi = last["RSI"]
+    stochastic = last["Stochastic"]
+    psych_long = "اشباع فروش" if rsi < 30 and stochastic < 20 else "اشباع خرید" if rsi > 70 and stochastic > 80 else "متعادل"
+    psych_short = "اشباع خرید" if rsi > 70 and stochastic > 80 else "اشباع فروش" if rsi < 30 and stochastic < 20 else "متعادل"
 
     conds_long = {
-        "PinBar":        bullish_pin,
-        "Engulfing":     bullish_engulf,
-        "EMA_Cross":     df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and long_trend,
-        "MACD_Cross":    df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
-        "RSI_Oversold":  rsi < 30,
+        "PinBar": bullish_pin,
+        "Engulfing": bullish_engulf,
+        "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and long_trend,
+        "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
+        "RSI_Oversold": rsi < 30,
+        "Stochastic_Oversold": stochastic < 20,
         "ADX_StrongTrend": last["ADX"] > ADX_THRESHOLD,
     }
     conds_short = {
-        "PinBar":         bearish_pin,
-        "Engulfing":      bearish_engulf,
-        "EMA_Cross":      df["EMA12"].iloc[-2] > df["EMA26"].iloc[-2] and short_trend,
-        "MACD_Cross":     df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1],
+        "PinBar": bearish_pin,
+        "Engulfing": bearish_engulf,
+        "EMA_Cross": df["EMA12"].iloc[-2] > df["EMA26"].iloc[-2] and short_trend,
+        "MACD_Cross": df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1],
         "RSI_Overbought": rsi > 70,
+        "Stochastic_Overbought": stochastic > 80,
         "ADX_StrongTrend": last["ADX"] > ADX_THRESHOLD,
     }
 
-    score_long  = sum(conds_long.values())
+    score_long = sum(conds_long.values())
     score_short = sum(conds_short.values())
 
     # Long entry
@@ -227,46 +327,51 @@ async def analyze_symbol(exchange, symbol, tf):
         long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)
     ):
         entry = float(last["close"])
-        sl    = entry - 1.5 * float(last["ATR"])
-        tp    = entry + 2   * float(last["ATR"])
-        rr    = round((tp - entry) / (entry - sl), 2)
+        atr_avg = df["ATR"].rolling(5).mean().iloc[-1]  # میانگین ATR 5 کندل
+        sl = entry - 2 * atr_avg
+        tp = entry + 3 * atr_avg
+        rr = round((tp - entry) / (entry - sl), 2)
         return {
-            "نوع معامله":    "Long",
-            "نماد":           symbol,
-            "تایم‌فریم":      tf,
-            "قیمت ورود":      entry,
-            "حد ضرر":         sl,
-            "هدف سود":        tp,
+            "نوع معامله": "Long",
+            "نماد": symbol,
+            "تایم‌فریم": tf,
+            "قیمت ورود": entry,
+            "حد ضرر": sl,
+            "هدف سود": tp,
             "ریسک به ریوارد": rr,
-            "سطح اطمینان":    min(score_long * 20, 100),
-            "تحلیل":          " | ".join([k for k,v in conds_long.items() if v]),
-            "روانشناسی":      psych_long,
-            "روند بازار":     "صعودی",
-            "فاندامنتال":     "ندارد"
+            "سطح اطمینان": min(score_long * 20, 100),
+            "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
+            "روانشناسی": psych_long,
+            "روند بازار": "صعودی",
+            "فاندامنتال": fundamental
         }
 
     # Short entry
     if score_short >= 3 and psych_short != "اشباع فروش" and (
         short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)
     ):
-        entry = float(last["close"])
-        sl    = entry + 1.5 * float(last["ATR"])
-        tp    = entry - 2   * float(last["ATR"])
-        rr    = round((entry - tp) / (sl - entry), 2)
-        return {
-            "نوع معامله":    "Short",
-            "نماد":           symbol,
-            "تایم‌فریم":      tf,
-            "قیمت ورود":      entry,
-            "حد ضرر":         sl,
-            "هدف سود":        tp,
-            "ریسک به ریوارد": rr,
-            "سطح اطمینان":    min(score_short * 20, 100),
-            "تحلیل":          " | ".join([k for k,v in conds_short.items() if v]),
-            "روانشناسی":      psych_short,
-            "روند بازار":     "نزولی",
-            "فاندامنتال":     "ندارد"
-        }
+        if is_valid_breakout(df, support) and not detect_rsi_divergence(df) and not (
+            detect_hammer(df) or (last["Engulfing"] and last["close"] > last["open"])
+        ):
+            entry = float(last["close"])
+            atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
+            sl = entry + 2 * atr_avg
+            tp = entry - 3 * atr_avg
+            rr = round((entry - tp) / (sl - entry), 2)
+            return {
+                "نوع معامله": "Short",
+                "نماد": symbol,
+                "تایم‌فریم": tf,
+                "قیمت ورود": entry,
+                "حد ضرر": sl,
+                "هدف سود": tp,
+                "ریسک به ریوارد": rr,
+                "سطح اطمینان": min(score_short * 20, 100),
+                "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
+                "روانشناسی": psych_short,
+                "روند بازار": "نزولی",
+                "فاندامنتال": fundamental
+            }
 
     return None
 
@@ -308,16 +413,16 @@ def backtest_symbol(symbol, timeframe, start_date, end_date):
     exchange = ccxt.kucoin({'enableRateLimit': True})
     since = exchange.parse8601(start_date)
     ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=1000)
-    df = pd.DataFrame(ohlcv, columns=["timestamp","open","high","low","close","volume"])
+    df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
     df.set_index("timestamp", inplace=True)
 
     results = []
     for i in range(50, len(df)-1):
         window_df = df.iloc[:i+1].copy()
-        # You need a synchronous wrapper for analyze_symbol; assume analyze_sync exists
         try:
-            sig = analyze_symbol_sync(window_df)  
+            loop = asyncio.get_event_loop()
+            sig = loop.run_until_complete(analyze_symbol(exchange, symbol, timeframe, window_df))
         except:
             sig = None
         if not sig:
@@ -343,13 +448,13 @@ def walkforward(symbol, timeframe, total_days=90, train_days=60, test_days=30):
     wf = []
     while start + timedelta(days=train_days+test_days) <= end:
         train_end = start + timedelta(days=train_days)
-        test_end  = train_end + timedelta(days=test_days)
+        test_end = train_end + timedelta(days=test_days)
         wr = backtest_symbol(symbol, timeframe, train_end.isoformat(), test_end.isoformat())
         wf.append({
             "train_start": start,
-            "train_end":   train_end,
-            "test_end":    test_end,
-            "win_rate":    wr
+            "train_end": train_end,
+            "test_end": test_end,
+            "win_rate": wr
         })
         start += timedelta(days=test_days)
 
@@ -359,4 +464,6 @@ def walkforward(symbol, timeframe, total_days=90, train_days=60, test_days=30):
 
 # Example usage:
 # if __name__ == "__main__":
-#     walkforward("BTC/USDT", "1h")
+#     asyncio.run(scan_all_crypto_symbols())
+#     # یا
+#     backtest_symbol("BTC/USDT", "1h", "2024-01-01T00:00:00Z", "2024-02-01T00:00:00Z")
