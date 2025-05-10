@@ -26,24 +26,24 @@ TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
 # پارامترهای اصلی
 VOLUME_WINDOW = 10
-S_R_BUFFER = 0.02  # افزایش از 0.01
+S_R_BUFFER = 0.05  # افزایش از 0.02 به 0.05
 ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
-CACHE_TTL = 600  # افزایش از 300
+CACHE_TTL = 600
 VOLUME_THRESHOLD = 2
 MAX_CONCURRENT_REQUESTS = 20
-WAIT_BETWEEN_REQUESTS = 1.0  # افزایش از 0.5
+WAIT_BETWEEN_REQUESTS = 2.0  # افزایش از 1.0 به 2.0
 WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.002
 LIQUIDITY_SPREAD_THRESHOLD = 0.005
 
-# ضرایب مقیاس‌پذیری حجم (کاهش داده شده)
+# ضرایب مقیاس‌پذیری حجم
 VOLUME_SCALING = {
-    "30m": 0.005,  # از 0.01
-    "1h": 0.03,    # از 0.05
-    "4h": 0.10,    # از 0.15
-    "1d": 0.20     # از 0.25
+    "30m": 0.005,
+    "1h": 0.03,
+    "4h": 0.10,
+    "1d": 0.20
 }
 
 # متغیرهای شمارشگر رد شدن‌ها
@@ -133,23 +133,38 @@ class PatternDetector:
 
     @staticmethod
     def detect_support_resistance(df, window=10):
+        if len(df) < window:
+            logging.warning("داده کافی برای محاسبه حمایت/مقاومت نیست")
+            return df["close"].mean(), df["close"].mean(), []
+
         high = df['high'].rolling(window).max()
         low = df['low'].rolling(window).min()
         close = df['close'].rolling(window).mean()
         pivot = (high + low + close) / 3
         resistance = pivot + (high - low) * 0.382
         support = pivot - (high - low) * 0.382
-        volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
-        vol_threshold = volume_profile.quantile(0.75)
-        high_vol_levels = volume_profile[volume_profile > vol_threshold].index
+
         recent_highs = df['high'][(df['high'].shift(1) < df['high']) & (df['high'].shift(-1) < df['high'])].iloc[-window:]
         recent_lows = df['low'][(df['low'].shift(1) > df['low']) & (df['low'].shift(-1) > df['low'])].iloc[-window:]
         recent_resistance = recent_highs.max() if not recent_highs.empty else resistance.iloc[-1]
         recent_support = recent_lows.min() if not recent_lows.empty else support.iloc[-1]
+
+        if recent_resistance == 0 or pd.isna(recent_resistance):
+            recent_resistance = df['close'].mean()
+            logging.warning("مقاومت صفر یا نامعتبر بود، میانگین قیمت جایگزین شد")
+        if recent_support == 0 or pd.isna(recent_support):
+            recent_support = df['close'].mean()
+            logging.warning("حمایت صفر یا نامعتبر بود، میانگین قیمت جایگزین شد")
+
+        volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
+        vol_threshold = volume_profile.quantile(0.75)
+        high_vol_levels = volume_profile[volume_profile > vol_threshold].index
+
         if 'support_levels' not in globals(): globals()['support_levels'] = []
         if 'resistance_levels' not in globals(): globals()['resistance_levels'] = []
         if recent_support not in support_levels: support_levels.append(recent_support)
         if recent_resistance not in resistance_levels: resistance_levels.append(recent_resistance)
+
         return recent_support, recent_resistance, high_vol_levels
 
     @staticmethod
@@ -329,8 +344,8 @@ def check_market_events(symbol):
         "Accept": "application/json",
         "Accept-Encoding": "deflate, gzip"
     }
-    start_date = (datetime.utcnow() - timedelta(days=7)).replace(microsecond=0).isoformat()  # حذف Z
-    end_date = (datetime.utcnow() + timedelta(days=7)).replace(microsecond=0).isoformat()  # حذف Z
+    start_date = (datetime.utcnow() - timedelta(days=7)).replace(microsecond=0).isoformat()
+    end_date = (datetime.utcnow() + timedelta(days=7)).replace(microsecond=0).isoformat()
     params = {
         "coinId": str(coin_id),
         "max": 5,
@@ -343,7 +358,7 @@ def check_market_events(symbol):
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         if resp.status_code != 200:
             logging.error(f"خطا در دریافت رویدادها: Status={resp.status_code}, Response={resp.text}")
-            return 0
+            return 0  # مقدار پیش‌فرض در صورت خطا
         events = resp.json()
         
         event_score = 0
@@ -374,7 +389,7 @@ def check_market_events(symbol):
         return event_score
     except Exception as e:
         logging.error(f"خطا در دریافت رویدادها از CoinMarketCal برای {symbol}: {e}")
-        return 0
+        return 0  # مقدار پیش‌فرض در صورت خطا
 
 # محاسبات اندیکاتورها
 def compute_indicators(df):
@@ -394,17 +409,26 @@ def compute_indicators(df):
 
 # تأیید اندیکاتورهای ترکیبی
 def confirm_combined_indicators(df, trend_type):
+    global symbol, tf  # برای استفاده در لاگ‌ها
     last = df.iloc[-1]
     rsi = last["RSI"]
     bullish_engulf = last["Engulfing"] and last["close"] > last["open"]
     bearish_engulf = last["Engulfing"] and last["close"] < last["open"]
     macd_cross_long = df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1]
     macd_cross_short = df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1]
+    
+    if rsi > 80:
+        logging.warning(f"رد {symbol} @ {tf}: RSI خیلی بالا (RSI={rsi:.2f})")
+        return False
+    if rsi < 20:
+        logging.warning(f"رد {symbol} @ {tf}: RSI خیلی پایین (RSI={rsi:.2f})")
+        return False
+
     if trend_type == "Long":
         conditions = [rsi < 40, macd_cross_long, bullish_engulf]
         return sum(conditions) >= 1
     else:
-        conditions = [rsi > 60, macd_cross_short, bearish_engulf]
+        conditions = [rsi > 70, macd_cross_short, bearish_engulf]
         return sum(conditions) >= 1
 
 # مدیریت ریسک و اندازه پوزیشن
@@ -535,7 +559,7 @@ async def analyze_symbol(exchange, symbol, tf):
     current_vol = df["volume"].iloc[-1]
     logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}")
     
-    if current_vol < dynamic_threshold and current_vol < 0.5 * vol_avg:  # شرط نسبی
+    if current_vol < dynamic_threshold and current_vol < 0.5 * vol_avg:
         VOLUME_REJECTS += 1
         logging.warning(f"رد {symbol} @ {tf}: حجم خیلی کم (current={current_vol}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
         return None
@@ -576,7 +600,7 @@ async def analyze_symbol(exchange, symbol, tf):
         SR_REJECTS += 1
         logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به مقاومت (distance={abs(last['close'] - resistance)/last['close']:.4f})")
         return None
-    if short_trend and abs(last["close"] - support) / last["close"] < S_R_BUFFER:
+    elif short_trend and abs(last["close"] - support) / last["close"] < S_R_BUFFER:
         SR_REJECTS += 1
         logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به حمایت (distance={abs(last['close'] - support)/last['close']:.4f})")
         return None
