@@ -582,7 +582,7 @@ async def analyze_symbol(exchange, symbol, tf):
     volatility = df["ATR"].iloc[-1] / df["close"].iloc[-1]
     logging.info(f"اندیکاتورها برای {symbol} @ {tf}: RSI={last['RSI']:.2f}, ADX={last['ADX']:.2f}, volatility={volatility:.4f}")
 
-    if last["ADX"] < 10:
+    if last["ADX"] < 30:
         logging.warning(f"رد {symbol} @ {tf}: ADX خیلی پایین (current={last['ADX']:.2f})")
         return None
     logging.debug(f"فیلتر ADX برای {symbol} @ {tf} پاس شد")
