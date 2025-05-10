@@ -286,8 +286,44 @@ async def check_liquidity(exchange, symbol):
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return False
 
-# بررسی رویدادهای بازار با # بررسی رویدادهای بازار با API CoinMarketCal
+# بررسی رویدادهای بازار با # بررسی رویدادهای بازار با # دریافت ID ارز از CoinMarketCal
+def get_coin_id(symbol):
+    url = "https://developers.coinmarketcal.com/v1/coins"
+    headers = {
+        "x-api-key": COINMARKETCAL_API_KEY,
+        "Accept": "application/json",
+        "Accept-Encoding": "deflate, gzip"
+    }
+    try:
+        time.sleep(0.5)  # تأخیر برای رعایت نرخ درخواست
+        logging.debug(f"درخواست برای دریافت ID ارز: URL={url}")
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        coins = resp.json()
+        if not coins or "body" not in coins:
+            logging.error(f"هیچ ارزی در پاسخ /coins یافت نشد")
+            return None
+        
+        # جستجوی ID ارز با نماد
+        for coin in coins["body"]:
+            if coin.get("symbol", "").upper() == symbol.upper():
+                coin_id = coin.get("id")
+                logging.info(f"ID ارز برای {symbol}: {coin_id}")
+                return coin_id
+        logging.warning(f"ارز {symbol} در CoinMarketCal یافت نشد")
+        return None
+    except Exception as e:
+        logging.error(f"خطا در دریافت لیست ارزها از CoinMarketCal: {e}")
+        return None
+
+# بررسی رویدادهای بازار با API CoinMarketCal
 def check_market_events(symbol):
+    # دریافت ID ارز
+    coin_id = get_coin_id(symbol)
+    if not coin_id:
+        logging.warning(f"امتیاز فاندامنتال برای {symbol}: 0 (ارز یافت نشد)")
+        return 0
+
     url = "https://developers.coinmarketcal.com/v1/events"
     headers = {
         "x-api-key": COINMARKETCAL_API_KEY,
@@ -298,14 +334,14 @@ def check_market_events(symbol):
     start_date = (datetime.utcnow() - timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
     end_date = (datetime.utcnow() + timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
     params = {
-        "coins": symbol.upper(),  # استفاده از حروف بزرگ برای نماد
+        "coinId": coin_id,  # استفاده از coinId به جای coins
         "max": 5,
         "dateRangeStart": start_date,
         "dateRangeEnd": end_date
     }
     try:
         time.sleep(0.5)  # تأخیر برای رعایت نرخ درخواست
-        logging.debug(f"درخواست به CoinMarketCal: URL={url}, Params={params}")  # لاگ دیباگ
+        logging.debug(f"درخواست به CoinMarketCal: URL={url}, Params={params}")
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         resp.raise_for_status()  # بررسی خطای HTTP
         events = resp.json()
