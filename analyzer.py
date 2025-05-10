@@ -45,12 +45,12 @@ def get_coin_id(symbol):
 
 # پارامترهای اصلی
 VOLUME_WINDOW = 20
-S_R_BUFFER = 0.02
-ADX_THRESHOLD = 15
-ADX_TREND_THRESHOLD = 15
+S_R_BUFFER = 0.01  # کاهش از 0.02 به 0.01
+ADX_THRESHOLD = 20
+ADX_TREND_THRESHOLD = 25
 CACHE = {}
 CACHE_TTL = 600
-VOLUME_THRESHOLD = 0.05
+VOLUME_THRESHOLD = 0.01  # کاهش از 1.2 به 0.01
 MAX_CONCURRENT_REQUESTS = 5
 WAIT_BETWEEN_REQUESTS = 2.0
 WAIT_BETWEEN_CHUNKS = 3
@@ -548,7 +548,7 @@ def backtest_strategy(df, symbol, initial_balance=10000, risk_percentage=1):
 # تست فوروارد
 async def forward_test(exchange, symbol, tf, days=7):
     df = await get_ohlcv_cached(exchange, symbol, tf, limit=days * 24 * 2)
-    if df is None or len(df) < 40:
+    if df is None or len(df) < 50:
         logging.warning(f"داده کافی برای تست فوروارد {symbol} @ {tf} نیست")
         return None
     df = compute_indicators(df)
@@ -588,7 +588,7 @@ async def dynamic_volume_scaling(exchange, symbol, tf, df):
         "1d": 0.20
     }
     dynamic_factor = volatility_weight * liquidity_factor * (total_depth / 1000)
-    dynamic_factor = min(dynamic_factor, 2)
+    dynamic_factor = min(dynamic_factor, 10)
     dynamic_scaling = {tf: base_scaling[tf] * dynamic_factor for tf in base_scaling}
     logging.info(f"تنظیم پویای VOLUME_SCALING برای {symbol} @ {tf}: volatility_factor={volatility_factor:.4f}, liquidity_factor={liquidity_factor:.4f}, dynamic_factor={dynamic_factor:.4f}, new_scaling={dynamic_scaling}")
     return dynamic_scaling
@@ -647,7 +647,7 @@ async def analyze_symbol(exchange, symbol, tf):
         else:
             logging.warning(f"داده چند تایم‌فریمی برای {symbol} @ {tf} کافی نیست (ادامه می‌دهیم)")
 
-    if volatility < VOLATILITY_THRESHOLD:
+    if volatility <= VOLATILITY_THRESHOLD:  # تغییر از < به <=
         logging.warning(f"رد {symbol} @ {tf}: نوسان خیلی کم (current={volatility:.4f})")
         return None
     logging.debug(f"فیلتر نوسانات برای {symbol} @ {tf} پاس شد")
@@ -730,6 +730,7 @@ async def analyze_symbol(exchange, symbol, tf):
         (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and 
         has_trend and confirm_combined_indicators(df, "Long") and 
         await multi_timeframe_confirmation(df, symbol, exchange)):
+        logging.debug(f"چک شکست مقاومت برای {symbol} @ {tf}: resistance={resistance}")
         if not PatternDetector.is_valid_breakout(df, resistance, direction="resistance"):
             logging.warning(f"رد {symbol} @ {tf}: شکست مقاومت نامعتبر")
             return None
@@ -765,6 +766,7 @@ async def analyze_symbol(exchange, symbol, tf):
         (short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)) and 
         has_trend and confirm_combined_indicators(df, "Short") and 
         await multi_timeframe_confirmation(df, symbol, exchange)):
+        logging.debug(f"چک شکست حمایت برای {symbol} @ {tf}: support={support}")
         if not PatternDetector.is_valid_breakout(df, support, direction="support"):
             logging.warning(f"رد {symbol} @ {tf}: شکست حمایت نامعتبر")
             return None
