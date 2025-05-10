@@ -712,7 +712,7 @@ async def analyze_symbol(exchange, symbol, tf):
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
     features = [rsi, last["ADX"], last["volume"] / vol_avg]
 
-    if (score_long >= 2 and psych_long != "اشباع خرید" and 
+    if (score_long >= 0 and psych_long != "اشباع خرید" and 
         (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and 
         has_trend and confirm_combined_indicators(df, "Long") and 
         await multi_timeframe_confirmation(df, symbol, exchange)):
@@ -746,7 +746,7 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.info(f"سیگنال Long برای {symbol} @ {tf}: {result}")
         return result
 
-    if (score_short >= 2 and psych_short != "اشباع فروش" and 
+    if (score_short >= 0 and psych_short != "اشباع فروش" and 
         (short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)) and 
         has_trend and confirm_combined_indicators(df, "Short") and 
         await multi_timeframe_confirmation(df, symbol, exchange)):
