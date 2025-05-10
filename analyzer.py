@@ -286,7 +286,7 @@ async def check_liquidity(exchange, symbol):
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return False
 
-# بررسی رویدادهای بازار با API CoinMarketCal
+# بررسی رویدادهای بازار با # بررسی رویدادهای بازار با API CoinMarketCal
 def check_market_events(symbol):
     url = "https://developers.coinmarketcal.com/v1/events"
     headers = {
@@ -294,14 +294,18 @@ def check_market_events(symbol):
         "Accept": "application/json",
         "Accept-Encoding": "deflate, gzip"
     }
+    # ساده‌سازی فرمت تاریخ بدون میلی‌ثانیه
+    start_date = (datetime.utcnow() - timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
+    end_date = (datetime.utcnow() + timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
     params = {
-        "coins": symbol.lower(),  # نماد ارز (مثلاً btc)
-        "max": 5,  # حداکثر 5 رویداد اخیر
-        "dateRangeStart": (datetime.utcnow() - timedelta(days=7)).isoformat(),  # از 7 روز پیش
-        "dateRangeEnd": (datetime.utcnow() + timedelta(days=7)).isoformat()  # تا 7 روز آینده
+        "coins": symbol.upper(),  # استفاده از حروف بزرگ برای نماد
+        "max": 5,
+        "dateRangeStart": start_date,
+        "dateRangeEnd": end_date
     }
     try:
         time.sleep(0.5)  # تأخیر برای رعایت نرخ درخواست
+        logging.debug(f"درخواست به CoinMarketCal: URL={url}, Params={params}")  # لاگ دیباگ
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         resp.raise_for_status()  # بررسی خطای HTTP
         events = resp.json()
