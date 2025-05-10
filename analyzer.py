@@ -21,6 +21,13 @@ logging.basicConfig(
     force=True,
     encoding="utf-8"
 )
+import logging
+
+# تنظیم سطح لاگ به DEBUG
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 # کلیدهای API
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
