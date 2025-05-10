@@ -583,7 +583,7 @@ async def dynamic_volume_scaling(exchange, symbol, tf, df):
 
     # دریافت اطلاعات عمق مارکت
     try:
-        order_book = await exchange.fetch_order_book(symbol, limit=10)
+        order_book = await exchange.fetch_order_book(symbol, limit=20)
         bids = order_book['bids']
         asks = order_book['asks']
         bid_vol = sum([b[1] for b in bids[:5]])  # حجم کل پیشنهادها (5 سطح اول)
