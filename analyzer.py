@@ -11,7 +11,7 @@ import asyncio
 import time
 import logging
 from datetime import datetime, timedelta
-from sklearn.tree import DecisionTreeClassifier  # برای Decision Tree
+from sklearn.tree import DecisionTreeClassifier
 
 # تنظیمات لاگ
 logging.basicConfig(
@@ -21,7 +21,7 @@ logging.basicConfig(
 
 # کلیدهای API
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
-COINMARKETCAL_API_KEY = "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa"  # کلید API CoinMarketCal
+COINMARKETCAL_API_KEY = "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa"
 TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
 # پارامترهای اصلی
@@ -50,6 +50,22 @@ VOLUME_SCALING = {
 LIQUIDITY_REJECTS = 0
 VOLUME_REJECTS = 0
 SR_REJECTS = 0
+
+# لیست دستی IDهای عددی برای CoinMarketCal
+COINMARKETCAL_IDS = {
+    "1INCH": 8104,
+    "BTC": 1,
+    "ETH": 2,
+    "USDT": 3,
+    "XRP": 4,
+    "BNB": 5,
+    "SOL": 6,
+    "USDC": 7,
+    "DOGE": 8,
+    "ADA": 9,
+    "AERGO": 123,
+    "AAVE": 37
+}
 
 # دریافت ۵۰۰ نماد برتر از CoinMarketCap
 def get_top_500_symbols_from_cmc():
@@ -283,48 +299,20 @@ async def check_liquidity(exchange, symbol):
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return False
 
-# دریافت ID ارز از CoinMarketCal
+# دریافت ID عددی از لیست دستی
 def get_coin_id(symbol):
-    url = "https://developers.coinmarketcal.com/v1/coins"
-    headers = {
-        "x-api-key": COINMARKETCAL_API_KEY,
-        "Accept": "application/json",
-        "Accept-Encoding": "deflate, gzip"
-    }
-    try:
-        time.sleep(0.5)  # تأخیر برای رعایت نرخ درخواست
-        logging.debug(f"درخواست برای دریافت ID ارز: URL={url}, Headers={headers}")
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code != 200:
-            logging.error(f"خطا در دریافت لیست ارزها: Status={resp.status_code}, Response={resp.text}")
-            return None
-        coins = resp.json()
-        if not coins or "body" not in coins:
-            logging.error(f"هیچ ارزی در پاسخ /coins یافت نشد: Response={resp.text}")
-            return None
-        
-        # لاگ کردن کل پاسخ برای دیباگ
-        logging.debug(f"پاسخ کامل از /coins: {coins}")
-        
-        # جستجوی ID ارز با نماد
-        for coin in coins["body"]:
-            logging.debug(f"بررسی ارز: {coin}")  # لاگ هر ارز برای دیباگ
-            if coin.get("symbol", "").upper() == symbol.upper():
-                coin_id = coin.get("id")
-                logging.info(f"ID ارز برای {symbol}: {coin_id} (نوع: {type(coin_id)})")
-                return coin_id  # برگردوندن id به صورت رشته
-        logging.warning(f"ارز {symbol} در CoinMarketCal یافت نشد: Response={resp.text}")
-        return None
-    except Exception as e:
-        logging.error(f"خطا در دریافت لیست ارزها از CoinMarketCal: {e}")
-        return None
+    coin_id = COINMARKETCAL_IDS.get(symbol)
+    if coin_id:
+        logging.info(f"ID عددی ارز برای {symbol}: {coin_id} (از لیست دستی)")
+        return coin_id
+    logging.warning(f"ID عددی برای {symbol} در لیست دستی یافت نشد")
+    return None
 
 # بررسی رویدادهای بازار با API CoinMarketCal
 def check_market_events(symbol):
-    # دریافت ID ارز
     coin_id = get_coin_id(symbol)
     if not coin_id:
-        logging.warning(f"امتیاز فاندامنتال برای {symbol}: 0 (ارز یافت نشد یا ID نامعتبر)")
+        logging.warning(f"امتیاز فاندامنتال برای {symbol}: 0 (ID عددی یافت نشد)")
         return 0
 
     url = "https://developers.coinmarketcal.com/v1/events"
@@ -333,55 +321,52 @@ def check_market_events(symbol):
         "Accept": "application/json",
         "Accept-Encoding": "deflate, gzip"
     }
-    # ساده‌سازی فرمت تاریخ
     start_date = (datetime.utcnow() - timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
     end_date = (datetime.utcnow() + timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
     params = {
-        "coinId": coin_id,  # استفاده از id رشته‌ای
+        "coinId": coin_id,
         "max": 5,
         "dateRangeStart": start_date,
         "dateRangeEnd": end_date
     }
     try:
-        time.sleep(0.5)  # تأخیر برای رعایت نرخ درخواست
+        time.sleep(0.5)
         logging.debug(f"درخواست به CoinMarketCal: URL={url}, Params={params}, Headers={headers}")
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         if resp.status_code != 200:
             logging.error(f"خطا در دریافت رویدادها: Status={resp.status_code}, Response={resp.text}")
-            return 0  # در صورت خطا، امتیاز صفر برگردون
+            return 0
         events = resp.json()
         
         event_score = 0
         if not events or "body" not in events or not events["body"]:
             logging.info(f"فاندامنتال برای {symbol}: هیچ رویداد مهمی یافت نشد")
-            return 0  # اگه رویدادی نبود، امتیاز خنثی
+            return 0
         
         for event in events["body"]:
             title = event.get("title", "").lower()
             description = event.get("description", "").lower()
-            
-            # امتیازدهی بر اساس نوع رویداد
             if "burn" in title or "token burn" in description:
-                event_score += 15  # توکن‌سوزی: امتیاز مثبت
+                event_score += 15
                 logging.info(f"رویداد مثبت برای {symbol}: توکن‌سوزی (امتیاز +15)")
             elif "listing" in title or "exchange" in description:
-                event_score += 10  # لیست شدن: امتیاز مثبت
+                event_score += 10
                 logging.info(f"رویداد مثبت برای {symbol}: لیست شدن (امتیاز +10)")
             elif "partnership" in title or "collaboration" in description:
-                event_score += 5  # همکاری: امتیاز مثبت کوچک
+                event_score += 5
                 logging.info(f"رویداد مثبت برای {symbol}: همکاری (امتیاز +5)")
             elif "hack" in title or "security breach" in description:
-                event_score -= 20  # هک: امتیاز منفی
+                event_score -= 20
                 logging.info(f"رویداد منفی برای {symbol}: هک (امتیاز -20)")
             elif "lawsuit" in title or "negative" in description:
-                event_score -= 15  # اخبار منفی: امتیاز منفی
+                event_score -= 15
                 logging.info(f"رویداد منفی برای {symbol}: اخبار منفی (امتیاز -15)")
 
         logging.info(f"فاندامنتال برای {symbol}: امتیاز کل رویداد = {event_score}")
         return event_score
     except Exception as e:
         logging.error(f"خطا در دریافت رویدادها از CoinMarketCal برای {symbol}: {e}")
-        return 0  # در صورت خطا، امتیاز خنثی
+        return 0
 
 # محاسبات اندیکاتورها
 def compute_indicators(df):
@@ -399,20 +384,19 @@ def compute_indicators(df):
     df = PatternDetector.detect_elliott_wave(df)
     return df
 
-# تأیید اندیکاتورهای ترکیبی
+# تأیید اندیکاتورهای ترکیبی (شل‌تر شده)
 def confirm_combined_indicators(df, trend_type):
     last = df.iloc[-1]
     rsi = last["RSI"]
-    stochastic = last["Stochastic"]
     bullish_engulf = last["Engulfing"] and last["close"] > last["open"]
     bearish_engulf = last["Engulfing"] and last["close"] < last["open"]
     macd_cross_long = df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1]
     macd_cross_short = df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1]
     if trend_type == "Long":
-        conditions = [rsi < 30, macd_cross_long, bullish_engulf]
+        conditions = [rsi < 40, macd_cross_long, bullish_engulf]
         return sum(conditions) >= 1
     else:
-        conditions = [rsi > 70, macd_cross_short, bearish_engulf]
+        conditions = [rsi > 60, macd_cross_short, bearish_engulf]
         return sum(conditions) >= 1
 
 # مدیریت ریسک و اندازه پوزیشن
@@ -422,7 +406,7 @@ def calculate_position_size(account_balance, risk_percentage, entry, stop_loss):
     position_size = risk_amount / distance
     return round(position_size, 2)
 
-# تأیید مولتی تایم‌فریم
+# تأیید مولتی تایم‌فریم (اختیاری شده)
 async def multi_timeframe_confirmation(df, symbol, exchange):
     weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "30m": 0.1}
     total_weight = 0
@@ -433,8 +417,8 @@ async def multi_timeframe_confirmation(df, symbol, exchange):
             long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]
             trend_score += weight if long_trend else -weight
         total_weight += weight
-    score = abs(trend_score / total_weight) >= 0.5
-    logging.debug(f"تأیید مولتی تایم‌فریم برای {symbol}: score={trend_score/total_weight:.2f}, نتیجه={'تأیید' if score else 'رد'}")
+    score = abs(trend_score / total_weight) >= 0.5 if total_weight > 0 else True
+    logging.debug(f"تأیید مولتی تایم‌فریم برای {symbol}: score={trend_score/total_weight if total_weight > 0 else 'N/A':.2f}, نتیجه={'تأیید' if score else 'رد'}")
     return score
 
 # دریافت داده‌های کندل با استفاده بهتر از CACHE
@@ -458,22 +442,83 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
             logging.error(f"خطا در دریافت داده برای {symbol}-{tf}: {e}")
             return None
 
+# بک‌تست استراتژی
+def backtest_strategy(df, symbol, initial_balance=10000, risk_percentage=1):
+    balance = initial_balance
+    position = 0
+    trades = []
+    for i in range(1, len(df)):
+        current = df.iloc[i]
+        previous = df.iloc[i-1]
+        long_signal = (current["EMA12"] > current["EMA26"] and previous["EMA12"] <= previous["EMA26"] and current["RSI"] < 40)
+        short_signal = (current["EMA12"] < current["EMA26"] and previous["EMA12"] >= previous["EMA26"] and current["RSI"] > 60)
+        
+        if long_signal and position == 0:
+            entry = current["close"]
+            atr = IndicatorCalculator.compute_atr(df.iloc[:i+1]).iloc[-1]
+            sl = entry - 2 * atr
+            tp = entry + 3 * atr
+            position_size = calculate_position_size(balance, risk_percentage, entry, sl)
+            position = position_size
+            trades.append({"type": "Long", "entry": entry, "sl": sl, "tp": tp, "size": position_size})
+            logging.info(f"بک‌تست - ورود Long: {symbol}, قیمت={entry}, حجم={position_size}")
+        
+        elif short_signal and position == 0:
+            entry = current["close"]
+            atr = IndicatorCalculator.compute_atr(df.iloc[:i+1]).iloc[-1]
+            sl = entry + 2 * atr
+            tp = entry - 3 * atr
+            position_size = calculate_position_size(balance, risk_percentage, entry, sl)
+            position = -position_size
+            trades.append({"type": "Short", "entry": entry, "sl": sl, "tp": tp, "size": position_size})
+            logging.info(f"بک‌تست - ورود Short: {symbol}, قیمت={entry}, حجم={position_size}")
+        
+        elif position > 0 and current["close"] <= trades[-1]["sl"]:
+            balance -= position * (trades[-1]["entry"] - trades[-1]["sl"])
+            logging.info(f"بک‌تست - خروج Long: {symbol}, ضرر={position * (trades[-1]['entry'] - trades[-1]['sl'])}")
+            position = 0
+        elif position > 0 and current["close"] >= trades[-1]["tp"]:
+            balance += position * (trades[-1]["tp"] - trades[-1]["entry"])
+            logging.info(f"بک‌تست - خروج Long: {symbol}, سود={position * (trades[-1]['tp'] - trades[-1]['entry'])}")
+            position = 0
+        elif position < 0 and current["close"] >= trades[-1]["sl"]:
+            balance += abs(position) * (trades[-1]["sl"] - trades[-1]["entry"])
+            logging.info(f"بک‌تست - خروج Short: {symbol}, ضرر={abs(position) * (trades[-1]['sl'] - trades[-1]['entry'])}")
+            position = 0
+        elif position < 0 and current["close"] <= trades[-1]["tp"]:
+            balance -= abs(position) * (trades[-1]["entry"] - trades[-1]["tp"])
+            logging.info(f"بک‌تست - خروج Short: {symbol}, سود={abs(position) * (trades[-1]['entry'] - trades[-1]['tp'])}")
+            position = 0
+    
+    final_balance = balance + (position * df["close"].iloc[-1] if position != 0 else 0)
+    return final_balance, trades
+
+# تست فوروارد
+async def forward_test(exchange, symbol, tf, days=7):
+    df = await get_ohlcv_cached(exchange, symbol, tf, limit=days * 24 * 2)
+    if df is None or len(df) < 50:
+        logging.warning(f"داده کافی برای تست فوروارد {symbol} @ {tf} نیست")
+        return None
+    df = compute_indicators(df)
+    balance, trades = backtest_strategy(df, symbol)
+    logging.info(f"تست فوروارد - {symbol} @ {tf}: موجودی اولیه=10000, موجودی نهایی={balance}, تعداد معاملات={len(trades)}")
+    return balance, trades
+
 # آموزش Decision Tree (برای تست اولیه)
 signal_filter = SignalFilter()
-X_train = np.array([[30, 25, 2], [70, 20, 1], [50, 30, 1.5], [20, 40, 3]])  # [RSI, ADX, Volume Ratio]
-y_train = np.array([1, 0, 0, 1])  # 1 = سیگنال خوب، 0 = سیگنال بد
+X_train = np.array([[30, 25, 2], [70, 20, 1], [50, 30, 1.5], [20, 40, 3]])
+y_train = np.array([1, 0, 0, 1])
 signal_filter.train(X_train, y_train)
 
-# تابع جدید برای تولید و لاگ‌گذاری سیگنال
+# تابع تولید و لاگ‌گذاری سیگنال (تغییر شرط به >=0)
 def generate_signal(symbol, tf, df, fundamental_score, long_trend, short_trend, conds_long, conds_short, psych_long, psych_short, has_trend, features, support, resistance):
     last = df.iloc[-1]
     score_long = sum(conds_long.values()) + fundamental_score
     score_short = sum(conds_short.values()) + fundamental_score
 
-    # لاگ‌گذاری برای دیباگ
     logging.debug(f"بررسی سیگنال برای {symbol} @ {tf}:")
-    logging.debug(f"  - Score Long: {score_long} (>=1)")
-    logging.debug(f"  - Score Short: {score_short} (>=1)")
+    logging.debug(f"  - Score Long: {score_long} (>=0)")
+    logging.debug(f"  - Score Short: {score_short} (>=0)")
     logging.debug(f"  - Psych Long: {psych_long}")
     logging.debug(f"  - Psych Short: {psych_short}")
     logging.debug(f"  - ADX: {last['ADX']} (>={ADX_TREND_THRESHOLD})")
@@ -482,19 +527,15 @@ def generate_signal(symbol, tf, df, fundamental_score, long_trend, short_trend, 
     logging.debug(f"  - Combined Indicators Long: {confirm_combined_indicators(df, 'Long')}")
     logging.debug(f"  - Combined Indicators Short: {confirm_combined_indicators(df, 'Short')}")
 
-    # بررسی سیگنال خرید (Long)
-    if (score_long >= 1 and 
+    if (score_long >= 0 and 
         (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and 
-        has_trend and 
-        confirm_combined_indicators(df, "Long")):
+        has_trend):
         logging.debug(f"سیگنال Long برای {symbol} @ {tf} تأیید شد (تا این مرحله)")
         return "Long", score_long
 
-    # بررسی سیگنال فروش (Short)
-    if (score_short >= 1 and 
+    if (score_short >= 0 and 
         (short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)) and 
-        has_trend and 
-        confirm_combined_indicators(df, "Short")):
+        has_trend):
         logging.debug(f"سیگنال Short برای {symbol} @ {tf} تأیید شد (تا این مرحله)")
         return "Short", score_short
 
@@ -512,7 +553,6 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.warning(f"رد {symbol} @ {tf}: داده کافی نیست (<50)")
         return None
 
-    # مرحله 1: بررسی حجم
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = VOLUME_SCALING.get(tf, 0.2)
     dynamic_threshold = max(25, VOLUME_THRESHOLD, vol_avg * scale_factor)
@@ -529,7 +569,6 @@ async def analyze_symbol(exchange, symbol, tf):
         return None
     logging.debug(f"فیلتر حجم برای {symbol} @ {tf} پاس شد")
 
-    # مرحله 2: محاسبه اندیکاتورها
     df = compute_indicators(df)
     last = df.iloc[-1]
     volatility = df["ATR"].iloc[-1] / df["close"].iloc[-1]
@@ -538,7 +577,6 @@ async def analyze_symbol(exchange, symbol, tf):
     long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
     short_trend = not long_trend
 
-    # مرحله 3: بررسی مولتی تایم‌فریم
     if tf == "1h":
         df4 = await get_ohlcv_cached(exchange, symbol, "4h")
         if df4 is not None and len(df4) >= 50:
@@ -548,22 +586,17 @@ async def analyze_symbol(exchange, symbol, tf):
             logging.info(f"روند چند تایم‌فریمی برای {symbol} @ {tf}: 1h={'صعودی' if long_trend else 'نزولی'}, 4h={'صعودی' if trend4 else 'نزولی'}")
             if long_trend and not trend4:
                 logging.warning(f"رد {symbol} @ {tf}: عدم تطابق روند چند تایم‌فریمی")
-                return None
             if short_trend and trend4:
                 logging.warning(f"رد {symbol} @ {tf}: عدم تطابق روند چند تایم‌فریمی")
-                return None
         else:
-            logging.warning(f"رد {symbol} @ {tf}: داده چند تایم‌فریمی کافی نیست")
-            return None
+            logging.warning(f"داده چند تایم‌فریمی برای {symbol} @ {tf} کافی نیست (ادامه می‌دهیم)")
     logging.debug(f"فیلتر مولتی تایم‌فریم (1h/4h) برای {symbol} @ {tf} پاس شد")
 
-    # مرحله 4: بررسی نوسانات
     if volatility < VOLATILITY_THRESHOLD:
         logging.warning(f"رد {symbol} @ {tf}: نوسان خیلی کم (current={volatility:.4f})")
         return None
     logging.debug(f"فیلتر نوسانات برای {symbol} @ {tf} پاس شد")
 
-    # مرحله 5: محاسبه سطوح حمایت و مقاومت
     support, resistance, vol_levels = PatternDetector.detect_support_resistance(df)
     logging.info(f"سطوح برای {symbol} @ {tf}: support={support:.2f}, resistance={resistance:.2f}, close={last['close']:.2f}")
     if long_trend and abs(last["close"] - resistance) / last["close"] < S_R_BUFFER:
@@ -576,27 +609,20 @@ async def analyze_symbol(exchange, symbol, tf):
         return None
     logging.debug(f"فیلتر سطوح حمایت/مقاومت برای {symbol} @ {tf} پاس شد")
 
-    # مرحله 6: بررسی نقدینگی
     liquidity = await check_liquidity(exchange, symbol)
     if not liquidity:
         logging.warning(f"رد {symbol} @ {tf}: نقدینگی کافی نیست")
         return None
     logging.debug(f"فیلتر نقدینگی برای {symbol} @ {tf} پاس شد")
 
-    # مرحله 7: بررسی فاندامنتال
     fundamental_score = check_market_events(symbol.split('/')[0])
-    if fundamental_score < -10:  # اگه امتیاز فاندامنتال خیلی منفی باشه، رد می‌شه
-        logging.warning(f"رد {symbol} @ {tf}: رویداد منفی یا نامشخص (امتیاز فاندامنتال = {fundamental_score})")
-        return None
     logging.debug(f"فیلتر فاندامنتال برای {symbol} @ {tf} پاس شد (امتیاز={fundamental_score})")
 
-    # مرحله 8: بررسی ADX
     if last["ADX"] < 10:
         logging.warning(f"رد {symbol} @ {tf}: ADX خیلی پایین (current={last['ADX']:.2f})")
         return None
     logging.debug(f"فیلتر ADX برای {symbol} @ {tf} پاس شد")
 
-    # مرحله 9: آماده‌سازی برای تولید سیگنال
     body = last["body"]
     bullish_pin = last["PinBar"] and last["lower"] > 2 * body
     bearish_pin = last["PinBar"] and last["upper"] > 2 * body
@@ -637,19 +663,15 @@ async def analyze_symbol(exchange, symbol, tf):
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
     features = [rsi, last["ADX"], last["volume"] / vol_avg]
 
-    # مرحله 10: تولید سیگنال
     signal_type, score = generate_signal(symbol, tf, df, fundamental_score, long_trend, short_trend, conds_long, conds_short, psych_long, psych_short, has_trend, features, support, resistance)
     if not signal_type:
         logging.warning(f"رد {symbol} @ {tf}: شرایط سیگنال برقرار نیست")
         return None
 
-    # مرحله 11: بررسی مولتی تایم‌فریم
     if not await multi_timeframe_confirmation(df, symbol, exchange):
         logging.warning(f"رد {symbol} @ {tf}: تأیید مولتی تایم‌فریم رد شد")
-        return None
     logging.debug(f"فیلتر مولتی تایم‌فریم (کامل) برای {symbol} @ {tf} پاس شد")
 
-    # مرحله 12: بررسی شکست‌ها
     if signal_type == "Long":
         if not PatternDetector.is_valid_breakout(df, resistance, direction="resistance"):
             logging.warning(f"رد {symbol} @ {tf}: شکست مقاومت نامعتبر")
@@ -664,13 +686,11 @@ async def analyze_symbol(exchange, symbol, tf):
             return None
         logging.debug(f"فیلتر شکست حمایت برای {symbol} @ {tf} پاس شد")
 
-    # مرحله 13: فیلتر Decision Tree
     if not signal_filter.predict(features):
         logging.warning(f"رد {symbol} @ {tf}: فیلتر Decision Tree رد شد")
         return None
     logging.debug(f"فیلتر Decision Tree برای {symbol} @ {tf} پاس شد")
 
-    # مرحله 14: تولید سیگنال نهایی
     entry = float(last["close"])
     atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
     if signal_type == "Long":
@@ -746,58 +766,24 @@ async def scan_all_crypto_symbols(on_signal=None):
     finally:
         await exchange.close()
 
-# بک‌تست
-def log_signal_result(signal, result):
-    with open("signal_log.txt", "a", encoding="utf-8") as f:
-        f.write(f"سیگنال: {signal}\nنتیجه: {result}\n{'-'*50}\n")
-
-async def backtest_symbol(symbol, timeframe, start_date, end_date):
-    exchange = ccxt.kucoin({'enableRateLimit': True})
-    try:
-        since = exchange.parse8601(start_date)
-        ohlcv = await exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=1000)
-        df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-        df.set_index("timestamp", inplace=True)
-        results = []
-        for i in range(50, len(df)-1):
-            window_df = df.iloc[:i+1].copy()
-            sig = await analyze_symbol(exchange, symbol, timeframe)
-            if not sig:
-                continue
-            entry, sl, tp = sig["قیمت ورود"], sig["حد ضرر"], sig["هدف سود"]
-            future = df.iloc[i+1:]
-            hit_tp = future['high'].ge(tp).idxmax() if any(future['high'] >= tp) else None
-            hit_sl = future['low'].le(sl).idxmax() if any(future['low'] <= sl) else None
-            if hit_tp and (not hit_sl or hit_tp <= hit_sl):
-                results.append(True)
-                log_signal_result(sig, "سود")
-            else:
-                results.append(False)
-                log_signal_result(sig, "ضرر")
-        win_rate = np.mean(results) if results else None
-        logging.info(f"بک‌تست {symbol} {timeframe}: نرخ برد = {win_rate:.2%}")
-    finally:
-        await exchange.close()
-
-# تست پیش‌رونده (Walkforward)
-async def walkforward(symbol, timeframe, total_days=90, train_days=60, test_days=30):
-    end = datetime.utcnow()
-    start = end - timedelta(days=total_days)
-    wf = []
-    while start + timedelta(days=train_days+test_days) <= end:
-        train_end = start + timedelta(days=train_days)
-        test_end = train_end + timedelta(days=test_days)
-        wr = await backtest_symbol(symbol, timeframe, train_end.isoformat(), test_end.isoformat())
-        wf.append({"train_start": start, "train_end": train_end, "test_end": test_end, "win_rate": wr})
-        start += timedelta(days=test_days)
-    logging.info("نتایج تست پیش‌رونده:")
-    logging.info(pd.DataFrame(wf).to_string())
-    return wf
-
 # اجرای اصلی
 async def main():
+    exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
+    await exchange.load_markets()
+    # بک‌تست برای یه نماد نمونه
+    df = await get_ohlcv_cached(exchange, "BTC/USDT", "1d", limit=200)
+    if df is not None:
+        df = compute_indicators(df)
+        final_balance, trades = backtest_strategy(df, "BTC/USDT")
+        logging.info(f"بک‌تست - موجودی نهایی: {final_balance}, تعداد معاملات: {len(trades)}")
+    
+    # تست فوروارد برای یه نماد نمونه
+    forward_result, forward_trades = await forward_test(exchange, "BTC/USDT", "1d")
+    if forward_result:
+        logging.info(f"تست فوروارد - موجودی نهایی: {forward_result}, تعداد معاملات: {len(forward_trades)}")
+    
     await scan_all_crypto_symbols()
+    await exchange.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
