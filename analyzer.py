@@ -26,24 +26,24 @@ TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
 # پارامترهای اصلی
 VOLUME_WINDOW = 10
-S_R_BUFFER = 0.01
+S_R_BUFFER = 0.02  # افزایش از 0.01
 ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
-CACHE_TTL = 300
+CACHE_TTL = 600  # افزایش از 300
 VOLUME_THRESHOLD = 2
 MAX_CONCURRENT_REQUESTS = 20
-WAIT_BETWEEN_REQUESTS = 0.5
+WAIT_BETWEEN_REQUESTS = 1.0  # افزایش از 0.5
 WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.002
 LIQUIDITY_SPREAD_THRESHOLD = 0.005
 
-# ضرایب مقیاس‌پذیری حجم
+# ضرایب مقیاس‌پذیری حجم (کاهش داده شده)
 VOLUME_SCALING = {
-    "30m": 0.01,
-    "1h": 0.05,
-    "4h": 0.15,
-    "1d": 0.25
+    "30m": 0.005,  # از 0.01
+    "1h": 0.03,    # از 0.05
+    "4h": 0.10,    # از 0.15
+    "1d": 0.20     # از 0.25
 }
 
 # متغیرهای شمارشگر رد شدن‌ها
@@ -308,6 +308,7 @@ def get_coin_id(symbol):
             if coin.get("symbol", "").upper() == symbol.upper():
                 coin_id = coin.get("id")
                 logging.info(f"ID ارز برای {symbol}: {coin_id} (نوع: {type(coin_id)})")
+                logging.debug(f"ارز پیدا شده برای {symbol}: coin_id={coin_id}")
                 return coin_id
         logging.warning(f"ارز {symbol} در CoinMarketCal یافت نشد: Response={resp.text}")
         return None
@@ -328,8 +329,8 @@ def check_market_events(symbol):
         "Accept": "application/json",
         "Accept-Encoding": "deflate, gzip"
     }
-    start_date = (datetime.utcnow() - timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
-    end_date = (datetime.utcnow() + timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
+    start_date = (datetime.utcnow() - timedelta(days=7)).replace(microsecond=0).isoformat()  # حذف Z
+    end_date = (datetime.utcnow() + timedelta(days=7)).replace(microsecond=0).isoformat()  # حذف Z
     params = {
         "coinId": str(coin_id),
         "max": 5,
@@ -350,7 +351,7 @@ def check_market_events(symbol):
             logging.info(f"فاندامنتال برای {symbol}: هیچ رویداد مهمی یافت نشد")
             return 0
         
-        for event in events["body"]:  # اصلاح: از events استفاده می‌کنیم، نه coins
+        for event in events["body"]:
             title = event.get("title", "").lower()
             description = event.get("description", "").lower()
             if "burn" in title or "token burn" in description:
@@ -391,7 +392,7 @@ def compute_indicators(df):
     df = PatternDetector.detect_elliott_wave(df)
     return df
 
-# تأیید اندیکاتورهای ترکیبی (شل‌تر شده)
+# تأیید اندیکاتورهای ترکیبی
 def confirm_combined_indicators(df, trend_type):
     last = df.iloc[-1]
     rsi = last["RSI"]
@@ -534,13 +535,9 @@ async def analyze_symbol(exchange, symbol, tf):
     current_vol = df["volume"].iloc[-1]
     logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}")
     
-    if current_vol < dynamic_threshold and current_vol < 0.05 * vol_avg:
+    if current_vol < dynamic_threshold and current_vol < 0.5 * vol_avg:  # شرط نسبی
         VOLUME_REJECTS += 1
         logging.warning(f"رد {symbol} @ {tf}: حجم خیلی کم (current={current_vol}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
-        return None
-    elif current_vol < dynamic_threshold:
-        VOLUME_REJECTS += 1
-        logging.warning(f"رد {symbol} @ {tf}: حجم کم (current={current_vol}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
         return None
     logging.debug(f"فیلتر حجم برای {symbol} @ {tf} پاس شد")
 
@@ -644,7 +641,6 @@ async def analyze_symbol(exchange, symbol, tf):
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
     features = [rsi, last["ADX"], last["volume"] / vol_avg]
 
-    # شرط تولید سیگنال شل‌تر شده
     if (score_long >= 0 and 
         psych_long != "اشباع خرید" and 
         (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and 
