@@ -548,7 +548,7 @@ def backtest_strategy(df, symbol, initial_balance=10000, risk_percentage=1):
 # تست فوروارد
 async def forward_test(exchange, symbol, tf, days=7):
     df = await get_ohlcv_cached(exchange, symbol, tf, limit=days * 24 * 2)
-    if df is None or len(df) < 50:
+    if df is None or len(df) < 40:
         logging.warning(f"داده کافی برای تست فوروارد {symbol} @ {tf} نیست")
         return None
     df = compute_indicators(df)
