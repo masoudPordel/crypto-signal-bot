@@ -24,7 +24,7 @@ CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 COINMARKETCAL_API_KEY = "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa"
 TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
-# تابع جدید برای دریافت آیدی ارز
+# تابع دریافت آیدی ارز
 def get_coin_id(symbol):
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/map"
     headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
@@ -45,13 +45,13 @@ def get_coin_id(symbol):
 
 # پارامترهای اصلی
 VOLUME_WINDOW = 10
-S_R_BUFFER = 0.1  # تغییر از 0.07 به 0.1
-ADX_THRESHOLD = 25  # تغییر از 30 به 25
+S_R_BUFFER = 0.1
+ADX_THRESHOLD = 25
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
 CACHE_TTL = 300
-VOLUME_THRESHOLD = 0.5  # تغییر از 1 به 0.5
-MAX_CONCURRENT_REQUESTS = 5  # تغییر از 10 به 5
+VOLUME_THRESHOLD = 0.5
+MAX_CONCURRENT_REQUESTS = 5
 WAIT_BETWEEN_REQUESTS = 2.0
 WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.003
@@ -359,7 +359,7 @@ async def check_liquidity(exchange, symbol):
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return False
 
-# دریافت ID ارز از # تابع به‌روزرسانی‌شده با تغییر فرمت تاریخ
+# دریافت ID ارز و بررسی رویدادها (به‌روزرسانی‌شده)
 def check_market_events(symbol):
     coin_id = get_coin_id(symbol)
     if not coin_id:
@@ -371,8 +371,8 @@ def check_market_events(symbol):
         "Accept": "application/json",
         "Accept-Encoding": "deflate, gzip"
     }
-    start_date = (datetime.utcnow() - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d")  # فقط تاریخ
-    end_date = (datetime.utcnow() + timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d")  # فقط تاریخ
+    start_date = (datetime.utcnow() - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d")
+    end_date = (datetime.utcnow() + timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d")
     params = {
         "coinId": str(coin_id),
         "max": 5,
@@ -392,8 +392,8 @@ def check_market_events(symbol):
             logging.info(f"فاندامنتال برای {symbol}: هیچ رویداد مهمی یافت نشد")
             return 0
         for event in events["body"]:
-            title = event.get("title", "").lower()
-            description = event.get("description", "").lower()
+            title = event.get("title", "").lower() if isinstance(event.get("title"), str) else ""
+            description = event.get("description", "").lower() if isinstance(event.get("description"), str) else ""
             if "burn" in title or "token burn" in description:
                 event_score += 15
                 logging.info(f"رویداد مثبت برای {symbol}: توکن‌سوزی (امتیاز +15)")
@@ -562,44 +562,38 @@ X_train = np.array([[30, 25, 2], [70, 20, 1], [50, 30, 1.5], [20, 40, 3]])
 y_train = np.array([1, 0, 0, 1])
 signal_filter.train(X_train, y_train)
 
-# تابع جدید برای تنظیم پویای ضرایب # تابع به‌روزرسانی‌شده با سقف برای dynamic_factor
+# تابع تنظیم پویای ضرایب
 async def dynamic_volume_scaling(exchange, symbol, tf, df):
-    # محاسبه ATR به‌عنوان معیار نوسانات
     atr = IndicatorCalculator.compute_atr(df).iloc[-1]
-    volatility_factor = atr / df["close"].iloc[-1]  # نسبت ATR به قیمت بسته
-    base_volatility = 0.002  # آستانه پایه نوسان
-    volatility_weight = max(1.0, volatility_factor / base_volatility)  # وزن بر اساس نوسان
-
-    # دریافت اطلاعات عمق مارکت با limit=20
+    volatility_factor = atr / df["close"].iloc[-1]
+    base_volatility = 0.002
+    volatility_weight = max(1.0, volatility_factor / base_volatility)
     try:
         order_book = await exchange.fetch_order_book(symbol, limit=20)
         bids = order_book['bids']
         asks = order_book['asks']
-        bid_vol = sum([b[1] for b in bids[:5]])  # حجم کل پیشنهادها (5 سطح اول)
-        ask_vol = sum([a[1] for a in asks[:5]])  # حجم کل درخواست‌ها (5 سطح اول)
+        bid_vol = sum([b[1] for b in bids[:5]])
+        ask_vol = sum([a[1] for a in asks[:5]])
         total_depth = bid_vol + ask_vol
         spread = (asks[0][0] - bids[0][0]) / ((bids[0][0] + asks[0][0]) / 2)
-        liquidity_factor = max(0.5, 1 / (1 + spread))  # هر چی اسپرد کمتر باشه، نقدینگی بیشتره
+        liquidity_factor = max(0.5, 1 / (1 + spread))
     except Exception as e:
         logging.warning(f"خطا در دریافت عمق مارکت برای {symbol}: {e}, استفاده از مقادیر پیش‌فرض")
-        total_depth = 1000  # مقدار پیش‌فرض
+        total_depth = 1000
         liquidity_factor = 1.0
-
-    # محاسبه ضریب پویا با سقف
     base_scaling = {
         "30m": 0.005,
         "1h": 0.03,
         "4h": 0.10,
         "1d": 0.20
     }
-    dynamic_factor = volatility_weight * liquidity_factor * (total_depth / 1000)  # نرمال‌سازی عمق
-    dynamic_factor = min(dynamic_factor, 10)  # سقف برای dynamic_factor (جدید)
+    dynamic_factor = volatility_weight * liquidity_factor * (total_depth / 1000)
+    dynamic_factor = min(dynamic_factor, 10)
     dynamic_scaling = {tf: base_scaling[tf] * dynamic_factor for tf in base_scaling}
-
     logging.info(f"تنظیم پویای VOLUME_SCALING برای {symbol} @ {tf}: volatility_factor={volatility_factor:.4f}, liquidity_factor={liquidity_factor:.4f}, dynamic_factor={dynamic_factor:.4f}, new_scaling={dynamic_scaling}")
     return dynamic_scaling
 
-# تحلیل نماد
+# تحلیل نماد (به‌روزرسانی‌شده با حذف شرط روانشناسی)
 async def analyze_symbol(exchange, symbol, tf):
     global VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
@@ -610,7 +604,6 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.warning(f"رد {symbol} @ {tf}: داده کافی نیست (<50)")
         return None
 
-    # تنظیم پویای VOLUME_SCALING
     dynamic_scaling = await dynamic_volume_scaling(exchange, symbol, tf, df)
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = dynamic_scaling.get(tf, 0.2)
@@ -665,11 +658,11 @@ async def analyze_symbol(exchange, symbol, tf):
         distance_to_resistance = abs(last["close"] - resistance) / last["close"]
         distance_to_support = abs(last["close"] - support) / last["close"]
         logging.info(f"فاصله تا سطوح: dist_to_resistance={distance_to_resistance:.4f}, dist_to_support={distance_to_support:.4f}")
-        if long_trend and distance_to_resistance < S_R_BUFFER:  # شرط 0.01 حذف شد
+        if long_trend and distance_to_resistance < S_R_BUFFER:
             SR_REJECTS += 1
             logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به مقاومت (distance={distance_to_resistance:.4f})")
             return None
-        elif short_trend and distance_to_support < S_R_BUFFER:  # شرط 0.01 حذف شد
+        elif short_trend and distance_to_support < S_R_BUFFER:
             SR_REJECTS += 1
             logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به حمایت (distance={distance_to_support:.4f})")
             return None
@@ -732,7 +725,8 @@ async def analyze_symbol(exchange, symbol, tf):
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
     features = [rsi, last["ADX"], last["volume"] / vol_avg]
 
-    if (score_long >= 0 and psych_long != "اشباع خرید" and 
+    # شرط روانشناسی حذف شده
+    if (score_long >= 0 and 
         (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and 
         has_trend and confirm_combined_indicators(df, "Long") and 
         await multi_timeframe_confirmation(df, symbol, exchange)):
@@ -766,7 +760,8 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.info(f"سیگنال Long برای {symbol} @ {tf}: {result}")
         return result
 
-    if (score_short >= 0 and psych_short != "اشباع فروش" and 
+    # شرط روانشناسی حذف شده
+    if (score_short >= 0 and 
         (short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)) and 
         has_trend and confirm_combined_indicators(df, "Short") and 
         await multi_timeframe_confirmation(df, symbol, exchange)):
