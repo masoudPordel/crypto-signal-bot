@@ -286,8 +286,7 @@ async def check_liquidity(exchange, symbol):
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return False
 
-# بررسی رویدادهای بازار با # بررسی رویدادهای بازار با # دریافت ID ارز از CoinMarketCal
-# دریافت ID عددی ارز از CoinMarketCal
+# بررسی رویدادهای بازار با # بررسی رویدادهای بازار با # دریافت ID ارز از # دریافت ID عددی ارز از CoinMarketCal
 def get_coin_id(symbol):
     url = "https://developers.coinmarketcal.com/v1/coins"
     headers = {
@@ -307,11 +306,15 @@ def get_coin_id(symbol):
             logging.error(f"هیچ ارزی در پاسخ /coins یافت نشد: Response={resp.text}")
             return None
         
+        # لاگ کردن کل پاسخ برای دیباگ
+        logging.debug(f"پاسخ کامل از /coins: {coins}")
+        
         # جستجوی ID عددی ارز با نماد
         for coin in coins["body"]:
+            logging.debug(f"بررسی ارز: {coin}")  # لاگ هر ارز برای دیباگ
             if coin.get("symbol", "").upper() == symbol.upper():
-                coin_id = coin.get("id")  # این باید یه عدد باشه
-                logging.info(f"ID عددی ارز برای {symbol}: {coin_id} (نوع: {type(coin_id)})")
+                coin_id = coin.get("id")
+                logging.info(f"ID ارز برای {symbol}: {coin_id} (نوع: {type(coin_id)})")
                 return coin_id
         logging.warning(f"ارز {symbol} در CoinMarketCal یافت نشد: Response={resp.text}")
         return None
@@ -356,7 +359,7 @@ def check_market_events(symbol):
             logging.info(f"فاندامنتال برای {symbol}: هیچ رویداد مهمی یافت نشد")
             return 0  # اگه رویدادی نبود، امتیاز خنثی
         
-        for event in events["body"]:
+        for event in coins["body"]:
             title = event.get("title", "").lower()
             description = event.get("description", "").lower()
             
