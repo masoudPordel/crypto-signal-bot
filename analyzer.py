@@ -24,24 +24,24 @@ CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 COINMARKETCAL_API_KEY = "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa"
 TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
-# پارامترهای اصلی (تغییرات اعمال‌شده)
+# پارامترهای اصلی
 VOLUME_WINDOW = 10
-S_R_BUFFER = 0.07  # افزایش از 0.05 به 0.07
+S_R_BUFFER = 0.07
 ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
-CACHE_TTL = 300
-VOLUME_THRESHOLD = 1.5
-MAX_CONCURRENT_REQUESTS = 10  # کاهش از 20 به 10
+CACHE_TTL = 600
+VOLUME_THRESHOLD = 2
+MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 2.0
 WAIT_BETWEEN_CHUNKS = 3
-VOLATILITY_THRESHOLD = 0.003
-LIQUIDITY_SPREAD_THRESHOLD = 0.015
+VOLATILITY_THRESHOLD = 0.002
+LIQUIDITY_SPREAD_THRESHOLD = 0.005
 
-# ضرایب مقیاس‌پذیری حجم (تغییرات اعمال‌شده)
+# ضرایب مقیاس‌پذیری حجم (به صورت پایه، ولی به صورت پویا تنظیم می‌شن)
 VOLUME_SCALING = {
-    "30m": 0.005,  # از 0.003 به 0.005
-    "1h": 0.03,    # از 0.02 به 0.03
+    "30m": 0.005,
+    "1h": 0.03,
     "4h": 0.10,
     "1d": 0.20
 }
@@ -65,7 +65,7 @@ def get_top_500_symbols_from_cmc():
         logging.error(f"خطا در دریافت از CMC: {e}")
         return []
 
-# کلاس برای مدیریت اندیکاتورها (همه اندیکاتورها نگه داشته شدن)
+# کلاس برای مدیریت اندیکاتورها
 class IndicatorCalculator:
     @staticmethod
     def compute_rsi(df, period=14):
@@ -117,7 +117,7 @@ class IndicatorCalculator:
         return k
 
     @staticmethod
-    def compute_mfi(df, period=14):  # نگه داشته شده
+    def compute_mfi(df, period=14):
         typical_price = (df['high'] + df['low'] + df['close']) / 3
         raw_money_flow = typical_price * df['volume']
         positive_flow = raw_money_flow.where(typical_price > typical_price.shift(1), 0).rolling(period).sum()
@@ -126,7 +126,7 @@ class IndicatorCalculator:
         logging.debug(f"محاسبه MFI: آخرین مقدار={mfi.iloc[-1]:.2f}")
         return mfi
 
-# تشخیص الگوها (همه متدها نگه داشته شدن)
+# تشخیص الگوها
 class PatternDetector:
     @staticmethod
     def detect_pin_bar(df):
@@ -161,24 +161,20 @@ class PatternDetector:
     def detect_support_resistance(df, window=10):
         if len(df) < window:
             logging.warning("داده کافی برای محاسبه حمایت/مقاومت نیست")
-            return 0.01, 0.01, []  # مقدار پیش‌فرض
-
+            return 0.01, 0.01, []
         if df["close"].isnull().all() or (df["close"] == 0).all():
             logging.warning("داده‌های close نامعتبر یا صفر هستند، مقدار پیش‌فرض استفاده می‌شود")
             return 0.01, 0.01, []
-
         high = df['high'].rolling(window).max()
         low = df['low'].rolling(window).min()
         close = df['close'].rolling(window).mean()
         pivot = (high + low + close) / 3
         resistance = pivot + (high - low) * 0.382
         support = pivot - (high - low) * 0.382
-
         recent_highs = df['high'][(df['high'].shift(1) < df['high']) & (df['high'].shift(-1) < df['high'])].iloc[-window:]
         recent_lows = df['low'][(df['low'].shift(1) > df['low']) & (df['low'].shift(-1) > df['low'])].iloc[-window:]
         recent_resistance = recent_highs.max() if not recent_highs.empty else resistance.iloc[-1]
         recent_support = recent_lows.min() if not recent_lows.empty else support.iloc[-1]
-
         if recent_resistance == 0 or pd.isna(recent_resistance):
             recent_resistance = df['close'].mean()
             logging.warning("مقاومت صفر یا نامعتبر بود، میانگین قیمت جایگزین شد")
@@ -191,16 +187,13 @@ class PatternDetector:
             if recent_support == 0 or pd.isna(recent_support):
                 recent_support = 0.01
                 logging.warning("میانگین قیمت نیز صفر بود، مقدار پیش‌فرض 0.01 استفاده شد")
-
         volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
         vol_threshold = volume_profile.quantile(0.75)
         high_vol_levels = volume_profile[volume_profile > vol_threshold].index
-
         if 'support_levels' not in globals(): globals()['support_levels'] = []
         if 'resistance_levels' not in globals(): globals()['resistance_levels'] = []
         if recent_support not in support_levels: support_levels.append(recent_support)
         if recent_resistance not in resistance_levels: resistance_levels.append(recent_resistance)
-
         logging.info(f"تشخیص حمایت/مقاومت: support={recent_support:.2f}, resistance={recent_resistance:.2f}")
         return recent_support, recent_resistance, high_vol_levels
 
@@ -329,7 +322,7 @@ class SignalFilter:
         logging.info(f"پیش‌بینی Decision Tree: features={features}, result={prediction}")
         return prediction
 
-# بررسی نقدینگی (لاگ‌ها نگه داشته شدن)
+# بررسی نقدینگی
 async def check_liquidity(exchange, symbol):
     global LIQUIDITY_REJECTS
     try:
@@ -383,7 +376,6 @@ def check_market_events(symbol):
     if not coin_id:
         logging.warning(f"امتیاز فاندامنتال برای {symbol}: 0 (ارز یافت نشد)")
         return 0
-
     url = "https://developers.coinmarketcal.com/v1/events"
     headers = {
         "x-api-key": COINMARKETCAL_API_KEY,
@@ -406,12 +398,10 @@ def check_market_events(symbol):
             logging.error(f"خطا در دریافت رویدادها: Status={resp.status_code}, Response={resp.text}")
             return 0
         events = resp.json()
-        
         event_score = 0
         if not events or "body" not in events or not events["body"]:
             logging.info(f"فاندامنتال برای {symbol}: هیچ رویداد مهمی یافت نشد")
             return 0
-        
         for event in events["body"]:
             title = event.get("title", "").lower()
             description = event.get("description", "").lower()
@@ -430,19 +420,18 @@ def check_market_events(symbol):
             elif "lawsuit" in title or "negative" in description:
                 event_score -= 15
                 logging.info(f"رویداد منفی برای {symbol}: اخبار منفی (امتیاز -15)")
-
         logging.info(f"فاندامنتال برای {symbol}: امتیاز کل رویداد={event_score}")
         return event_score
     except Exception as e:
         logging.error(f"خطا در دریافت رویدادها از CoinMarketCal برای {symbol}: {e}")
         return 0
 
-# محاسبات اندیکاتورها (همه اندیکاتورها نگه داشته شدن)
+# محاسبات اندیکاتورها
 def compute_indicators(df):
     df["EMA12"] = df["close"].ewm(span=12).mean()
     df["EMA26"] = df["close"].ewm(span=26).mean()
-    df["EMA20"] = df["close"].ewm(span=20).mean()  # نگه داشته شده
-    df["EMA50"] = df["close"].ewm(span=50).mean()  # نگه داشته شده
+    df["EMA20"] = df["close"].ewm(span=20).mean()
+    df["EMA50"] = df["close"].ewm(span=50).mean()
     df["MACD"] = df["EMA12"] - df["EMA26"]
     df["Signal"] = df["MACD"].ewm(span=9).mean()
     df["RSI"] = IndicatorCalculator.compute_rsi(df)
@@ -453,27 +442,25 @@ def compute_indicators(df):
     df["PinBar"] = PatternDetector.detect_pin_bar(df)
     df["Engulfing"] = PatternDetector.detect_engulfing(df)
     df = PatternDetector.detect_elliott_wave(df)
-    df["MFI"] = IndicatorCalculator.compute_mfi(df)  # نگه داشته شده
+    df["MFI"] = IndicatorCalculator.compute_mfi(df)
     logging.info(f"محاسبه اندیکاتورها: RSI={df['RSI'].iloc[-1]:.2f}, ADX={df['ADX'].iloc[-1]:.2f}, Stochastic={df['Stochastic'].iloc[-1]:.2f}, MFI={df['MFI'].iloc[-1]:.2f}")
     return df
 
-# تأیید اندیکاتورهای ترکیبی (تغییرات اعمال‌شده)
+# تأیید اندیکاتورهای ترکیبی
 def confirm_combined_indicators(df, trend_type):
-    global symbol, tf  # برای استفاده در لاگ‌ها (تغییر اعمال‌شده)
+    global symbol, tf
     last = df.iloc[-1]
     rsi = last["RSI"]
     bullish_engulf = last["Engulfing"] and last["close"] > last["open"]
     bearish_engulf = last["Engulfing"] and last["close"] < last["open"]
     macd_cross_long = df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1]
     macd_cross_short = df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1]
-    
     if rsi > 75:
         logging.warning(f"رد {symbol} @ {tf}: RSI خیلی بالا (RSI={rsi:.2f})")
         return False
     if rsi < 20:
         logging.warning(f"رد {symbol} @ {tf}: RSI خیلی پایین (RSI={rsi:.2f})")
         return False
-
     if trend_type == "Long":
         conditions = [rsi < 40, macd_cross_long, bullish_engulf]
         logging.debug(f"تأیید Long: conditions={conditions}")
@@ -499,7 +486,7 @@ async def multi_timeframe_confirmation(df, symbol, exchange):
     for tf, weight in weights.items():
         df_tf = await get_ohlcv_cached(exchange, symbol, tf)
         if df_tf is not None and len(df_tf) >= 50:
-            long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]  # تغییر اعمال‌شده
+            long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]
             trend_score += weight if long_trend else -weight
             logging.debug(f"تأیید مولتی تایم‌فریم: {tf}, long_trend={long_trend}, trend_score={trend_score:.2f}")
         total_weight += weight
@@ -539,7 +526,6 @@ def backtest_strategy(df, symbol, initial_balance=10000, risk_percentage=1):
         previous = df.iloc[i-1]
         long_signal = (current["EMA12"] > current["EMA26"] and previous["EMA12"] <= previous["EMA26"] and current["RSI"] < 40)
         short_signal = (current["EMA12"] < current["EMA26"] and previous["EMA12"] >= previous["EMA26"] and current["RSI"] > 60)
-        
         if long_signal and position == 0:
             entry = current["close"]
             atr = IndicatorCalculator.compute_atr(df.iloc[:i+1]).iloc[-1]
@@ -549,7 +535,6 @@ def backtest_strategy(df, symbol, initial_balance=10000, risk_percentage=1):
             position = position_size
             trades.append({"type": "Long", "entry": entry, "sl": sl, "tp": tp, "size": position_size})
             logging.info(f"بک‌تست - ورود Long: entry={entry:.2f}, sl={sl:.2f}, tp={tp:.2f}, size={position_size:.2f}")
-        
         elif short_signal and position == 0:
             entry = current["close"]
             atr = IndicatorCalculator.compute_atr(df.iloc[:i+1]).iloc[-1]
@@ -559,7 +544,6 @@ def backtest_strategy(df, symbol, initial_balance=10000, risk_percentage=1):
             position = -position_size
             trades.append({"type": "Short", "entry": entry, "sl": sl, "tp": tp, "size": position_size})
             logging.info(f"بک‌تست - ورود Short: entry={entry:.2f}, sl={sl:.2f}, tp={tp:.2f}, size={position_size:.2f}")
-        
         elif position > 0 and (current["close"] <= trades[-1]["sl"] or current["close"] >= trades[-1]["tp"]):
             balance += position * (current["close"] - trades[-1]["entry"])
             position = 0
@@ -568,7 +552,6 @@ def backtest_strategy(df, symbol, initial_balance=10000, risk_percentage=1):
             balance -= abs(position) * (trades[-1]["entry"] - current["close"])
             position = 0
             logging.info(f"بک‌تست - خروج Short: balance={balance:.2f}")
-    
     final_balance = balance + (position * df["close"].iloc[-1] if position != 0 else 0)
     logging.info(f"بک‌تست برای {symbol} - موجودی نهایی: {final_balance:.2f}, تعداد معاملات: {len(trades)}")
     return final_balance, trades
@@ -590,7 +573,43 @@ X_train = np.array([[30, 25, 2], [70, 20, 1], [50, 30, 1.5], [20, 40, 3]])
 y_train = np.array([1, 0, 0, 1])
 signal_filter.train(X_train, y_train)
 
-# تحلیل نماد (تغییرات اعمال‌شده ولی استراتژی‌ها نگه داشته شدن)
+# تابع جدید برای تنظیم پویای ضرایب حجم
+async def dynamic_volume_scaling(exchange, symbol, tf, df):
+    # محاسبه ATR به‌عنوان معیار نوسانات
+    atr = IndicatorCalculator.compute_atr(df).iloc[-1]
+    volatility_factor = atr / df["close"].iloc[-1]  # نسبت ATR به قیمت بسته
+    base_volatility = 0.002  # آستانه پایه نوسان
+    volatility_weight = max(1.0, volatility_factor / base_volatility)  # وزن بر اساس نوسان
+
+    # دریافت اطلاعات عمق مارکت
+    try:
+        order_book = await exchange.fetch_order_book(symbol, limit=10)
+        bids = order_book['bids']
+        asks = order_book['asks']
+        bid_vol = sum([b[1] for b in bids[:5]])  # حجم کل پیشنهادها (5 سطح اول)
+        ask_vol = sum([a[1] for a in asks[:5]])  # حجم کل درخواست‌ها (5 سطح اول)
+        total_depth = bid_vol + ask_vol
+        spread = (asks[0][0] - bids[0][0]) / ((bids[0][0] + asks[0][0]) / 2)
+        liquidity_factor = max(0.5, 1 / (1 + spread))  # هر چی اسپرد کمتر باشه، نقدینگی بیشتره
+    except Exception as e:
+        logging.warning(f"خطا در دریافت عمق مارکت برای {symbol}: {e}, استفاده از مقادیر پیش‌فرض")
+        total_depth = 1000  # مقدار پیش‌فرض
+        liquidity_factor = 1.0
+
+    # محاسبه ضریب پویا
+    base_scaling = {
+        "30m": 0.005,
+        "1h": 0.03,
+        "4h": 0.10,
+        "1d": 0.20
+    }
+    dynamic_factor = volatility_weight * liquidity_factor * (total_depth / 1000)  # نرمال‌سازی عمق
+    dynamic_scaling = {tf: base_scaling[tf] * dynamic_factor for tf in base_scaling}
+
+    logging.info(f"تنظیم پویای VOLUME_SCALING برای {symbol} @ {tf}: volatility_factor={volatility_factor:.4f}, liquidity_factor={liquidity_factor:.4f}, dynamic_factor={dynamic_factor:.4f}, new_scaling={dynamic_scaling}")
+    return dynamic_scaling
+
+# تحلیل نماد
 async def analyze_symbol(exchange, symbol, tf):
     global VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
@@ -601,11 +620,13 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.warning(f"رد {symbol} @ {tf}: داده کافی نیست (<50)")
         return None
 
+    # تنظیم پویای VOLUME_SCALING
+    dynamic_scaling = await dynamic_volume_scaling(exchange, symbol, tf, df)
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
-    scale_factor = VOLUME_SCALING.get(tf, 0.2)
+    scale_factor = dynamic_scaling.get(tf, 0.2)
     dynamic_threshold = max(25, VOLUME_THRESHOLD, vol_avg * scale_factor)
     current_vol = df["volume"].iloc[-1]
-    logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}")
+    logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor:.4f}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}")
     
     if current_vol < dynamic_threshold:
         VOLUME_REJECTS += 1
@@ -623,8 +644,8 @@ async def analyze_symbol(exchange, symbol, tf):
         return None
     logging.debug(f"فیلتر ADX برای {symbol} @ {tf} پاس شد")
 
-    long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]  # تغییر اعمال‌شده
-    short_trend = not long_trend  # تغییر اعمال‌شده
+    long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
+    short_trend = not long_trend
     logging.debug(f"روند بازار: long_trend={long_trend}, short_trend={short_trend}")
 
     if tf == "1h":
@@ -688,32 +709,31 @@ async def analyze_symbol(exchange, symbol, tf):
     bullish_rsi_div, bearish_rsi_div = PatternDetector.detect_rsi_divergence(df)
     bullish_macd_div, bearish_macd_div = PatternDetector.detect_macd_divergence(df)
 
-    # شرط‌ها (همه استراتژی‌ها نگه داشته شدن)
     conds_long = {
         "PinBar": bullish_pin,
         "Engulfing": bullish_engulf,
-        "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and long_trend,  # تغییر اعمال‌شده
+        "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and long_trend,
         "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
         "RSI_Oversold": rsi < 30,
         "Stochastic_Oversold": stochastic < 20,
         "ADX_StrongTrend": last["ADX"] > ADX_THRESHOLD,
         "RSI_Divergence": bullish_rsi_div,
         "MACD_Divergence": bullish_macd_div,
-        "BB_Breakout": df["close"].iloc[-1] > df["BB_upper"].iloc[-1],  # نگه داشته شده
-        "MFI_Oversold": mfi < 20  # نگه داشته شده
+        "BB_Breakout": df["close"].iloc[-1] > df["BB_upper"].iloc[-1],
+        "MFI_Oversold": mfi < 20
     }
     conds_short = {
         "PinBar": bearish_pin,
         "Engulfing": bearish_engulf,
-        "EMA_Cross": df["EMA12"].iloc[-2] > df["EMA26"].iloc[-2] and short_trend,  # تغییر اعمال‌شده
+        "EMA_Cross": df["EMA12"].iloc[-2] > df["EMA26"].iloc[-2] and short_trend,
         "MACD_Cross": df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1],
         "RSI_Overbought": rsi > 70,
         "Stochastic_Overbought": stochastic > 80,
         "ADX_StrongTrend": last["ADX"] > ADX_THRESHOLD,
         "RSI_Divergence": bearish_rsi_div,
         "MACD_Divergence": bearish_macd_div,
-        "BB_Breakout": df["close"].iloc[-1] < df["BB_lower"].iloc[-1],  # نگه داشته شده
-        "MFI_Overbought": mfi > 80  # نگه داشته شده
+        "BB_Breakout": df["close"].iloc[-1] < df["BB_lower"].iloc[-1],
+        "MFI_Overbought": mfi > 80
     }
 
     score_long = sum(conds_long.values()) + fundamental_score
@@ -877,17 +897,14 @@ async def walkforward(symbol, timeframe, total_days=90, train_days=60, test_days
 async def main():
     exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
     await exchange.load_markets()
-    
     df = await get_ohlcv_cached(exchange, "BTC/USDT", "1d", limit=200)
     if df is not None:
         df = compute_indicators(df)
         final_balance, trades = backtest_strategy(df, "BTC/USDT")
         logging.info(f"بک‌تست - موجودی نهایی: {final_balance:.2f}, تعداد معاملات: {len(trades)}")
-    
     forward_result, forward_trades = await forward_test(exchange, "BTC/USDT", "1d")
     if forward_result:
         logging.info(f"تست فوروارد - موجودی نهایی: {forward_result}, تعداد معاملات: {len(forward_trades)}")
-    
     await backtest_symbol("BTC/USDT", "1d", (datetime.utcnow() - timedelta(days=90)).isoformat(), datetime.utcnow().isoformat())
     await walkforward("BTC/USDT", "1d")
     await scan_all_crypto_symbols()
