@@ -588,7 +588,7 @@ async def dynamic_volume_scaling(exchange, symbol, tf, df):
         "1d": 0.20
     }
     dynamic_factor = volatility_weight * liquidity_factor * (total_depth / 1000)
-    dynamic_factor = min(dynamic_factor, 10)
+    dynamic_factor = min(dynamic_factor, 2)
     dynamic_scaling = {tf: base_scaling[tf] * dynamic_factor for tf in base_scaling}
     logging.info(f"تنظیم پویای VOLUME_SCALING برای {symbol} @ {tf}: volatility_factor={volatility_factor:.4f}, liquidity_factor={liquidity_factor:.4f}, dynamic_factor={dynamic_factor:.4f}, new_scaling={dynamic_scaling}")
     return dynamic_scaling
