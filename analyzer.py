@@ -22,26 +22,26 @@ logging.basicConfig(
 # کلیدهای API
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 COINMARKETCAL_API_KEY = "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa"
-TIMEFRAMES = ["30m", "1h", "4h", "1d"]  # برگرداندن تایم‌فریم‌ها به حالت اولیه
+TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
 # پارامترهای اصلی
 VOLUME_WINDOW = 10
-S_R_BUFFER = 0.05
+S_R_BUFFER = 0.07  # افزایش از 0.05 به 0.07
 ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
 CACHE_TTL = 600
 VOLUME_THRESHOLD = 2
-MAX_CONCURRENT_REQUESTS = 20
+MAX_CONCURRENT_REQUESTS = 10  # کاهش از 20 به 10
 WAIT_BETWEEN_REQUESTS = 2.0
 WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.002
 LIQUIDITY_SPREAD_THRESHOLD = 0.005
 
-# ضرایب مقیاس‌پذیری حجم (کاهش برای تایم‌فریم‌های کوتاه‌تر)
+# ضرایب مقیاس‌پذیری حجم (بازگرداندن به مقادیر اولیه)
 VOLUME_SCALING = {
-    "30m": 0.003,  # کاهش از 0.005
-    "1h": 0.02,    # کاهش از 0.03
+    "30m": 0.005,  # از 0.003 به 0.005
+    "1h": 0.03,    # از 0.02 به 0.03
     "4h": 0.10,
     "1d": 0.20
 }
@@ -429,7 +429,7 @@ def confirm_combined_indicators(df, trend_type):
     macd_cross_long = df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1]
     macd_cross_short = df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1]
     
-    if rsi > 75:  # کاهش از 80 به 75
+    if rsi > 75:
         logging.warning(f"رد {symbol} @ {tf}: RSI خیلی بالا (RSI={rsi:.2f})")
         return False
     if rsi < 20:
@@ -467,7 +467,7 @@ async def multi_timeframe_confirmation(df, symbol, exchange):
 
 # دریافت داده‌های کندل با استفاده بهتر از CACHE
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-async def get_ohlcv_cached(exchange, symbol, tf, limit=100):
+async def get_ohlcv_cached(exchange, symbol, tf, limit=50):  # کاهش از 100 به 50
     async with semaphore:
         await asyncio.sleep(WAIT_BETWEEN_REQUESTS)
         key = f"{symbol}_{tf}"
@@ -582,6 +582,11 @@ async def analyze_symbol(exchange, symbol, tf):
     volatility = df["ATR"].iloc[-1] / df["close"].iloc[-1]
     logging.info(f"اندیکاتورها برای {symbol} @ {tf}: RSI={last['RSI']:.2f}, ADX={last['ADX']:.2f}, volatility={volatility:.4f}")
 
+    if last["ADX"] < 10:
+        logging.warning(f"رد {symbol} @ {tf}: ADX خیلی پایین (current={last['ADX']:.2f})")
+        return None
+    logging.debug(f"فیلتر ADX برای {symbol} @ {tf} پاس شد")
+
     long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
     short_trend = not long_trend
 
@@ -610,13 +615,15 @@ async def analyze_symbol(exchange, symbol, tf):
     logging.info(f"سطوح برای {symbol} @ {tf}: support={support:.2f}, resistance={resistance:.2f}, close={last['close']:.2f}")
     # نادیده گرفتن فیلتر حمایت/مقاومت اگه سطوح صفر باشن
     if support != 0 and resistance != 0:
-        if long_trend and abs(last["close"] - resistance) / last["close"] < S_R_BUFFER:
+        distance_to_resistance = abs(last["close"] - resistance) / last["close"]
+        distance_to_support = abs(last["close"] - support) / last["close"]
+        if long_trend and distance_to_resistance < S_R_BUFFER and distance_to_resistance < 0.01:
             SR_REJECTS += 1
-            logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به مقاومت (distance={abs(last['close'] - resistance)/last['close']:.4f})")
+            logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به مقاومت (distance={distance_to_resistance:.4f})")
             return None
-        elif short_trend and abs(last["close"] - support) / last["close"] < S_R_BUFFER:
+        elif short_trend and distance_to_support < S_R_BUFFER and distance_to_support < 0.01:
             SR_REJECTS += 1
-            logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به حمایت (distance={abs(last['close'] - support)/last['close']:.4f})")
+            logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به حمایت (distance={distance_to_support:.4f})")
             return None
     else:
         logging.warning(f"سطوح حمایت/مقاومت صفر هستند، فیلتر حمایت/مقاومت نادیده گرفته شد")
@@ -629,15 +636,11 @@ async def analyze_symbol(exchange, symbol, tf):
     logging.debug(f"فیلتر نقدینگی برای {symbol} @ {tf} پاس شد")
 
     fundamental_score = check_market_events(symbol.split('/')[0])
+    logging.debug(f"امتیاز فاندامنتال برای {symbol}: {fundamental_score}")
     if fundamental_score < -10:
         logging.warning(f"رد {symbol} @ {tf}: رویداد منفی یا نامشخص (امتیاز فاندامنتال = {fundamental_score})")
         return None
     logging.debug(f"فیلتر فاندامنتال برای {symbol} @ {tf} پاس شد (امتیاز={fundamental_score})")
-
-    if last["ADX"] < 10:
-        logging.warning(f"رد {symbol} @ {tf}: ADX خیلی پایین (current={last['ADX']:.2f})")
-        return None
-    logging.debug(f"فیلتر ADX برای {symbol} @ {tf} پاس شد")
 
     body = last["body"]
     bullish_pin = last["PinBar"] and last["lower"] > 2 * body
