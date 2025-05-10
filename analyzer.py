@@ -287,37 +287,7 @@ async def check_liquidity(exchange, symbol):
         return False
 
 # بررسی رویدادهای بازار با # بررسی رویدادهای بازار با # دریافت ID ارز از CoinMarketCal
-def get_coin_id(symbol):
-    url = "https://developers.coinmarketcal.com/v1/coins"
-    headers = {
-        "x-api-key": COINMARKETCAL_API_KEY,
-        "Accept": "application/json",
-        "Accept-Encoding": "deflate, gzip"
-    }
-    try:
-        time.sleep(0.5)  # تأخیر برای رعایت نرخ درخواست
-        logging.debug(f"درخواست برای دریافت ID ارز: URL={url}")
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        coins = resp.json()
-        if not coins or "body" not in coins:
-            logging.error(f"هیچ ارزی در پاسخ /coins یافت نشد")
-            return None
-        
-        # جستجوی ID ارز با نماد
-        for coin in coins["body"]:
-            if coin.get("symbol", "").upper() == symbol.upper():
-                coin_id = coin.get("id")
-                logging.info(f"ID ارز برای {symbol}: {coin_id}")
-                return coin_id
-        logging.warning(f"ارز {symbol} در CoinMarketCal یافت نشد")
-        return None
-    except Exception as e:
-        logging.error(f"خطا در دریافت لیست ارزها از CoinMarketCal: {e}")
-        return None
-
-# بررسی رویدادهای بازار با API CoinMarketCal
-# دریافت ID ارز از CoinMarketCal
+# دریافت ID عددی ارز از CoinMarketCal
 def get_coin_id(symbol):
     url = "https://developers.coinmarketcal.com/v1/coins"
     headers = {
@@ -337,11 +307,11 @@ def get_coin_id(symbol):
             logging.error(f"هیچ ارزی در پاسخ /coins یافت نشد: Response={resp.text}")
             return None
         
-        # جستجوی ID ارز با نماد
+        # جستجوی ID عددی ارز با نماد
         for coin in coins["body"]:
             if coin.get("symbol", "").upper() == symbol.upper():
-                coin_id = coin.get("id")
-                logging.info(f"ID ارز برای {symbol}: {coin_id}")
+                coin_id = coin.get("id")  # این باید یه عدد باشه
+                logging.info(f"ID عددی ارز برای {symbol}: {coin_id} (نوع: {type(coin_id)})")
                 return coin_id
         logging.warning(f"ارز {symbol} در CoinMarketCal یافت نشد: Response={resp.text}")
         return None
@@ -363,11 +333,11 @@ def check_market_events(symbol):
         "Accept": "application/json",
         "Accept-Encoding": "deflate, gzip"
     }
-    # ساده‌سازی فرمت تاریخ بدون میلی‌ثانیه
+    # ساده‌سازی فرمت تاریخ
     start_date = (datetime.utcnow() - timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
     end_date = (datetime.utcnow() + timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
     params = {
-        "coinId": coin_id,  # استفاده از coinId
+        "coinId": str(coin_id),  # تبدیل ID به رشته برای اطمینان
         "max": 5,
         "dateRangeStart": start_date,
         "dateRangeEnd": end_date
