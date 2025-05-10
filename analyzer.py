@@ -45,12 +45,12 @@ def get_coin_id(symbol):
 
 # پارامترهای اصلی
 VOLUME_WINDOW = 20
-S_R_BUFFER = 0.01  # کاهش از 0.02 به 0.01
-ADX_THRESHOLD = 20
+S_R_BUFFER = 0.005  # کاهش از 0.01 به 0.005
+ADX_THRESHOLD = 15  # کاهش از 20 به 15
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
 CACHE_TTL = 600
-VOLUME_THRESHOLD = 0.01  # کاهش از 1.2 به 0.01
+VOLUME_THRESHOLD = 0.001  # کاهش از 0.01 به 0.001
 MAX_CONCURRENT_REQUESTS = 5
 WAIT_BETWEEN_REQUESTS = 2.0
 WAIT_BETWEEN_CHUNKS = 3
@@ -593,7 +593,7 @@ async def dynamic_volume_scaling(exchange, symbol, tf, df):
     logging.info(f"تنظیم پویای VOLUME_SCALING برای {symbol} @ {tf}: volatility_factor={volatility_factor:.4f}, liquidity_factor={liquidity_factor:.4f}, dynamic_factor={dynamic_factor:.4f}, new_scaling={dynamic_scaling}")
     return dynamic_scaling
 
-# تحلیل نماد (به‌روزرسانی‌شده با حذف شرط روانشناسی)
+# تحلیل نماد (به‌روزرسانی‌شده با اضافه کردن لاگ‌های دیباگ)
 async def analyze_symbol(exchange, symbol, tf):
     global VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
@@ -725,7 +725,10 @@ async def analyze_symbol(exchange, symbol, tf):
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
     features = [rsi, last["ADX"], last["volume"] / vol_avg]
 
-    # شرط روانشناسی حذف شده
+    # اضافه کردن لاگ‌های دیباگ برای دیباگ بهتر
+    logging.debug(f"بررسی تولید سیگنال Long: score_long={score_long}, long_trend={long_trend}, has_trend={has_trend}, psych_long={psych_long}, ADX={last['ADX']}")
+    logging.debug(f"بررسی تولید سیگنال Short: score_short={score_short}, short_trend={short_trend}, has_trend={has_trend}, psych_short={psych_short}, ADX={last['ADX']}")
+
     if (score_long >= 0 and 
         (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and 
         has_trend and confirm_combined_indicators(df, "Long") and 
@@ -761,7 +764,6 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.info(f"سیگنال Long برای {symbol} @ {tf}: {result}")
         return result
 
-    # شرط روانشناسی حذف شده
     if (score_short >= 0 and 
         (short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)) and 
         has_trend and confirm_combined_indicators(df, "Short") and 
