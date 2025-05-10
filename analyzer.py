@@ -24,15 +24,34 @@ CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 COINMARKETCAL_API_KEY = "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa"
 TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
+# تابع جدید برای دریافت آیدی ارز
+def get_coin_id(symbol):
+    url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/map"
+    headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
+    params = {'symbol': symbol}
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        data = resp.json()
+        if 'data' in data and len(data['data']) > 0:
+            coin_id = data['data'][0]['id']
+            logging.info(f"دریافت آیدی برای {symbol}: coin_id={coin_id}")
+            return coin_id
+        else:
+            logging.warning(f"آیدی برای {symbol} یافت نشد")
+            return None
+    except Exception as e:
+        logging.error(f"خطا در دریافت آیدی برای {symbol}: {e}")
+        return None
+
 # پارامترهای اصلی
 VOLUME_WINDOW = 10
-S_R_BUFFER = 0.07
-ADX_THRESHOLD = 30
+S_R_BUFFER = 0.1  # تغییر از 0.07 به 0.1
+ADX_THRESHOLD = 25  # تغییر از 30 به 25
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
 CACHE_TTL = 300
-VOLUME_THRESHOLD = 1
-MAX_CONCURRENT_REQUESTS = 10
+VOLUME_THRESHOLD = 0.5  # تغییر از 1 به 0.5
+MAX_CONCURRENT_REQUESTS = 5  # تغییر از 10 به 5
 WAIT_BETWEEN_REQUESTS = 2.0
 WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.003
@@ -610,7 +629,7 @@ async def analyze_symbol(exchange, symbol, tf):
     volatility = df["ATR"].iloc[-1] / df["close"].iloc[-1]
     logging.info(f"اندیکاتورها برای {symbol} @ {tf}: RSI={last['RSI']:.2f}, ADX={last['ADX']:.2f}, volatility={volatility:.4f}")
 
-    if last["ADX"] < 30:
+    if last["ADX"] < ADX_THRESHOLD:
         logging.warning(f"رد {symbol} @ {tf}: ADX خیلی پایین (current={last['ADX']:.2f})")
         return None
     logging.debug(f"فیلتر ADX برای {symbol} @ {tf} پاس شد")
@@ -646,11 +665,11 @@ async def analyze_symbol(exchange, symbol, tf):
         distance_to_resistance = abs(last["close"] - resistance) / last["close"]
         distance_to_support = abs(last["close"] - support) / last["close"]
         logging.info(f"فاصله تا سطوح: dist_to_resistance={distance_to_resistance:.4f}, dist_to_support={distance_to_support:.4f}")
-        if long_trend and distance_to_resistance < S_R_BUFFER and distance_to_resistance < 0.01:
+        if long_trend and distance_to_resistance < S_R_BUFFER:  # شرط 0.01 حذف شد
             SR_REJECTS += 1
             logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به مقاومت (distance={distance_to_resistance:.4f})")
             return None
-        elif short_trend and distance_to_support < S_R_BUFFER and distance_to_support < 0.01:
+        elif short_trend and distance_to_support < S_R_BUFFER:  # شرط 0.01 حذف شد
             SR_REJECTS += 1
             logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به حمایت (distance={distance_to_support:.4f})")
             return None
