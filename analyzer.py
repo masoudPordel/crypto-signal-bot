@@ -31,7 +31,7 @@ ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
 CACHE_TTL = 300
-VOLUME_THRESHOLD = 1.5
+VOLUME_THRESHOLD = 1
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 2.0
 WAIT_BETWEEN_CHUNKS = 3
@@ -543,7 +543,7 @@ X_train = np.array([[30, 25, 2], [70, 20, 1], [50, 30, 1.5], [20, 40, 3]])
 y_train = np.array([1, 0, 0, 1])
 signal_filter.train(X_train, y_train)
 
-# تابع جدید برای تنظیم پویای ضرایب حجم
+# تابع جدید برای تنظیم پویای ضرایب # تابع به‌روزرسانی‌شده با سقف برای dynamic_factor
 async def dynamic_volume_scaling(exchange, symbol, tf, df):
     # محاسبه ATR به‌عنوان معیار نوسانات
     atr = IndicatorCalculator.compute_atr(df).iloc[-1]
@@ -551,7 +551,7 @@ async def dynamic_volume_scaling(exchange, symbol, tf, df):
     base_volatility = 0.002  # آستانه پایه نوسان
     volatility_weight = max(1.0, volatility_factor / base_volatility)  # وزن بر اساس نوسان
 
-    # دریافت اطلاعات عمق مارکت
+    # دریافت اطلاعات عمق مارکت با limit=20
     try:
         order_book = await exchange.fetch_order_book(symbol, limit=20)
         bids = order_book['bids']
@@ -566,7 +566,7 @@ async def dynamic_volume_scaling(exchange, symbol, tf, df):
         total_depth = 1000  # مقدار پیش‌فرض
         liquidity_factor = 1.0
 
-    # محاسبه ضریب پویا
+    # محاسبه ضریب پویا با سقف
     base_scaling = {
         "30m": 0.005,
         "1h": 0.03,
@@ -574,6 +574,7 @@ async def dynamic_volume_scaling(exchange, symbol, tf, df):
         "1d": 0.20
     }
     dynamic_factor = volatility_weight * liquidity_factor * (total_depth / 1000)  # نرمال‌سازی عمق
+    dynamic_factor = min(dynamic_factor, 10)  # سقف برای dynamic_factor (جدید)
     dynamic_scaling = {tf: base_scaling[tf] * dynamic_factor for tf in base_scaling}
 
     logging.info(f"تنظیم پویای VOLUME_SCALING برای {symbol} @ {tf}: volatility_factor={volatility_factor:.4f}, liquidity_factor={liquidity_factor:.4f}, dynamic_factor={dynamic_factor:.4f}, new_scaling={dynamic_scaling}")
