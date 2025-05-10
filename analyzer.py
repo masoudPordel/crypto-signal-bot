@@ -14,13 +14,10 @@ from datetime import datetime, timedelta
 from sklearn.tree import DecisionTreeClassifier  # برای Decision Tree
 
 # تنظیمات لاگ
-
-# تنظیم سطح لاگ به DEBUG
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
-
 
 # کلیدهای API
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
@@ -41,12 +38,12 @@ WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.002
 LIQUIDITY_SPREAD_THRESHOLD = 0.005
 
-# ضرایب مقیاس‌پذیری حجم
+# ضرایب مقیاس‌پذیری حجم (کاهش برای تایم‌فریم‌های بالاتر)
 VOLUME_SCALING = {
     "30m": 0.01,
     "1h": 0.05,
-    "4h": 0.15,
-    "1d": 0.25
+    "4h": 0.10,  # کاهش از 0.15 به 0.10
+    "1d": 0.05   # کاهش از 0.25 به 0.05
 }
 
 # متغیرهای شمارشگر رد شدن‌ها
@@ -147,8 +144,8 @@ class PatternDetector:
         high_vol_levels = volume_profile[volume_profile > vol_threshold].index
         recent_highs = df['high'][(df['high'].shift(1) < df['high']) & (df['high'].shift(-1) < df['high'])].iloc[-window:]
         recent_lows = df['low'][(df['low'].shift(1) > df['low']) & (df['low'].shift(-1) > df['low'])].iloc[-window:]
-        recent_resistance = recent_highs.max() if not recent_highs.empty else resistance
-        recent_support = recent_lows.min() if not recent_lows.empty else support
+        recent_resistance = recent_highs.max() if not recent_highs.empty else resistance.iloc[-1]
+        recent_support = recent_lows.min() if not recent_lows.empty else support.iloc[-1]
         if 'support_levels' not in globals(): globals()['support_levels'] = []
         if 'resistance_levels' not in globals(): globals()['resistance_levels'] = []
         if recent_support not in support_levels: support_levels.append(recent_support)
@@ -286,7 +283,7 @@ async def check_liquidity(exchange, symbol):
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return False
 
-# بررسی رویدادهای بازار با # بررسی رویدادهای بازار با # دریافت ID ارز از # دریافت ID عددی ارز از CoinMarketCal
+# دریافت ID عددی ارز از CoinMarketCal
 def get_coin_id(symbol):
     url = "https://developers.coinmarketcal.com/v1/coins"
     headers = {
@@ -313,9 +310,20 @@ def get_coin_id(symbol):
         for coin in coins["body"]:
             logging.debug(f"بررسی ارز: {coin}")  # لاگ هر ارز برای دیباگ
             if coin.get("symbol", "").upper() == symbol.upper():
-                coin_id = coin.get("id")
-                logging.info(f"ID ارز برای {symbol}: {coin_id} (نوع: {type(coin_id)})")
-                return coin_id
+                # چک کردن برای ID عددی (اولویت با عدد)
+                numeric_id = None
+                # بررسی فیلدهای احتمالی برای ID
+                for key in ["id", "coin_id", "numeric_id"]:  # تست چند فیلد
+                    value = coin.get(key)
+                    if value and isinstance(value, (int, str)):
+                        try:
+                            numeric_id = int(value)  # تبدیل به عدد
+                            logging.info(f"ID عددی ارز برای {symbol}: {numeric_id} (نوع: {type(numeric_id)}, منبع: {key})")
+                            return numeric_id
+                        except (ValueError, TypeError):
+                            continue
+                if not numeric_id:
+                    logging.warning(f"هیچ ID عددی برای {symbol} یافت نشد: {coin}")
         logging.warning(f"ارز {symbol} در CoinMarketCal یافت نشد: Response={resp.text}")
         return None
     except Exception as e:
@@ -327,7 +335,7 @@ def check_market_events(symbol):
     # دریافت ID ارز
     coin_id = get_coin_id(symbol)
     if not coin_id:
-        logging.warning(f"امتیاز فاندامنتال برای {symbol}: 0 (ارز یافت نشد)")
+        logging.warning(f"امتیاز فاندامنتال برای {symbol}: 0 (ارز یافت نشد یا ID نامعتبر)")
         return 0
 
     url = "https://developers.coinmarketcal.com/v1/events"
@@ -340,7 +348,7 @@ def check_market_events(symbol):
     start_date = (datetime.utcnow() - timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
     end_date = (datetime.utcnow() + timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
     params = {
-        "coinId": str(coin_id),  # تبدیل ID به رشته برای اطمینان
+        "coinId": str(coin_id) if coin_id else None,  # تبدیل به رشته اگه موجود باشه
         "max": 5,
         "dateRangeStart": start_date,
         "dateRangeEnd": end_date
@@ -351,7 +359,7 @@ def check_market_events(symbol):
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         if resp.status_code != 200:
             logging.error(f"خطا در دریافت رویدادها: Status={resp.status_code}, Response={resp.text}")
-            return 0
+            return 0  # در صورت خطا، امتیاز صفر برگردون
         events = resp.json()
         
         event_score = 0
@@ -359,7 +367,7 @@ def check_market_events(symbol):
             logging.info(f"فاندامنتال برای {symbol}: هیچ رویداد مهمی یافت نشد")
             return 0  # اگه رویدادی نبود، امتیاز خنثی
         
-        for event in coins["body"]:
+        for event in events["body"]:  # اصلاح: استفاده از events به جای coins
             title = event.get("title", "").lower()
             description = event.get("description", "").lower()
             
@@ -436,7 +444,9 @@ async def multi_timeframe_confirmation(df, symbol, exchange):
             long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]
             trend_score += weight if long_trend else -weight
         total_weight += weight
-    return abs(trend_score / total_weight) >= 0.5
+    score = abs(trend_score / total_weight) >= 0.5
+    logging.debug(f"تأیید مولتی تایم‌فریم برای {symbol}: score={trend_score/total_weight:.2f}, نتیجه={'تأیید' if score else 'رد'}")
+    return score
 
 # دریافت داده‌های کندل با استفاده بهتر از CACHE
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
@@ -465,6 +475,43 @@ X_train = np.array([[30, 25, 2], [70, 20, 1], [50, 30, 1.5], [20, 40, 3]])  # [R
 y_train = np.array([1, 0, 0, 1])  # 1 = سیگنال خوب، 0 = سیگنال بد
 signal_filter.train(X_train, y_train)
 
+# تابع جدید برای تولید و لاگ‌گذاری سیگنال
+def generate_signal(symbol, tf, df, fundamental_score, long_trend, short_trend, conds_long, conds_short, psych_long, psych_short, has_trend, features, support, resistance):
+    last = df.iloc[-1]
+    score_long = sum(conds_long.values()) + fundamental_score
+    score_short = sum(conds_short.values()) + fundamental_score
+
+    # لاگ‌گذاری برای دیباگ
+    logging.debug(f"بررسی سیگنال برای {symbol} @ {tf}:")
+    logging.debug(f"  - Score Long: {score_long} (>=2)")
+    logging.debug(f"  - Score Short: {score_short} (>=2)")
+    logging.debug(f"  - Psych Long: {psych_long} (نباید اشباع خرید)")
+    logging.debug(f"  - Psych Short: {psych_short} (نباید اشباع فروش)")
+    logging.debug(f"  - ADX: {last['ADX']} (>={ADX_TREND_THRESHOLD})")
+    logging.debug(f"  - Long Conditions: {conds_long}")
+    logging.debug(f"  - Short Conditions: {conds_short}")
+
+    # بررسی سیگنال خرید (Long)
+    if (score_long >= 2 and 
+        psych_long != "اشباع خرید" and 
+        (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and 
+        has_trend and 
+        confirm_combined_indicators(df, "Long")):
+        logging.debug(f"سیگنال Long برای {symbol} @ {tf} تأیید شد (تا این مرحله)")
+        return "Long", score_long
+
+    # بررسی سیگنال فروش (Short)
+    if (score_short >= 2 and 
+        psych_short != "اشباع فروش" and 
+        (short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)) and 
+        has_trend and 
+        confirm_combined_indicators(df, "Short")):
+        logging.debug(f"سیگنال Short برای {symbol} @ {tf} تأیید شد (تا این مرحله)")
+        return "Short", score_short
+
+    logging.debug(f"هیچ سیگنالی برای {symbol} @ {tf} صادر نشد")
+    return None, None
+
 # تحلیل نماد با لاگ زمان‌بندی و دیباگ
 async def analyze_symbol(exchange, symbol, tf):
     global VOLUME_REJECTS, SR_REJECTS
@@ -476,17 +523,24 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.warning(f"رد {symbol} @ {tf}: داده کافی نیست (<50)")
         return None
 
+    # مرحله 1: بررسی حجم
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = VOLUME_SCALING.get(tf, 0.2)
     dynamic_threshold = max(25, VOLUME_THRESHOLD, vol_avg * scale_factor)
-    logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={df['volume'].iloc[-1]:.2f}")
-    if df["volume"].iloc[-1] < dynamic_threshold and df["volume"].iloc[-1] < 0.05 * vol_avg:
+    current_vol = df["volume"].iloc[-1]
+    logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}")
+    
+    if current_vol < dynamic_threshold and current_vol < 0.05 * vol_avg:
         VOLUME_REJECTS += 1
-        logging.warning(f"رد {symbol} @ {tf}: حجم خیلی کم (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
+        logging.warning(f"رد {symbol} @ {tf}: حجم خیلی کم (current={current_vol}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
         return None
-    elif df["volume"].iloc[-1] < dynamic_threshold:
-        logging.warning(f"رد {symbol} @ {tf}: حجم کم (current={df['volume'].iloc[-1]}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
+    elif current_vol < dynamic_threshold:
+        VOLUME_REJECTS += 1
+        logging.warning(f"رد {symbol} @ {tf}: حجم کم (current={current_vol}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
+        return None
+    logging.debug(f"فیلتر حجم برای {symbol} @ {tf} پاس شد")
 
+    # مرحله 2: محاسبه اندیکاتورها
     df = compute_indicators(df)
     last = df.iloc[-1]
     volatility = df["ATR"].iloc[-1] / df["close"].iloc[-1]
@@ -495,6 +549,7 @@ async def analyze_symbol(exchange, symbol, tf):
     long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
     short_trend = not long_trend
 
+    # مرحله 3: بررسی مولتی تایم‌فریم
     if tf == "1h":
         df4 = await get_ohlcv_cached(exchange, symbol, "4h")
         if df4 is not None and len(df4) >= 50:
@@ -511,11 +566,15 @@ async def analyze_symbol(exchange, symbol, tf):
         else:
             logging.warning(f"رد {symbol} @ {tf}: داده چند تایم‌فریمی کافی نیست")
             return None
+    logging.debug(f"فیلتر مولتی تایم‌فریم (1h/4h) برای {symbol} @ {tf} پاس شد")
 
+    # مرحله 4: بررسی نوسانات
     if volatility < VOLATILITY_THRESHOLD:
         logging.warning(f"رد {symbol} @ {tf}: نوسان خیلی کم (current={volatility:.4f})")
         return None
+    logging.debug(f"فیلتر نوسانات برای {symbol} @ {tf} پاس شد")
 
+    # مرحله 5: محاسبه سطوح حمایت و مقاومت
     support, resistance, vol_levels = PatternDetector.detect_support_resistance(df)
     logging.info(f"سطوح برای {symbol} @ {tf}: support={support:.2f}, resistance={resistance:.2f}, close={last['close']:.2f}")
     if long_trend and abs(last["close"] - resistance) / last["close"] < S_R_BUFFER:
@@ -526,21 +585,29 @@ async def analyze_symbol(exchange, symbol, tf):
         SR_REJECTS += 1
         logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به حمایت (distance={abs(last['close'] - support)/last['close']:.4f})")
         return None
+    logging.debug(f"فیلتر سطوح حمایت/مقاومت برای {symbol} @ {tf} پاس شد")
 
+    # مرحله 6: بررسی نقدینگی
     liquidity = await check_liquidity(exchange, symbol)
     if not liquidity:
         logging.warning(f"رد {symbol} @ {tf}: نقدینگی کافی نیست")
         return None
+    logging.debug(f"فیلتر نقدینگی برای {symbol} @ {tf} پاس شد")
 
+    # مرحله 7: بررسی فاندامنتال
     fundamental_score = check_market_events(symbol.split('/')[0])
     if fundamental_score < -10:  # اگه امتیاز فاندامنتال خیلی منفی باشه، رد می‌شه
         logging.warning(f"رد {symbol} @ {tf}: رویداد منفی یا نامشخص (امتیاز فاندامنتال = {fundamental_score})")
         return None
+    logging.debug(f"فیلتر فاندامنتال برای {symbol} @ {tf} پاس شد (امتیاز={fundamental_score})")
 
+    # مرحله 8: بررسی ADX
     if last["ADX"] < 10:
         logging.warning(f"رد {symbol} @ {tf}: ADX خیلی پایین (current={last['ADX']:.2f})")
         return None
+    logging.debug(f"فیلتر ADX برای {symbol} @ {tf} پاس شد")
 
+    # مرحله 9: آماده‌سازی برای تولید سیگنال
     body = last["body"]
     bullish_pin = last["PinBar"] and last["lower"] > 2 * body
     bearish_pin = last["PinBar"] and last["upper"] > 2 * body
@@ -578,21 +645,46 @@ async def analyze_symbol(exchange, symbol, tf):
         "MACD_Divergence": bearish_macd_div,
     }
 
-    score_long = sum(conds_long.values()) + fundamental_score
-    score_short = sum(conds_short.values()) + fundamental_score
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
-
     features = [rsi, last["ADX"], last["volume"] / vol_avg]
 
-    if score_long >= 2 and psych_long != "اشباع خرید" and (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and has_trend and confirm_combined_indicators(df, "Long") and await multi_timeframe_confirmation(df, symbol, exchange):
+    # مرحله 10: تولید سیگنال
+    signal_type, score = generate_signal(symbol, tf, df, fundamental_score, long_trend, short_trend, conds_long, conds_short, psych_long, psych_short, has_trend, features, support, resistance)
+    if not signal_type:
+        logging.warning(f"رد {symbol} @ {tf}: شرایط سیگنال برقرار نیست")
+        return None
+
+    # مرحله 11: بررسی مولتی تایم‌فریم
+    if not await multi_timeframe_confirmation(df, symbol, exchange):
+        logging.warning(f"رد {symbol} @ {tf}: تأیید مولتی تایم‌فریم رد شد")
+        return None
+    logging.debug(f"فیلتر مولتی تایم‌فریم (کامل) برای {symbol} @ {tf} پاس شد")
+
+    # مرحله 12: بررسی شکست‌ها
+    if signal_type == "Long":
         if not PatternDetector.is_valid_breakout(df, resistance, direction="resistance"):
             logging.warning(f"رد {symbol} @ {tf}: شکست مقاومت نامعتبر")
             return None
-        if not signal_filter.predict(features):
-            logging.warning(f"رد {symbol} @ {tf}: فیلتر Decision Tree رد شد")
+        logging.debug(f"فیلتر شکست مقاومت برای {symbol} @ {tf} پاس شد")
+    else:  # Short
+        if not PatternDetector.is_valid_breakout(df, support, direction="support"):
+            logging.warning(f"رد {symbol} @ {tf}: شکست حمایت نامعتبر")
             return None
-        entry = float(last["close"])
-        atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
+        if bearish_rsi_div or bearish_macd_div or PatternDetector.detect_hammer(df) or (last["Engulfing"] and last["close"] > last["open"]):
+            logging.warning(f"رد {symbol} @ {tf}: واگرایی یا الگوی صعودی")
+            return None
+        logging.debug(f"فیلتر شکست حمایت برای {symbol} @ {tf} پاس شد")
+
+    # مرحله 13: فیلتر Decision Tree
+    if not signal_filter.predict(features):
+        logging.warning(f"رد {symbol} @ {tf}: فیلتر Decision Tree رد شد")
+        return None
+    logging.debug(f"فیلتر Decision Tree برای {symbol} @ {tf} پاس شد")
+
+    # مرحله 14: تولید سیگنال نهایی
+    entry = float(last["close"])
+    atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
+    if signal_type == "Long":
         sl = entry - 2 * atr_avg
         tp = entry + 3 * atr_avg
         rr = round((tp - entry) / (entry - sl), 2)
@@ -606,27 +698,13 @@ async def analyze_symbol(exchange, symbol, tf):
             "هدف سود": tp,
             "ریسک به ریوارد": rr,
             "حجم پوزیشن": position_size,
-            "سطح اطمینان": min(score_long * 20, 100),
+            "سطح اطمینان": min(score * 20, 100),
             "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
             "روانشناسی": psych_long,
             "روند بازار": "صعودی",
             "فاندامنتال": f"امتیاز: {fundamental_score}"
         }
-        logging.info(f"سیگنال تولید شد: {signal}")
-        return signal
-
-    if score_short >= 2 and psych_short != "اشباع فروش" and (short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)) and has_trend and confirm_combined_indicators(df, "Short") and await multi_timeframe_confirmation(df, symbol, exchange):
-        if not PatternDetector.is_valid_breakout(df, support, direction="support"):
-            logging.warning(f"رد {symbol} @ {tf}: شکست حمایت نامعتبر")
-            return None
-        if bearish_rsi_div or bearish_macd_div or PatternDetector.detect_hammer(df) or (last["Engulfing"] and last["close"] > last["open"]):
-            logging.warning(f"رد {symbol} @ {tf}: واگرایی یا الگوی صعودی")
-            return None
-        if not signal_filter.predict(features):
-            logging.warning(f"رد {symbol} @ {tf}: فیلتر Decision Tree رد شد")
-            return None
-        entry = float(last["close"])
-        atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
+    else:  # Short
         sl = entry + 2 * atr_avg
         tp = entry - 3 * atr_avg
         rr = round((entry - tp) / (sl - entry), 2)
@@ -640,17 +718,15 @@ async def analyze_symbol(exchange, symbol, tf):
             "هدف سود": tp,
             "ریسک به ریوارد": rr,
             "حجم پوزیشن": position_size,
-            "سطح اطمینان": min(score_short * 20, 100),
+            "سطح اطمینان": min(score * 20, 100),
             "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
             "روانشناسی": psych_short,
             "روند بازار": "نزولی",
             "فاندامنتال": f"امتیاز: {fundamental_score}"
         }
-        logging.info(f"سیگنال تولید شد: {signal}")
-        return signal
 
-    logging.warning(f"رد {symbol} @ {tf}: امتیاز ناکافی (score_long={score_long}, score_short={score_short})، روانشناسی (long={psych_long}, short={psych_short})، ADX={last['ADX']:.2f}، مولتی تایم‌فریم={await multi_timeframe_confirmation(df, symbol, exchange)}")
-    return None
+    logging.info(f"SIGNAL - سیگنال تولید شد: {signal}")
+    return signal
 
 # اسکن همه نمادها با مدیریت بهتر منابع
 async def scan_all_crypto_symbols(on_signal=None):
@@ -665,7 +741,6 @@ async def scan_all_crypto_symbols(on_signal=None):
             logging.info(f"اسکن دسته {idx+1}/{total_chunks}")
             chunk = usdt_symbols[idx*chunk_size:(idx+1)*chunk_size]
             tasks = [analyze_symbol(exchange, sym, tf) for sym in chunk for tf in TIMEFRAMES]
-            semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
             async with semaphore:
                 results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
