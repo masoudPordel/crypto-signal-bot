@@ -340,37 +340,7 @@ async def check_liquidity(exchange, symbol):
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return False
 
-# دریافت ID ارز از CoinMarketCal
-def get_coin_id(symbol):
-    url = "https://developers.coinmarketcal.com/v1/coins"
-    headers = {
-        "x-api-key": COINMARKETCAL_API_KEY,
-        "Accept": "application/json",
-        "Accept-Encoding": "deflate, gzip"
-    }
-    try:
-        time.sleep(0.5)
-        logging.debug(f"درخواست برای دریافت ID ارز: URL={url}, Headers={headers}")
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code != 200:
-            logging.error(f"خطا در دریافت لیست ارزها: Status={resp.status_code}, Response={resp.text}")
-            return None
-        coins = resp.json()
-        if not coins or "body" not in coins:
-            logging.error(f"هیچ ارزی در پاسخ /coins یافت نشد: Response={resp.text}")
-            return None
-        for coin in coins["body"]:
-            if coin.get("symbol", "").upper() == symbol.upper():
-                coin_id = coin.get("id")
-                logging.info(f"ID ارز برای {symbol}: {coin_id}")
-                return coin_id
-        logging.warning(f"ارز {symbol} در CoinMarketCal یافت نشد")
-        return None
-    except Exception as e:
-        logging.error(f"خطا در دریافت لیست ارزها از CoinMarketCal: {e}")
-        return None
-
-# بررسی رویدادهای بازار با API CoinMarketCal
+# دریافت ID ارز از # تابع به‌روزرسانی‌شده با تغییر فرمت تاریخ
 def check_market_events(symbol):
     coin_id = get_coin_id(symbol)
     if not coin_id:
@@ -382,8 +352,8 @@ def check_market_events(symbol):
         "Accept": "application/json",
         "Accept-Encoding": "deflate, gzip"
     }
-    start_date = (datetime.utcnow() - timedelta(days=7)).replace(microsecond=0).isoformat()
-    end_date = (datetime.utcnow() + timedelta(days=7)).replace(microsecond=0).isoformat()
+    start_date = (datetime.utcnow() - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d")  # فقط تاریخ
+    end_date = (datetime.utcnow() + timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d")  # فقط تاریخ
     params = {
         "coinId": str(coin_id),
         "max": 5,
