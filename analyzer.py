@@ -38,12 +38,12 @@ WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.002
 LIQUIDITY_SPREAD_THRESHOLD = 0.005
 
-# ضرایب مقیاس‌پذیری حجم (کاهش برای تایم‌فریم‌های بالاتر)
+# ضرایب مقیاس‌پذیری حجم
 VOLUME_SCALING = {
     "30m": 0.01,
     "1h": 0.05,
-    "4h": 0.10,  # کاهش از 0.15 به 0.10
-    "1d": 0.05   # کاهش از 0.25 به 0.05
+    "4h": 0.10,
+    "1d": 0.05
 }
 
 # متغیرهای شمارشگر رد شدن‌ها
@@ -283,7 +283,7 @@ async def check_liquidity(exchange, symbol):
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return False
 
-# دریافت ID عددی ارز از CoinMarketCal
+# دریافت ID ارز از CoinMarketCal
 def get_coin_id(symbol):
     url = "https://developers.coinmarketcal.com/v1/coins"
     headers = {
@@ -306,24 +306,13 @@ def get_coin_id(symbol):
         # لاگ کردن کل پاسخ برای دیباگ
         logging.debug(f"پاسخ کامل از /coins: {coins}")
         
-        # جستجوی ID عددی ارز با نماد
+        # جستجوی ID ارز با نماد
         for coin in coins["body"]:
             logging.debug(f"بررسی ارز: {coin}")  # لاگ هر ارز برای دیباگ
             if coin.get("symbol", "").upper() == symbol.upper():
-                # چک کردن برای ID عددی (اولویت با عدد)
-                numeric_id = None
-                # بررسی فیلدهای احتمالی برای ID
-                for key in ["id", "coin_id", "numeric_id"]:  # تست چند فیلد
-                    value = coin.get(key)
-                    if value and isinstance(value, (int, str)):
-                        try:
-                            numeric_id = int(value)  # تبدیل به عدد
-                            logging.info(f"ID عددی ارز برای {symbol}: {numeric_id} (نوع: {type(numeric_id)}, منبع: {key})")
-                            return numeric_id
-                        except (ValueError, TypeError):
-                            continue
-                if not numeric_id:
-                    logging.warning(f"هیچ ID عددی برای {symbol} یافت نشد: {coin}")
+                coin_id = coin.get("id")
+                logging.info(f"ID ارز برای {symbol}: {coin_id} (نوع: {type(coin_id)})")
+                return coin_id  # برگردوندن id به صورت رشته
         logging.warning(f"ارز {symbol} در CoinMarketCal یافت نشد: Response={resp.text}")
         return None
     except Exception as e:
@@ -348,7 +337,7 @@ def check_market_events(symbol):
     start_date = (datetime.utcnow() - timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
     end_date = (datetime.utcnow() + timedelta(days=7)).replace(microsecond=0).isoformat() + "Z"
     params = {
-        "coinId": str(coin_id) if coin_id else None,  # تبدیل به رشته اگه موجود باشه
+        "coinId": coin_id,  # استفاده از id رشته‌ای
         "max": 5,
         "dateRangeStart": start_date,
         "dateRangeEnd": end_date
@@ -367,7 +356,7 @@ def check_market_events(symbol):
             logging.info(f"فاندامنتال برای {symbol}: هیچ رویداد مهمی یافت نشد")
             return 0  # اگه رویدادی نبود، امتیاز خنثی
         
-        for event in events["body"]:  # اصلاح: استفاده از events به جای coins
+        for event in events["body"]:
             title = event.get("title", "").lower()
             description = event.get("description", "").lower()
             
@@ -483,17 +472,18 @@ def generate_signal(symbol, tf, df, fundamental_score, long_trend, short_trend, 
 
     # لاگ‌گذاری برای دیباگ
     logging.debug(f"بررسی سیگنال برای {symbol} @ {tf}:")
-    logging.debug(f"  - Score Long: {score_long} (>=2)")
-    logging.debug(f"  - Score Short: {score_short} (>=2)")
-    logging.debug(f"  - Psych Long: {psych_long} (نباید اشباع خرید)")
-    logging.debug(f"  - Psych Short: {psych_short} (نباید اشباع فروش)")
+    logging.debug(f"  - Score Long: {score_long} (>=1)")
+    logging.debug(f"  - Score Short: {score_short} (>=1)")
+    logging.debug(f"  - Psych Long: {psych_long}")
+    logging.debug(f"  - Psych Short: {psych_short}")
     logging.debug(f"  - ADX: {last['ADX']} (>={ADX_TREND_THRESHOLD})")
     logging.debug(f"  - Long Conditions: {conds_long}")
     logging.debug(f"  - Short Conditions: {conds_short}")
+    logging.debug(f"  - Combined Indicators Long: {confirm_combined_indicators(df, 'Long')}")
+    logging.debug(f"  - Combined Indicators Short: {confirm_combined_indicators(df, 'Short')}")
 
     # بررسی سیگنال خرید (Long)
-    if (score_long >= 2 and 
-        psych_long != "اشباع خرید" and 
+    if (score_long >= 1 and 
         (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and 
         has_trend and 
         confirm_combined_indicators(df, "Long")):
@@ -501,8 +491,7 @@ def generate_signal(symbol, tf, df, fundamental_score, long_trend, short_trend, 
         return "Long", score_long
 
     # بررسی سیگنال فروش (Short)
-    if (score_short >= 2 and 
-        psych_short != "اشباع فروش" and 
+    if (score_short >= 1 and 
         (short_trend or (psych_short == "اشباع خرید" and last["ADX"] < ADX_THRESHOLD)) and 
         has_trend and 
         confirm_combined_indicators(df, "Short")):
