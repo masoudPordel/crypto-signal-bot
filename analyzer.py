@@ -22,26 +22,26 @@ logging.basicConfig(
 # کلیدهای API
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 COINMARKETCAL_API_KEY = "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa"
-TIMEFRAMES = ["30m", "1h", "4h", "1d"]
+TIMEFRAMES = ["30m", "1h", "4h", "1d"]  # برگرداندن تایم‌فریم‌ها به حالت اولیه
 
 # پارامترهای اصلی
 VOLUME_WINDOW = 10
-S_R_BUFFER = 0.05  # افزایش از 0.02 به 0.05
+S_R_BUFFER = 0.05
 ADX_THRESHOLD = 30
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
 CACHE_TTL = 600
 VOLUME_THRESHOLD = 2
 MAX_CONCURRENT_REQUESTS = 20
-WAIT_BETWEEN_REQUESTS = 2.0  # افزایش از 1.0 به 2.0
+WAIT_BETWEEN_REQUESTS = 2.0
 WAIT_BETWEEN_CHUNKS = 3
 VOLATILITY_THRESHOLD = 0.002
 LIQUIDITY_SPREAD_THRESHOLD = 0.005
 
-# ضرایب مقیاس‌پذیری حجم
+# ضرایب مقیاس‌پذیری حجم (کاهش برای تایم‌فریم‌های کوتاه‌تر)
 VOLUME_SCALING = {
-    "30m": 0.005,
-    "1h": 0.03,
+    "30m": 0.003,  # کاهش از 0.005
+    "1h": 0.02,    # کاهش از 0.03
     "4h": 0.10,
     "1d": 0.20
 }
@@ -135,7 +135,12 @@ class PatternDetector:
     def detect_support_resistance(df, window=10):
         if len(df) < window:
             logging.warning("داده کافی برای محاسبه حمایت/مقاومت نیست")
-            return df["close"].mean(), df["close"].mean(), []
+            return 0.01, 0.01, []  # مقدار پیش‌فرض
+
+        # بررسی داده‌های close
+        if df["close"].isnull().all() or (df["close"] == 0).all():
+            logging.warning("داده‌های close نامعتبر یا صفر هستند، مقدار پیش‌فرض استفاده می‌شود")
+            return 0.01, 0.01, []
 
         high = df['high'].rolling(window).max()
         low = df['low'].rolling(window).min()
@@ -149,12 +154,19 @@ class PatternDetector:
         recent_resistance = recent_highs.max() if not recent_highs.empty else resistance.iloc[-1]
         recent_support = recent_lows.min() if not recent_lows.empty else support.iloc[-1]
 
+        # مدیریت مقادیر صفر یا نامعتبر
         if recent_resistance == 0 or pd.isna(recent_resistance):
             recent_resistance = df['close'].mean()
             logging.warning("مقاومت صفر یا نامعتبر بود، میانگین قیمت جایگزین شد")
+            if recent_resistance == 0 or pd.isna(recent_resistance):
+                recent_resistance = 0.01  # مقدار پیش‌فرض
+                logging.warning("میانگین قیمت نیز صفر بود، مقدار پیش‌فرض 0.01 استفاده شد")
         if recent_support == 0 or pd.isna(recent_support):
             recent_support = df['close'].mean()
             logging.warning("حمایت صفر یا نامعتبر بود، میانگین قیمت جایگزین شد")
+            if recent_support == 0 or pd.isna(recent_support):
+                recent_support = 0.01  # مقدار پیش‌فرض
+                logging.warning("میانگین قیمت نیز صفر بود، مقدار پیش‌فرض 0.01 استفاده شد")
 
         volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
         vol_threshold = volume_profile.quantile(0.75)
@@ -417,7 +429,7 @@ def confirm_combined_indicators(df, trend_type):
     macd_cross_long = df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1]
     macd_cross_short = df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1]
     
-    if rsi > 80:
+    if rsi > 75:  # کاهش از 80 به 75
         logging.warning(f"رد {symbol} @ {tf}: RSI خیلی بالا (RSI={rsi:.2f})")
         return False
     if rsi < 20:
@@ -559,7 +571,7 @@ async def analyze_symbol(exchange, symbol, tf):
     current_vol = df["volume"].iloc[-1]
     logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}")
     
-    if current_vol < dynamic_threshold and current_vol < 0.5 * vol_avg:
+    if current_vol < dynamic_threshold:
         VOLUME_REJECTS += 1
         logging.warning(f"رد {symbol} @ {tf}: حجم خیلی کم (current={current_vol}, threshold={dynamic_threshold}, vol_avg={vol_avg})")
         return None
@@ -596,14 +608,18 @@ async def analyze_symbol(exchange, symbol, tf):
 
     support, resistance, vol_levels = PatternDetector.detect_support_resistance(df)
     logging.info(f"سطوح برای {symbol} @ {tf}: support={support:.2f}, resistance={resistance:.2f}, close={last['close']:.2f}")
-    if long_trend and abs(last["close"] - resistance) / last["close"] < S_R_BUFFER:
-        SR_REJECTS += 1
-        logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به مقاومت (distance={abs(last['close'] - resistance)/last['close']:.4f})")
-        return None
-    elif short_trend and abs(last["close"] - support) / last["close"] < S_R_BUFFER:
-        SR_REJECTS += 1
-        logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به حمایت (distance={abs(last['close'] - support)/last['close']:.4f})")
-        return None
+    # نادیده گرفتن فیلتر حمایت/مقاومت اگه سطوح صفر باشن
+    if support != 0 and resistance != 0:
+        if long_trend and abs(last["close"] - resistance) / last["close"] < S_R_BUFFER:
+            SR_REJECTS += 1
+            logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به مقاومت (distance={abs(last['close'] - resistance)/last['close']:.4f})")
+            return None
+        elif short_trend and abs(last["close"] - support) / last["close"] < S_R_BUFFER:
+            SR_REJECTS += 1
+            logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به حمایت (distance={abs(last['close'] - support)/last['close']:.4f})")
+            return None
+    else:
+        logging.warning(f"سطوح حمایت/مقاومت صفر هستند، فیلتر حمایت/مقاومت نادیده گرفته شد")
     logging.debug(f"فیلتر سطوح حمایت/مقاومت برای {symbol} @ {tf} پاس شد")
 
     liquidity = await check_liquidity(exchange, symbol)
