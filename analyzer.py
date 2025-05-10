@@ -44,7 +44,7 @@ def get_coin_id(symbol):
         return None
 
 # پارامترهای اصلی
-VOLUME_WINDOW = 10
+VOLUME_WINDOW = 20
 S_R_BUFFER = 0.02
 ADX_THRESHOLD = 20
 ADX_TREND_THRESHOLD = 25
