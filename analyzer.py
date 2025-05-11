@@ -15,14 +15,13 @@ from sklearn.tree import DecisionTreeClassifier
 
 # تنظیمات logging
 logging.basicConfig(
-    level=logging.DEBUG,  # تغییر از INFO به DEBUG
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("debug.log", encoding="utf-8"),  # ذخیره لاگ‌ها توی فایل
-        logging.StreamHandler()  # نمایش لاگ‌ها توی کنسول
-    ]
+level=logging.DEBUG,  # تغییر از INFO به DEBUG
+format='%(asctime)s - %(levelname)s - %(message)s',
+handlers=[
+    logging.FileHandler("debug.log", encoding="utf-8"),  # ذخیره لاگ‌ها توی فایل
+    logging.StreamHandler()  # نمایش لاگ‌ها توی کنسول
+]
 )
-
 # کلیدهای API
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
 COINMARKETCAL_API_KEY = "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa"
