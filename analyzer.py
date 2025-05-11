@@ -435,6 +435,7 @@ async def analyze_symbol(exchange, symbol, tf):
     logging.debug(f"شروع محاسبات اندیکاتورها برای {symbol} @ {tf}")
     df = compute_indicators(df)
     last = df.iloc[-1]
+    logging.debug(f"اندیکاتورها برای {symbol} @ {tf} محاسبه شد: آخرین RSI={df['RSI'].iloc[-1]:.2f}, MACD={df['MACD'].iloc[-1]:.2f}")
     logging.debug(f"اندیکاتورها محاسبه شد برای {symbol} @ {tf}, آخرین قیمت={last['close']:.2f}, RSI={last['RSI']:.2f}")
 
     # متغیر امتیازدهی
@@ -495,6 +496,7 @@ async def analyze_symbol(exchange, symbol, tf):
     logging.debug(f"روند برای {symbol} @ {tf}: long_trend={long_trend}, score={trend_score}")
 
     # تأیید چندتایم‌فریمی
+    logging.debug(f"دعوت از multi_timeframe_confirmation برای {symbol} @ {tf}")
     logging.debug(f"شروع تأیید چندتایم‌فریمی برای {symbol} @ {tf}")
     mtf_score = await multi_timeframe_confirmation(exchange, symbol, tf)
     score_long += mtf_score
@@ -693,6 +695,7 @@ async def analyze_symbol(exchange, symbol, tf):
     else:
         # استراتژی رگرسیون خطی
         if tf == "1d":
+            logging.debug(f"ورود به استراتژی رگرسیون خطی برای {symbol} @ {tf}")
             logging.debug(f"شروع محاسبات رگرسیون خطی برای {symbol} @ {tf}")
             floor_145, ceiling_145, slope_145, current_price = IndicatorCalculator.compute_linear_regression(df, 145)
             floor_360, ceiling_360, slope_360, _ = IndicatorCalculator.compute_linear_regression(df, 360)
