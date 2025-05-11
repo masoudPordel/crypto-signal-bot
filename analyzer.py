@@ -149,6 +149,43 @@ class IndicatorCalculator:
         logging.debug(f"محاسبه MFI: آخرین مقدار={mfi.iloc[-1]:.2f}")
         return mfi
 
+    @staticmethod
+    def compute_linear_regression(df, period):
+        """
+        محاسبه رگرسیون خطی برای دوره مشخص و پیدا کردن کف و سقف خط
+        ورودی:
+            df: دیتافریم (شامل ستون close)
+            period: دوره (مثلاً ۱۴۵ یا ۳۶۰ روز)
+        خروجی:
+            floor: پایین‌ترین مقدار خط رگرسیون توی بازه
+            ceiling: بالاترین مقدار خط رگرسیون توی بازه
+            slope: شیب خط رگرسیون (برای تشخیص روند)
+            current_price: قیمت فعلی برای مقایسه
+        """
+        if len(df) < period:
+            logging.warning(f"داده کافی برای محاسبه رگرسیون خطی با دوره {period} نیست")
+            return None, None, None, None
+        
+        # گرفتن داده‌های دوره آخر
+        data = df['close'].iloc[-period:].values
+        x = np.arange(len(data))
+        y = data
+
+        # فیت کردن رگرسیون خطی
+        coefficients = np.polyfit(x, y, 1)  # درجه ۱ برای خطی
+        slope, intercept = coefficients
+        regression_line = np.polyval(coefficients, x)
+
+        # پیدا کردن کف و سقف خط رگرسیون
+        floor = min(regression_line[0], regression_line[-1])  # پایین‌ترین نقطه خط
+        ceiling = max(regression_line[0], regression_line[-1])  # بالاترین نقطه خط
+
+        # قیمت فعلی
+        current_price = df['close'].iloc[-1]
+
+        logging.debug(f"رگرسیون خطی (دوره {period}): floor={floor:.2f}, ceiling={ceiling:.2f}, current_price={current_price:.2f}, slope={slope:.4f}")
+        return floor, ceiling, slope, current_price
+
 # تشخیص الگوها
 class PatternDetector:
     @staticmethod
@@ -497,7 +534,7 @@ async def multi_timeframe_confirmation(df, symbol, exchange):
         total_weight += weight
     final_score = trend_score / total_weight if total_weight > 0 else 0
     passed = abs(final_score) >= 0.3  # از 0.5 به 0.3 تغییر کرد
-    logging.debug(f"نتیجه نهایی مولتی تایم‌فریم برای {symbol}: trend_score={trend_score:.2f}, total_weight={total_weight:.2f}, final_score={final_score:.2f}, passed={passed}")
+    logging.info(f"نتیجه نهایی مولتی تایم‌فریم برای {symbol}: trend_score={trend_score:.2f}, total_weight={total_weight:.2f}, final_score={final_score:.2f}, passed={passed}")
     return passed
 
 # دریافت داده‌های کندل با کش
@@ -668,8 +705,11 @@ async def analyze_symbol(exchange, symbol, tf):
             if not mtf_condition:
                 logging.warning(f"رد {symbol} @ {tf}: عدم تطابق روند چند تایم‌فریمی")
                 return None
+            logging.info(f"تأیید مولتی تایم‌فریم برای {symbol} @ {tf}: passed={mtf_condition}")
         else:
             logging.warning(f"داده چند تایم‌فریمی برای {symbol} @ {tf} کافی نیست (ادامه می‌دهیم)")
+            mtf_condition = True  # اگه داده کافی نباشه، فرض می‌کنیم تأیید شده
+            logging.info(f"تأیید مولتی تایم‌فریم پیش‌فرض برای {symbol} @ {tf}: passed={mtf_condition}")
 
     volatility_condition = volatility > VOLATILITY_THRESHOLD
     logging.debug(f"بررسی فیلتر نوسانات: volatility={volatility:.4f}, threshold={VOLATILITY_THRESHOLD}, volatility_condition={volatility_condition}")
@@ -836,7 +876,109 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.info(f"سیگنال Short برای {symbol} @ {tf}: {result}")
         return result
 
-    logging.info(f"نماد {symbol} @ {tf}: هیچ سیگنالی تولید نشد")
+    # اگه هیچ سیگنالی تولید نشد، بررسی استراتژی رگرسیون خطی برای نوسان‌گیری
+    logging.info(f"هیچ سیگنالی از استراتژی اصلی برای {symbol} @ {tf} تولید نشد. بررسی رگرسیون خطی...")
+    if tf == "1d":  # فقط برای تایم‌فریم روزانه
+        # محاسبه رگرسیون خطی برای ۱۴۵ و ۳۶۰ روز
+        floor_145, ceiling_145, slope_145, current_price = IndicatorCalculator.compute_linear_regression(df, 145)
+        floor_360, ceiling_360, slope_360, _ = IndicatorCalculator.compute_linear_regression(df, 360)
+
+        # اگه محاسبات موفق نبود، رد می‌کنیم
+        if floor_145 is None or floor_360 is None:
+            logging.warning(f"محاسبه رگرسیون خطی برای {symbol} @ {tf} ناموفق بود.")
+            return None
+
+        # شناسایی سطوح حمایت و مقاومت توی بازه‌های ۱۴۵ و ۳۶۰ روز
+        supports_145, resistances_145, _ = PatternDetector.detect_support_resistance(df, window=10, period=145)
+        supports_360, resistances_360, _ = PatternDetector.detect_support_resistance(df, window=10, period=360)
+
+        # آستانه برای تشخیص "رسیدن" قیمت به کف یا سقف و قدرت سطوح
+        proximity_threshold = 0.02  # ۲٪ (تغییر داده شده برای حساسیت بیشتر)
+        strength_threshold = 10  # حداقل قدرت سطح (کاهش از 15 به 10 برای شل کردن)
+
+        # بررسی سیگنال خرید (Long): قیمت به کف خطوط رگرسیون رسیده و سطح حمایتی قوی وجود داره
+        floor_hit_145 = abs(current_price - floor_145) / floor_145 <= proximity_threshold
+        floor_hit_360 = abs(current_price - floor_360) / floor_360 <= proximity_threshold
+        strong_support_145 = any(abs(s[0] - current_price) / current_price <= proximity_threshold and s[1] >= strength_threshold for s in supports_145)
+        strong_support_360 = any(abs(s[0] - current_price) / current_price <= proximity_threshold and s[1] >= strength_threshold for s in supports_360)
+
+        if (floor_hit_145 or floor_hit_360) and (strong_support_145 or strong_support_360):
+            entry = float(current_price)
+            
+            # پیدا کردن نزدیک‌ترین سطح حمایتی برای حد ضرر
+            all_supports = supports_145 + supports_360
+            all_supports.sort(key=lambda x: abs(x[0] - entry))
+            nearest_support = next((s[0] for s in all_supports if s[0] < entry), entry * 0.95)
+            
+            # پیدا کردن نزدیک‌ترین سطح مقاومتی برای حد سود
+            all_resistances = resistances_145 + resistances_360
+            all_resistances.sort(key=lambda x: abs(x[0] - entry))
+            nearest_resistance = next((r[0] for r in all_resistances if r[0] > entry), entry * 1.1)
+            
+            sl = nearest_support * 0.99  # یه مقدار پایین‌تر از سطح حمایتی
+            tp = nearest_resistance * 0.99  # یه مقدار پایین‌تر از سطح مقاومتی
+            rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
+            position_size = calculate_position_size(10000, 1, entry, sl)
+            result = {
+                "نوع معامله": "Long (نوسان‌گیری رگرسیون)",
+                "نماد": symbol,
+                "تایم‌فریم": tf,
+                "قیمت ورود": entry,
+                "حد ضرر": sl,
+                "هدف سود": tp,
+                "ریسک به ریوارد": rr,
+                "حجم پوزیشن": position_size,
+                "سطح اطمینان": 70,
+                "تحلیل": f"قیمت به کف رگرسیون رسید (۱۴۵ روز: floor={floor_145:.2f}, ۳۶۰ روز: floor={floor_360:.2f}) | سطح حمایتی قوی وجود دارد",
+                "روانشناسی": psych_long,
+                "روند بازار": "صعودی (بر اساس رگرسیون)",
+                "فاندامنتال": f"امتیاز: {fundamental_score}"
+            }
+            logging.info(f"سیگنال نوسان‌گیری Long (رگرسیون) برای {symbol} @ {tf}: {result}")
+            return result
+
+        # بررسی سیگنال فروش (Short): قیمت به سقف خطوط رگرسیون رسیده و سطح مقاومتی قوی وجود داره
+        ceiling_hit_145 = abs(current_price - ceiling_145) / ceiling_145 <= proximity_threshold
+        ceiling_hit_360 = abs(current_price - ceiling_360) / ceiling_360 <= proximity_threshold
+        strong_resistance_145 = any(abs(r[0] - current_price) / current_price <= proximity_threshold and r[1] >= strength_threshold for r in resistances_145)
+        strong_resistance_360 = any(abs(r[0] - current_price) / current_price <= proximity_threshold and r[1] >= strength_threshold for r in resistances_360)
+
+        if (ceiling_hit_145 or ceiling_hit_360) and (strong_resistance_145 or strong_resistance_360):
+            entry = float(current_price)
+            
+            # پیدا کردن نزدیک‌ترین سطح مقاومتی برای حد ضرر
+            all_resistances = resistances_145 + resistances_360
+            all_resistances.sort(key=lambda x: abs(x[0] - entry))
+            nearest_resistance = next((r[0] for r in all_resistances if r[0] > entry), entry * 1.05)
+            
+            # پیدا کردن نزدیک‌ترین سطح حمایتی برای حد سود
+            all_supports = supports_145 + supports_360
+            all_supports.sort(key=lambda x: abs(x[0] - entry))
+            nearest_support = next((s[0] for s in all_supports if s[0] < entry), entry * 0.9)
+            
+            sl = nearest_resistance * 1.01  # یه مقدار بالاتر از سطح مقاومتی
+            tp = nearest_support * 1.01  # یه مقدار بالاتر از سطح حمایتی
+            rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
+            position_size = calculate_position_size(10000, 1, entry, sl)
+            result = {
+                "نوع معامله": "Short (نوسان‌گیری رگرسیون)",
+                "نماد": symbol,
+                "تایم‌فریم": tf,
+                "قیمت ورود": entry,
+                "حد ضرر": sl,
+                "هدف سود": tp,
+                "ریسک به ریوارد": rr,
+                "حجم پوزیشن": position_size,
+                "سطح اطمینان": 70,
+                "تحلیل": f"قیمت به سقف رگرسیون رسید (۱۴۵ روز: ceiling={ceiling_145:.2f}, ۳۶۰ روز: ceiling={ceiling_360:.2f}) | سطح مقاومتی قوی وجود دارد",
+                "روانشناسی": psych_short,
+                "روند بازار": "نزولی (بر اساس رگرسیون)",
+                "فاندامنتال": f"امتیاز: {fundamental_score}"
+            }
+            logging.info(f"سیگنال نوسان‌گیری Short (رگرسیون) برای {symbol} @ {tf}: {result}")
+            return result
+
+    logging.info(f"نماد {symbol} @ {tf}: هیچ سیگنالی (حتی از رگرسیون خطی) تولید نشد")
     return None
 
 # اسکن همه نمادها
