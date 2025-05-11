@@ -530,7 +530,7 @@ async def multi_timeframe_confirmation(df, symbol, exchange):
             logging.debug(f"داده برای تایم‌فریم {tf} کافی نیست، وزن {weight} نادیده گرفته شد")
         total_weight += weight
     final_score = trend_score / total_weight if total_weight > 0 else 0
-    passed = abs(final_score) >= 0.3
+    passed = abs(final_score) >= 0.1
     logging.info(f"نتیجه نهایی مولتی تایم‌فریم برای {symbol}: trend_score={trend_score:.2f}, total_weight={total_weight:.2f}, final_score={final_score:.2f}, passed={passed}")
     return passed
 
