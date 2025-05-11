@@ -885,17 +885,11 @@ async def walkforward(symbol, timeframe, total_days=90, train_days=60, test_days
 async def main():
     exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
     await exchange.load_markets()
-    df = await get_ohlcv_cached(exchange, "BTC/USDT", "1d", limit=200)
-    if df is not None:
-        df = compute_indicators(df)
-        final_balance, trades = backtest_strategy(df, "BTC/USDT")
-        logging.info(f"بک‌تست - موجودی نهایی: {final_balance:.2f}, تعداد معاملات: {len(trades)}")
-    forward_result, forward_trades = await forward_test(exchange, "BTC/USDT", "1d")
-    if forward_result:
-        logging.info(f"تست فوروارد - موجودی نهایی: {forward_result}, تعداد معاملات: {len(forward_trades)}")
-    await backtest_symbol("BTC/USDT", "1d", (datetime.utcnow() - timedelta(days=90)).isoformat(), datetime.utcnow().isoformat())
-    await walkforward("BTC/USDT", "1d")
-    await scan_all_crypto_symbols()
+    result = await analyze_symbol(exchange, "BTC/USDT", "1h")
+    if result:
+        logging.info(f"سیگنال تولید شد: {result}")
+    else:
+        logging.info("هیچ سیگنالی تولید نشد.")
     await exchange.close()
 
 if __name__ == "__main__":
