@@ -15,11 +15,11 @@ from sklearn.tree import DecisionTreeClassifier
 
 # تنظیمات logging
 logging.basicConfig(
-    level=logging.DEBUG,  # تغییر از INFO به DEBUG
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("debug.log", encoding="utf-8"),  # ذخیره لاگ‌ها توی فایل
-        logging.StreamHandler()  # نمایش لاگ‌ها توی کنسول
+        logging.FileHandler("debug.log", encoding="utf-8"),
+        logging.StreamHandler()
     ]
 )
 
@@ -47,21 +47,19 @@ def get_coin_id(symbol):
         logging.error(f"خطا در دریافت آیدی برای {symbol}: {e}")
         return None
 
-# پارامترهای اصلی (تغییر آستانه‌ها برای شل کردن فیلترها)
+# پارامترهای اصلی (شل کردن آستانه‌ها)
 VOLUME_WINDOW = 20
-S_R_BUFFER = 0.01
-ADX_THRESHOLD = 10  # از 15 به 10 تغییر کرد
-ADX_TREND_THRESHOLD = 20  # از 25 به 20 تغییر کرد
+S_R_BUFFER = 0.005  # افزایش به 0.005 برای شل کردن
+ADX_THRESHOLD = 8  # کاهش به 8
+ADX_TREND_THRESHOLD = 15  # کاهش به 15
 CACHE = {}
-CACHE_TTL = 300
-VOLUME_THRESHOLD = 0.002
-MAX_CONCURRENT_REQUESTS = 15
-WAIT_BETWEEN_REQUESTS = 0.5
+CACHE_TTL = 600
+MAX_CONCURRENT_REQUESTS = 5
+WAIT_BETWEEN_REQUESTS = 2.0
 WAIT_BETWEEN_CHUNKS = 3
-VOLATILITY_THRESHOLD = 0.002  # از 0.003 به 0.002 تغییر کرد
-LIQUIDITY_SPREAD_THRESHOLD = 0.01
+LIQUIDITY_SPREAD_THRESHOLD = 0.02  # افزایش به 0.02 برای آلت‌کوین‌ها
 
-# ضرایب مقیاس‌پذیری حجم (به صورت پایه، ولی به صورت پویا تنظیم می‌شن)
+# ضرایب مقیاس‌پذیری حجم
 VOLUME_SCALING = {
     "30m": 0.005,
     "1h": 0.03,
@@ -73,6 +71,22 @@ VOLUME_SCALING = {
 LIQUIDITY_REJECTS = 0
 VOLUME_REJECTS = 0
 SR_REJECTS = 0
+
+# تابع برای پویا کردن آستانه‌ها
+def get_dynamic_thresholds(tf, df=None):
+    volatility_base = {"30m": 0.0005, "1h": 0.001, "4h": 0.0015, "1d": 0.002}
+    volume_base = {"30m": 5, "1h": 10, "4h": 25, "1d": 50}
+    dynamic_volatility = volatility_base.get(tf, 0.001)
+    dynamic_volume = volume_base.get(tf, 10)
+    
+    # تنظیم پویا با ATR
+    if df is not None and len(df) > 0:
+        atr = IndicatorCalculator.compute_atr(df).iloc[-1]
+        volatility_factor = atr / df["close"].iloc[-1]
+        dynamic_volatility = max(dynamic_volatility, volatility_factor * 0.5)  # حداقل 50% از ATR
+        logging.debug(f"پویا کردن آستانه‌ها برای {tf}: volatility_factor={volatility_factor:.4f}, dynamic_volatility={dynamic_volatility:.4f}")
+    
+    return dynamic_volatility, dynamic_volume
 
 # دریافت ۵۰۰ نماد برتر از CoinMarketCap
 def get_top_500_symbols_from_cmc():
@@ -151,36 +165,20 @@ class IndicatorCalculator:
 
     @staticmethod
     def compute_linear_regression(df, period):
-        """
-        محاسبه رگرسیون خطی برای دوره مشخص و پیدا کردن کف و سقف خط
-        ورودی:
-            df: دیتافریم (شامل ستون close)
-            period: دوره (مثلاً ۱۴۵ یا ۳۶۰ روز)
-        خروجی:
-            floor: پایین‌ترین مقدار خط رگرسیون توی بازه
-            ceiling: بالاترین مقدار خط رگرسیون توی بازه
-            slope: شیب خط رگرسیون (برای تشخیص روند)
-            current_price: قیمت فعلی برای مقایسه
-        """
         if len(df) < period:
             logging.warning(f"داده کافی برای محاسبه رگرسیون خطی با دوره {period} نیست")
             return None, None, None, None
         
-        # گرفتن داده‌های دوره آخر
         data = df['close'].iloc[-period:].values
         x = np.arange(len(data))
         y = data
 
-        # فیت کردن رگرسیون خطی
-        coefficients = np.polyfit(x, y, 1)  # درجه ۱ برای خطی
+        coefficients = np.polyfit(x, y, 1)
         slope, intercept = coefficients
         regression_line = np.polyval(coefficients, x)
 
-        # پیدا کردن کف و سقف خط رگرسیون
-        floor = min(regression_line[0], regression_line[-1])  # پایین‌ترین نقطه خط
-        ceiling = max(regression_line[0], regression_line[-1])  # بالاترین نقطه خط
-
-        # قیمت فعلی
+        floor = min(regression_line[0], regression_line[-1])
+        ceiling = max(regression_line[0], regression_line[-1])
         current_price = df['close'].iloc[-1]
 
         logging.debug(f"رگرسیون خطی (دوره {period}): floor={floor:.2f}, ceiling={ceiling:.2f}, current_price={current_price:.2f}, slope={slope:.4f}")
@@ -344,13 +342,13 @@ class PatternDetector:
             logging.warning(f"شکست رد شد: حجم ناکافی (current={last_vol:.2f}, threshold={vol_threshold * vol_avg:.2f})")
             return False
         if direction == "support":
-            support_broken = df['close'].iloc[-1] < level  # فقط آخرین کندل رو بررسی می‌کنیم
+            support_broken = df['close'].iloc[-1] < level
             logging.debug(f"بررسی شکست حمایت: support_broken={support_broken}")
             if not support_broken:
                 logging.warning(f"شکست رد شد: حمایت شکسته نشده")
                 return False
         if direction == "resistance":
-            resistance_broken = df['close'].iloc[-1] > level  # فقط آخرین کندل رو بررسی می‌کنیم
+            resistance_broken = df['close'].iloc[-1] > level
             logging.debug(f"بررسی شکست مقاومت: resistance_broken={resistance_broken}")
             if not resistance_broken:
                 logging.warning(f"شکست رد شد: مقاومت شکسته نشده")
@@ -359,7 +357,7 @@ class PatternDetector:
         body = abs(last_candle['close'] - last_candle['open'])
         wick_lower = min(last_candle['close'], last_candle['open']) - last_candle['low']
         wick_upper = last_candle['high'] - max(last_candle['close'], last_candle['open'])
-        candle_condition = body >= 0.4 * (last_candle['high'] - last_candle['low']) and wick_lower <= 0.3 * body and wick_upper <= 0.3 * body  # از 0.6 به 0.4 و از 0.2 به 0.3
+        candle_condition = body >= 0.4 * (last_candle['high'] - last_candle['low']) and wick_lower <= 0.3 * body and wick_upper <= 0.3 * body
         logging.debug(f"بررسی کندل شکست: body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f}, candle_condition={candle_condition}")
         if not candle_condition:
             logging.warning(f"شکست رد شد: کندل ضعیف (body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f})")
@@ -401,8 +399,7 @@ async def check_liquidity(exchange, symbol):
         if not liquidity_passed:
             LIQUIDITY_REJECTS += 1
             logging.warning(f"رد {symbol}: نقدینگی کافی نیست (spread={spread:.4f}, threshold={LIQUIDITY_SPREAD_THRESHOLD})")
-            return False
-        return True
+        return liquidity_passed
     except Exception as e:
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return False
@@ -483,7 +480,7 @@ def compute_indicators(df):
     logging.info(f"محاسبه اندیکاتورها: RSI={df['RSI'].iloc[-1]:.2f}, ADX={df['ADX'].iloc[-1]:.2f}, Stochastic={df['Stochastic'].iloc[-1]:.2f}, MFI={df['MFI'].iloc[-1]:.2f}")
     return df
 
-# تأیید اندیکاتورهای ترکیبی (تغییر آستانه RSI)
+# تأیید اندیکاتورهای ترکیبی
 def confirm_combined_indicators(df, trend_type):
     global symbol, tf
     last = df.iloc[-1]
@@ -493,10 +490,10 @@ def confirm_combined_indicators(df, trend_type):
     bearish_engulf = last["Engulfing"] and last["close"] < last["open"]
     macd_cross_long = df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1]
     macd_cross_short = df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1]
-    if rsi > 80:  # از 75 به 80 تغییر کرد
+    if rsi > 80:
         logging.warning(f"رد {symbol} @ {tf}: RSI خیلی بالا (RSI={rsi:.2f})")
         return False
-    if rsi < 15:  # از 20 به 15 تغییر کرد
+    if rsi < 15:
         logging.warning(f"رد {symbol} @ {tf}: RSI خیلی پایین (RSI={rsi:.2f})")
         return False
     if trend_type == "Long":
@@ -516,7 +513,7 @@ def calculate_position_size(account_balance, risk_percentage, entry, stop_loss):
     logging.info(f"محاسبه حجم پوزیشن: risk_amount={risk_amount:.2f}, distance={distance:.4f}, position_size={position_size:.2f}")
     return round(position_size, 2)
 
-# تأیید مولتی تایم‌فریم (تغییر آستانه)
+# تأیید مولتی تایم‌فریم
 async def multi_timeframe_confirmation(df, symbol, exchange):
     weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "30m": 0.1}
     total_weight = 0
@@ -533,7 +530,7 @@ async def multi_timeframe_confirmation(df, symbol, exchange):
             logging.debug(f"داده برای تایم‌فریم {tf} کافی نیست، وزن {weight} نادیده گرفته شد")
         total_weight += weight
     final_score = trend_score / total_weight if total_weight > 0 else 0
-    passed = abs(final_score) >= 0.3  # از 0.5 به 0.3 تغییر کرد
+    passed = abs(final_score) >= 0.3
     logging.info(f"نتیجه نهایی مولتی تایم‌فریم برای {symbol}: trend_score={trend_score:.2f}, total_weight={total_weight:.2f}, final_score={final_score:.2f}, passed={passed}")
     return passed
 
@@ -620,7 +617,7 @@ X_train = np.array([[30, 25, 2], [70, 20, 1], [50, 30, 1.5], [20, 40, 3]])
 y_train = np.array([1, 0, 0, 1])
 signal_filter.train(X_train, y_train)
 
-# تابع تنظیم پویای ضرایب (تغییر scale_factor برای شل کردن)
+# تابع تنظیم پویای ضرایب
 async def dynamic_volume_scaling(exchange, symbol, tf, df):
     atr = IndicatorCalculator.compute_atr(df).iloc[-1]
     volatility_factor = atr / df["close"].iloc[-1]
@@ -651,43 +648,49 @@ async def dynamic_volume_scaling(exchange, symbol, tf, df):
     logging.info(f"تنظیم پویای VOLUME_SCALING برای {symbol} @ {tf}: volatility_factor={volatility_factor:.4f}, liquidity_factor={liquidity_factor:.4f}, dynamic_factor={dynamic_factor:.4f}, new_scaling={dynamic_scaling}")
     return dynamic_scaling
 
-# تحلیل نماد
+# تحلیل نماد (با وزن‌دهی و شل کردن فیلترها)
 async def analyze_symbol(exchange, symbol, tf):
     global VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
     logging.info(f"شروع تحلیل {symbol} @ {tf}")
     df = await get_ohlcv_cached(exchange, symbol, tf)
     logging.info(f"دریافت داده برای {symbol} @ {tf} در {time.time() - start_time:.2f} ثانیه")
+    
+    # امتیازدهی اولیه
+    score = 0
     if df is None or len(df) < 50:
-        logging.warning(f"رد {symbol} @ {tf}: داده کافی نیست (طول فعلی={len(df) if df is not None else 'None'})")
-        return None
+        logging.warning(f"داده ناقص برای {symbol} @ {tf}, امتیاز -10")
+        score -= 10
+    else:
+        score += 5  # امتیاز پایه برای داده کامل
 
+    # پویا کردن آستانه‌ها
+    dynamic_volatility, dynamic_volume = get_dynamic_thresholds(tf, df)
     dynamic_scaling = await dynamic_volume_scaling(exchange, symbol, tf, df)
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = dynamic_scaling.get(tf, 0.2)
-    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor * 0.005, 0.01)  # از 0.01 به 0.005 تغییر کرد
+    dynamic_threshold = max(dynamic_volume, vol_avg * scale_factor * 0.005, 0.01)
     current_vol = df["volume"].iloc[-1]
-    logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor:.4f}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}")
-    
     vol_condition = current_vol >= dynamic_threshold
-    logging.debug(f"بررسی فیلتر حجم: current_vol={current_vol:.2f}, dynamic_threshold={dynamic_threshold:.2f}, vol_condition={vol_condition}")
+    score += 10 if vol_condition else -5  # 10 امتیاز برای حجم کافی
+    logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor:.4f}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}, score={score}")
+    
     if not vol_condition:
         VOLUME_REJECTS += 1
-        logging.warning(f"رد {symbol} @ {tf}: حجم خیلی کم (current={current_vol:.2f}, threshold={dynamic_threshold:.2f}, vol_avg={vol_avg:.2f})")
-        return None
-    logging.debug(f"فیلتر حجم برای {symbol} @ {tf} پاس شد")
+        logging.warning(f"حجم کم برای {symbol} @ {tf}: current={current_vol:.2f}, threshold={dynamic_threshold:.2f}")
 
     df = compute_indicators(df)
     last = df.iloc[-1]
     volatility = df["ATR"].iloc[-1] / df["close"].iloc[-1]
-    logging.info(f"اندیکاتورها برای {symbol} @ {tf}: RSI={last['RSI']:.2f}, ADX={last['ADX']:.2f}, volatility={volatility:.4f}")
+    volatility_condition = volatility > dynamic_volatility
+    score += 10 if volatility_condition else -5  # 10 امتیاز برای نوسان کافی
+    logging.info(f"اندیکاتورها برای {symbol} @ {tf}: RSI={last['RSI']:.2f}, ADX={last['ADX']:.2f}, volatility={volatility:.4f}, score={score}")
 
     adx_condition = last["ADX"] >= ADX_THRESHOLD
-    logging.debug(f"بررسی فیلتر ADX: ADX={last['ADX']:.2f}, threshold={ADX_THRESHOLD}, adx_condition={adx_condition}")
-    if not adx_condition:
-        logging.warning(f"رد {symbol} @ {tf}: ADX خیلی پایین (current={last['ADX']:.2f})")
-        return None
-    logging.debug(f"فیلتر ADX برای {symbol} @ {tf} پاس شد")
+    trend_condition = last["ADX"] >= ADX_TREND_THRESHOLD
+    score += 15 if adx_condition else 5  # 15 امتیاز برای ADX قوی
+    score += 10 if trend_condition else 0  # 10 امتیاز برای روند قوی
+    logging.info(f"فیلتر ADX: ADX={last['ADX']:.2f}, threshold={ADX_THRESHOLD}, trend_threshold={ADX_TREND_THRESHOLD}, score={score}")
 
     long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
     short_trend = not long_trend
@@ -701,22 +704,13 @@ async def analyze_symbol(exchange, symbol, tf):
             trend4 = e12_4 > e26_4
             logging.info(f"روند چند تایم‌فریمی برای {symbol} @ {tf}: 1h={'صعودی' if long_trend else 'نزولی'}, 4h={'صعودی' if trend4 else 'نزولی'}")
             mtf_condition = (long_trend and trend4) or (short_trend and not trend4)
-            logging.debug(f"بررسی تطابق چند تایم‌فریمی: long_trend={long_trend}, trend4={trend4}, mtf_condition={mtf_condition}")
-            if not mtf_condition:
-                logging.warning(f"رد {symbol} @ {tf}: عدم تطابق روند چند تایم‌فریمی")
-                return None
-            logging.info(f"تأیید مولتی تایم‌فریم برای {symbol} @ {tf}: passed={mtf_condition}")
+            score += 15 if mtf_condition else 5
+            logging.info(f"تأیید مولتی تایم‌فریم برای {symbol} @ {tf}: passed={mtf_condition}, score={score}")
         else:
-            logging.warning(f"داده چند تایم‌فریمی برای {symbol} @ {tf} کافی نیست (ادامه می‌دهیم)")
-            mtf_condition = True  # اگه داده کافی نباشه، فرض می‌کنیم تأیید شده
-            logging.info(f"تأیید مولتی تایم‌فریم پیش‌فرض برای {symbol} @ {tf}: passed={mtf_condition}")
-
-    volatility_condition = volatility > VOLATILITY_THRESHOLD
-    logging.debug(f"بررسی فیلتر نوسانات: volatility={volatility:.4f}, threshold={VOLATILITY_THRESHOLD}, volatility_condition={volatility_condition}")
-    if not volatility_condition:
-        logging.warning(f"رد {symbol} @ {tf}: نوسان خیلی کم (current={volatility:.4f})")
-        return None
-    logging.debug(f"فیلتر نوسانات برای {symbol} @ {tf} پاس شد")
+            logging.warning(f"داده چند تایم‌فریمی برای {symbol} @ {tf} کافی نیست")
+            mtf_condition = True
+            score += 5
+            logging.info(f"تأیید مولتی تایم‌فریم پیش‌فرض برای {symbol} @ {tf}: passed={mtf_condition}, score={score}")
 
     support, resistance, vol_levels = PatternDetector.detect_support_resistance(df)
     logging.info(f"سطوح برای {symbol} @ {tf}: support={support:.2f}, resistance={resistance:.2f}, close={last['close']:.2f}")
@@ -724,31 +718,27 @@ async def analyze_symbol(exchange, symbol, tf):
         distance_to_resistance = abs(last["close"] - resistance) / last["close"]
         distance_to_support = abs(last["close"] - support) / last["close"]
         logging.info(f"فاصله تا سطوح: dist_to_resistance={distance_to_resistance:.4f}, dist_to_support={distance_to_support:.4f}")
-        sr_condition_long = not (long_trend and distance_to_resistance < S_R_BUFFER)
-        sr_condition_short = not (short_trend and distance_to_support < S_R_BUFFER)
-        logging.debug(f"بررسی فیلتر سطوح: sr_condition_long={sr_condition_long}, sr_condition_short={sr_condition_short}")
+        sr_condition_long = distance_to_resistance > S_R_BUFFER
+        sr_condition_short = distance_to_support > S_R_BUFFER
+        score += 10 if (long_trend and sr_condition_long) or (short_trend and sr_condition_short) else -5
         if long_trend and not sr_condition_long:
             SR_REJECTS += 1
-            logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به مقاومت (distance={distance_to_resistance:.4f})")
-            return None
+            logging.warning(f"نزدیک به مقاومت برای {symbol} @ {tf}: distance={distance_to_resistance:.4f}, score={score}")
         elif short_trend and not sr_condition_short:
             SR_REJECTS += 1
-            logging.warning(f"رد {symbol} @ {tf}: خیلی نزدیک به حمایت (distance={distance_to_support:.4f})")
-            return None
+            logging.warning(f"نزدیک به حمایت برای {symbol} @ {tf}: distance={distance_to_support:.4f}, score={score}")
     else:
-        logging.warning(f"سطوح حمایت/مقاومت صفر هستند، فیلتر حمایت/مقاومت نادیده گرفته شد")
-    logging.debug(f"فیلتر سطوح حمایت/مقاومت برای {symbol} @ {tf} پاس شد")
+        logging.warning(f"سطوح حمایت/مقاومت صفر هستند، امتیاز -5")
+        score -= 5
 
     liquidity_passed = await check_liquidity(exchange, symbol)
-    if not liquidity_passed:
-        return None
+    score += 15 if liquidity_passed else -5  # 15 امتیاز برای نقدینگی کافی
 
     fundamental_score = check_market_events(symbol.split('/')[0])
+    score += fundamental_score  # امتیاز فاندامنتال مستقیماً اضافه می‌شه
     fundamental_condition = fundamental_score >= -10
-    logging.debug(f"بررسی فیلتر فاندامنتال: fundamental_score={fundamental_score}, fundamental_condition={fundamental_condition}")
     if not fundamental_condition:
-        logging.warning(f"رد {symbol} @ {tf}: امتیاز فاندامنتال خیلی پایین ({fundamental_score})")
-        return None
+        logging.warning(f"امتیاز فاندامنتال پایین برای {symbol} @ {tf}: {fundamental_score}")
 
     bullish_pin = last["PinBar"] and last["lower"] > 2 * last["body"]
     bearish_pin = last["PinBar"] and last["upper"] > 2 * last["body"]
@@ -764,6 +754,7 @@ async def analyze_symbol(exchange, symbol, tf):
     bullish_rsi_div, bearish_rsi_div = PatternDetector.detect_rsi_divergence(df)
     bullish_macd_div, bearish_macd_div = PatternDetector.detect_macd_divergence(df)
 
+    # امتیازدهی برای شرایط
     conds_long = {
         "PinBar": bullish_pin,
         "Engulfing": bullish_engulf,
@@ -791,34 +782,35 @@ async def analyze_symbol(exchange, symbol, tf):
         "MFI_Overbought": mfi > 80
     }
 
-    score_long = sum(conds_long.values()) + fundamental_score
-    score_short = sum(conds_short.values()) + fundamental_score
+    # امتیازدهی برای هر شرط (هر شرط 10 امتیاز)
+    score_long = sum([10 for v in conds_long.values() if v])
+    score_short = sum([10 for v in conds_short.values() if v])
+    score_long += score  # جمع امتیازهای اولیه
+    score_short += score
     logging.info(f"نماد {symbol} @ {tf}: score_long={score_long}, score_short={score_short}, fundamental_score={fundamental_score}")
+
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
     features = [rsi, last["ADX"], last["volume"] / vol_avg]
 
-    logging.debug(f"بررسی تولید سیگنال Long: score_long={score_long}, long_trend={long_trend}, has_trend={has_trend}, psych_long={psych_long}, ADX={last['ADX']}")
-    logging.debug(f"بررسی تولید سیگنال Short: score_short={score_short}, short_trend={short_trend}, has_trend={has_trend}, psych_short={psych_short}, ADX={last['ADX']}")
-
     # بررسی سیگنال Long
     long_indicators_condition = confirm_combined_indicators(df, "Long")
-    logging.debug(f"تأیید اندیکاتورها برای Long: {long_indicators_condition}")
     long_mtf_condition = await multi_timeframe_confirmation(df, symbol, exchange)
-    logging.debug(f"تأیید مولتی تایم‌فریم برای Long: {long_mtf_condition}")
     long_breakout_condition = PatternDetector.is_valid_breakout(df, resistance, direction="resistance") if long_indicators_condition and long_mtf_condition else False
-    logging.debug(f"تأیید شکست برای Long: {long_breakout_condition}")
     long_filter_condition = signal_filter.predict(features) if long_breakout_condition else False
 
-    logging.debug(f"شرایط سیگنال Long برای {symbol} @ {tf}: score_long>=0={score_long >= 0}, trend_condition={long_trend or (psych_long == 'اشباع فروش' and last['ADX'] < ADX_THRESHOLD)}, has_trend={has_trend}, indicators={long_indicators_condition}, mtf={long_mtf_condition}, breakout={long_breakout_condition}, filter={long_filter_condition}")
+    score_long += 15 if long_indicators_condition else 5
+    score_long += 15 if long_mtf_condition else 5
+    score_long += 10 if long_breakout_condition else 0
+    score_long += 10 if long_filter_condition else 0
 
-    if (score_long >= 0 and (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and 
-        has_trend and long_indicators_condition and long_mtf_condition and long_breakout_condition and long_filter_condition):
+    if score_long >= 40:  # حداقل امتیاز برای تولید سیگنال
         entry = float(last["close"])
         atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
         sl = entry - 2 * atr_avg
         tp = entry + 3 * atr_avg
         rr = round((tp - entry) / (entry - sl), 2)
         position_size = calculate_position_size(10000, 1, entry, sl)
+        signal_strength = "قوی" if score_long > 70 else "متوسط"
         result = {
             "نوع معامله": "Long",
             "نماد": symbol,
@@ -828,7 +820,8 @@ async def analyze_symbol(exchange, symbol, tf):
             "هدف سود": tp,
             "ریسک به ریوارد": rr,
             "حجم پوزیشن": position_size,
-            "سطح اطمینان": min(score_long * 20, 100),
+            "سطح اطمینان": min(score_long, 100),
+            "قدرت سیگنال": signal_strength,
             "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
             "روانشناسی": psych_long,
             "روند بازار": "صعودی",
@@ -839,25 +832,25 @@ async def analyze_symbol(exchange, symbol, tf):
 
     # بررسی سیگنال Short
     short_indicators_condition = confirm_combined_indicators(df, "Short")
-    logging.debug(f"تأیید اندیکاتورها برای Short: {short_indicators_condition}")
     short_mtf_condition = await multi_timeframe_confirmation(df, symbol, exchange)
-    logging.debug(f"تأیید مولتی تایم‌فریم برای Short: {short_mtf_condition}")
     short_divergence_condition = not (bearish_rsi_div or bearish_macd_div or PatternDetector.detect_hammer(df).iloc[-1] or (last["Engulfing"] and last["close"] > last["open"]))
     short_breakout_condition = PatternDetector.is_valid_breakout(df, support, direction="support") if short_indicators_condition and short_mtf_condition and short_divergence_condition else False
-    logging.debug(f"تأیید شکست برای Short: {short_breakout_condition}")
     short_filter_condition = signal_filter.predict(features) if short_breakout_condition else False
 
-    logging.debug(f"شرایط سیگنال Short برای {symbol} @ {tf}: score_short>=0={score_short >= 0}, trend_condition={short_trend or (psych_short == 'اشباع خرید')}, has_trend={has_trend}, indicators={short_indicators_condition}, mtf={short_mtf_condition}, divergence={short_divergence_condition}, breakout={short_breakout_condition}, filter={short_filter_condition}")
+    score_short += 15 if short_indicators_condition else 5
+    score_short += 15 if short_mtf_condition else 5
+    score_short += 10 if short_divergence_condition else 0
+    score_short += 10 if short_breakout_condition else 0
+    score_short += 10 if short_filter_condition else 0
 
-    if (score_short >= 0 and (short_trend or psych_short == "اشباع خرید") and 
-        has_trend and short_indicators_condition and short_mtf_condition and short_divergence_condition and 
-        short_breakout_condition and short_filter_condition):
+    if score_short >= 40:  # حداقل امتیاز برای تولید سیگنال
         entry = float(last["close"])
         atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
         sl = entry + 2 * atr_avg
         tp = entry - 3 * atr_avg
         rr = round((entry - tp) / (sl - entry), 2)
         position_size = calculate_position_size(10000, 1, entry, sl)
+        signal_strength = "قوی" if score_short > 70 else "متوسط"
         result = {
             "نوع معامله": "Short",
             "نماد": symbol,
@@ -867,7 +860,8 @@ async def analyze_symbol(exchange, symbol, tf):
             "هدف سود": tp,
             "ریسک به ریوارد": rr,
             "حجم پوزیشن": position_size,
-            "سطح اطمینان": min(score_short * 20, 100),
+            "سطح اطمینان": min(score_short, 100),
+            "قدرت سیگنال": signal_strength,
             "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
             "روانشناسی": psych_short,
             "روند بازار": "نزولی",
@@ -876,47 +870,30 @@ async def analyze_symbol(exchange, symbol, tf):
         logging.info(f"سیگنال Short برای {symbol} @ {tf}: {result}")
         return result
 
-    # اگه هیچ سیگنالی تولید نشد، بررسی استراتژی رگرسیون خطی برای نوسان‌گیری
+    # استراتژی رگرسیون خطی (حفظ شده)
     logging.info(f"هیچ سیگنالی از استراتژی اصلی برای {symbol} @ {tf} تولید نشد. بررسی رگرسیون خطی...")
-    if tf == "1d":  # فقط برای تایم‌فریم روزانه
-        # محاسبه رگرسیون خطی برای ۱۴۵ و ۳۶۰ روز
+    if tf == "1d":
         floor_145, ceiling_145, slope_145, current_price = IndicatorCalculator.compute_linear_regression(df, 145)
         floor_360, ceiling_360, slope_360, _ = IndicatorCalculator.compute_linear_regression(df, 360)
 
-        # اگه محاسبات موفق نبود، رد می‌کنیم
         if floor_145 is None or floor_360 is None:
             logging.warning(f"محاسبه رگرسیون خطی برای {symbol} @ {tf} ناموفق بود.")
             return None
 
-        # شناسایی سطوح حمایت و مقاومت توی بازه‌های ۱۴۵ و ۳۶۰ روز
-        supports_145, resistances_145, _ = PatternDetector.detect_support_resistance(df, window=10, period=145)
-        supports_360, resistances_360, _ = PatternDetector.detect_support_resistance(df, window=10, period=360)
+        proximity_threshold = 0.02
+        strength_threshold = 10
 
-        # آستانه برای تشخیص "رسیدن" قیمت به کف یا سقف و قدرت سطوح
-        proximity_threshold = 0.02  # ۲٪ (تغییر داده شده برای حساسیت بیشتر)
-        strength_threshold = 10  # حداقل قدرت سطح (کاهش از 15 به 10 برای شل کردن)
-
-        # بررسی سیگنال خرید (Long): قیمت به کف خطوط رگرسیون رسیده و سطح حمایتی قوی وجود داره
         floor_hit_145 = abs(current_price - floor_145) / floor_145 <= proximity_threshold
         floor_hit_360 = abs(current_price - floor_360) / floor_360 <= proximity_threshold
-        strong_support_145 = any(abs(s[0] - current_price) / current_price <= proximity_threshold and s[1] >= strength_threshold for s in supports_145)
-        strong_support_360 = any(abs(s[0] - current_price) / current_price <= proximity_threshold and s[1] >= strength_threshold for s in supports_360)
+        strong_support_145 = any(abs(current_price - s) / current_price <= proximity_threshold for s in [support])
+        strong_support_360 = any(abs(current_price - s) / current_price <= proximity_threshold for s in [support])
 
         if (floor_hit_145 or floor_hit_360) and (strong_support_145 or strong_support_360):
             entry = float(current_price)
-            
-            # پیدا کردن نزدیک‌ترین سطح حمایتی برای حد ضرر
-            all_supports = supports_145 + supports_360
-            all_supports.sort(key=lambda x: abs(x[0] - entry))
-            nearest_support = next((s[0] for s in all_supports if s[0] < entry), entry * 0.95)
-            
-            # پیدا کردن نزدیک‌ترین سطح مقاومتی برای حد سود
-            all_resistances = resistances_145 + resistances_360
-            all_resistances.sort(key=lambda x: abs(x[0] - entry))
-            nearest_resistance = next((r[0] for r in all_resistances if r[0] > entry), entry * 1.1)
-            
-            sl = nearest_support * 0.99  # یه مقدار پایین‌تر از سطح حمایتی
-            tp = nearest_resistance * 0.99  # یه مقدار پایین‌تر از سطح مقاومتی
+            nearest_support = support * 0.99
+            nearest_resistance = resistance * 0.99
+            sl = nearest_support
+            tp = nearest_resistance
             rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
             position_size = calculate_position_size(10000, 1, entry, sl)
             result = {
@@ -929,6 +906,7 @@ async def analyze_symbol(exchange, symbol, tf):
                 "ریسک به ریوارد": rr,
                 "حجم پوزیشن": position_size,
                 "سطح اطمینان": 70,
+                "قدرت سیگنال": "متوسط",
                 "تحلیل": f"قیمت به کف رگرسیون رسید (۱۴۵ روز: floor={floor_145:.2f}, ۳۶۰ روز: floor={floor_360:.2f}) | سطح حمایتی قوی وجود دارد",
                 "روانشناسی": psych_long,
                 "روند بازار": "صعودی (بر اساس رگرسیون)",
@@ -937,27 +915,17 @@ async def analyze_symbol(exchange, symbol, tf):
             logging.info(f"سیگنال نوسان‌گیری Long (رگرسیون) برای {symbol} @ {tf}: {result}")
             return result
 
-        # بررسی سیگنال فروش (Short): قیمت به سقف خطوط رگرسیون رسیده و سطح مقاومتی قوی وجود داره
         ceiling_hit_145 = abs(current_price - ceiling_145) / ceiling_145 <= proximity_threshold
         ceiling_hit_360 = abs(current_price - ceiling_360) / ceiling_360 <= proximity_threshold
-        strong_resistance_145 = any(abs(r[0] - current_price) / current_price <= proximity_threshold and r[1] >= strength_threshold for r in resistances_145)
-        strong_resistance_360 = any(abs(r[0] - current_price) / current_price <= proximity_threshold and r[1] >= strength_threshold for r in resistances_360)
+        strong_resistance_145 = any(abs(current_price - r) / current_price <= proximity_threshold for r in [resistance])
+        strong_resistance_360 = any(abs(current_price - r) / current_price <= proximity_threshold for r in [resistance])
 
         if (ceiling_hit_145 or ceiling_hit_360) and (strong_resistance_145 or strong_resistance_360):
             entry = float(current_price)
-            
-            # پیدا کردن نزدیک‌ترین سطح مقاومتی برای حد ضرر
-            all_resistances = resistances_145 + resistances_360
-            all_resistances.sort(key=lambda x: abs(x[0] - entry))
-            nearest_resistance = next((r[0] for r in all_resistances if r[0] > entry), entry * 1.05)
-            
-            # پیدا کردن نزدیک‌ترین سطح حمایتی برای حد سود
-            all_supports = supports_145 + supports_360
-            all_supports.sort(key=lambda x: abs(x[0] - entry))
-            nearest_support = next((s[0] for s in all_supports if s[0] < entry), entry * 0.9)
-            
-            sl = nearest_resistance * 1.01  # یه مقدار بالاتر از سطح مقاومتی
-            tp = nearest_support * 1.01  # یه مقدار بالاتر از سطح حمایتی
+            nearest_resistance = resistance * 1.01
+            nearest_support = support * 1.01
+            sl = nearest_resistance
+            tp = nearest_support
             rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
             position_size = calculate_position_size(10000, 1, entry, sl)
             result = {
@@ -970,6 +938,7 @@ async def analyze_symbol(exchange, symbol, tf):
                 "ریسک به ریوارد": rr,
                 "حجم پوزیشن": position_size,
                 "سطح اطمینان": 70,
+                "قدرت سیگنال": "متوسط",
                 "تحلیل": f"قیمت به سقف رگرسیون رسید (۱۴۵ روز: ceiling={ceiling_145:.2f}, ۳۶۰ روز: ceiling={ceiling_360:.2f}) | سطح مقاومتی قوی وجود دارد",
                 "روانشناسی": psych_short,
                 "روند بازار": "نزولی (بر اساس رگرسیون)",
@@ -978,7 +947,7 @@ async def analyze_symbol(exchange, symbol, tf):
             logging.info(f"سیگنال نوسان‌گیری Short (رگرسیون) برای {symbol} @ {tf}: {result}")
             return result
 
-    logging.info(f"نماد {symbol} @ {tf}: هیچ سیگنالی (حتی از رگرسیون خطی) تولید نشد")
+    logging.info(f"نماد {symbol} @ {tf}: هیچ سیگنالی تولید نشد")
     return None
 
 # اسکن همه نمادها
