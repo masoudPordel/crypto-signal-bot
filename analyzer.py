@@ -386,6 +386,9 @@ async def check_liquidity(exchange, symbol):
         ticker = await exchange.fetch_ticker(symbol)
         bid = ticker['bid']
         ask = ticker['ask']
+        if bid is None or ask is None or bid == 0 or ask == 0:
+            logging.warning(f"داده نقدینگی برای {symbol} نامعتبر است: bid={bid}, ask={ask}")
+            return float('inf')
         spread = (ask - bid) / ((bid + ask) / 2)
         logging.info(f"نماد {symbol}: اسپرد={spread:.4f}, آستانه={LIQUIDITY_SPREAD_THRESHOLD}")
         liquidity_passed = spread < LIQUIDITY_SPREAD_THRESHOLD
@@ -688,33 +691,52 @@ async def analyze_symbol(exchange, symbol, tf):
     logging.info(f"روند بازار: long_trend={long_trend}, short_trend={short_trend}")
 
     # تأیید چندتایم‌فریمی
-    mtf_condition = await multi_timeframe_confirmation(df, symbol, exchange)
-    logging.info(f"تأیید چندتایم‌فریمی: passed={mtf_condition}")
+    try:
+        mtf_condition = await multi_timeframe_confirmation(df, symbol, exchange)
+        logging.info(f"تأیید چندتایم‌فریمی: passed={mtf_condition}")
+    except Exception as e:
+        mtf_condition = False
+        logging.error(f"خطا در تأیید چندتایم‌فریمی برای {symbol} @ {tf}: {e}")
     if not mtf_condition:
         logging.warning(f"رد به خاطر تأیید چندتایم‌فریمی برای {symbol} @ {tf}")
 
     # محاسبه سطوح حمایت و مقاومت
-    support, resistance, vol_levels = PatternDetector.detect_support_resistance(df)
-    distance_to_resistance = abs(last["close"] - resistance) / last["close"]
-    distance_to_support = abs(last["close"] - support) / last["close"]
-    logging.info(f"سطوح حمایت/مقاومت: support={support:.2f}, resistance={resistance:.2f}, close={last['close']:.2f}")
-    logging.info(f"فاصله‌ها: dist_to_resistance={distance_to_resistance:.4f}, dist_to_support={distance_to_support:.4f}")
-    sr_condition_long = distance_to_resistance > S_R_BUFFER
-    sr_condition_short = distance_to_support > S_R_BUFFER
-    if not sr_condition_long and long_trend:
-        SR_REJECTS += 1
-        logging.warning(f"رد Long به خاطر نزدیکی به مقاومت برای {symbol} @ {tf}: distance={distance_to_resistance:.4f} < {S_R_BUFFER}")
-    if not sr_condition_short and short_trend:
-        SR_REJECTS += 1
-        logging.warning(f"رد Short به خاطر نزدیکی به حمایت برای {symbol} @ {tf}: distance={distance_to_support:.4f} < {S_R_BUFFER}")
+    try:
+        support, resistance, vol_levels = PatternDetector.detect_support_resistance(df)
+        distance_to_resistance = abs(last["close"] - resistance) / last["close"]
+        distance_to_support = abs(last["close"] - support) / last["close"]
+        logging.info(f"سطوح حمایت/مقاومت: support={support:.2f}, resistance={resistance:.2f}, close={last['close']:.2f}")
+        logging.info(f"فاصله‌ها: dist_to_resistance={distance_to_resistance:.4f}, dist_to_support={distance_to_support:.4f}")
+        sr_condition_long = distance_to_resistance > S_R_BUFFER
+        sr_condition_short = distance_to_support > S_R_BUFFER
+        logging.info(f"شرایط حمایت/مقاومت: sr_condition_long={sr_condition_long}, sr_condition_short={sr_condition_short}")
+        if not sr_condition_long and long_trend:
+            SR_REJECTS += 1
+            logging.warning(f"رد Long به خاطر نزدیکی به مقاومت برای {symbol} @ {tf}: distance={distance_to_resistance:.4f} < {S_R_BUFFER}")
+        if not sr_condition_short and short_trend:
+            SR_REJECTS += 1
+            logging.warning(f"رد Short به خاطر نزدیکی به حمایت برای {symbol} @ {tf}: distance={distance_to_support:.4f} < {S_R_BUFFER}")
+    except Exception as e:
+        logging.error(f"خطا در محاسبه حمایت/مقاومت برای {symbol} @ {tf}: {e}")
+        support, resistance = 0.01, 0.01
+        distance_to_resistance, distance_to_support = 0.0, 0.0
+        sr_condition_long = sr_condition_short = True
 
     # بررسی نقدینگی
-    spread = await check_liquidity(exchange, symbol)
-    liquidity_passed = spread < LIQUIDITY_SPREAD_THRESHOLD
-    logging.info(f"نقدینگی: spread={spread:.4f}, threshold={LIQUIDITY_SPREAD_THRESHOLD}, liquidity_passed={liquidity_passed}")
-    if not liquidity_passed:
-        LIQUIDITY_REJECTS += 1
-        logging.warning(f"رد به خاطر نقدینگی کم برای {symbol} @ {tf}: spread={spread:.4f}")
+    try:
+        spread = await check_liquidity(exchange, symbol)
+        liquidity_passed = spread < LIQUIDITY_SPREAD_THRESHOLD
+        logging.info(f"نقدینگی: spread={spread:.4f}, threshold={LIQUIDITY_SPREAD_THRESHOLD}, liquidity_passed={liquidity_passed}")
+        if spread == float('inf'):
+            spread = 0.0  # مقدار پیش‌فرض برای جلوگیری از خطا در Decision Tree
+            logging.warning(f"اسپرد برای {symbol} نامعتبر بود، مقدار پیش‌فرض 0.0 استفاده شد")
+        if not liquidity_passed:
+            LIQUIDITY_REJECTS += 1
+            logging.warning(f"رد به خاطر نقدینگی کم برای {symbol} @ {tf}: spread={spread:.4f}")
+    except Exception as e:
+        logging.error(f"خطا در بررسی نقدینگی برای {symbol} @ {tf}: {e}")
+        spread = 0.0
+        liquidity_passed = True
 
     # امتیاز فاندامنتال
     fundamental_score = check_market_events(symbol.split('/')[0])
@@ -784,9 +806,24 @@ async def analyze_symbol(exchange, symbol, tf):
     logging.info(f"امتیازها: score_long={score_long}, score_short={score_short}, fundamental_score={fundamental_score}")
 
     # فیلتر Decision Tree
-    features = [last["RSI"], last["ADX"], current_vol / vol_avg, volatility, distance_to_resistance, distance_to_support, spread, 10 if psych_long == "اشباع فروش" else -10 if psych_long == "اشباع خرید" else 0, 10 if psych_short == "اشباع خرید" else -10 if psych_short == "اشباع فروش" else 0]
-    prediction_result = signal_filter.predict(features)
-    logging.info(f"فیلتر Decision Tree: features={features}, prediction_result={prediction_result}")
+    try:
+        features = [
+            last["RSI"],
+            last["ADX"],
+            current_vol / vol_avg,
+            volatility,
+            distance_to_resistance,
+            distance_to_support,
+            spread,
+            10 if psych_long == "اشباع فروش" else -10 if psych_long == "اشباع خرید" else 0,
+            10 if psych_short == "اشباع خرید" else -10 if psych_short == "اشباع فروش" else 0
+        ]
+        prediction_result = signal_filter.predict(features)
+        logging.info(f"فیلتر Decision Tree: features={features}, prediction_result={prediction_result}")
+    except Exception as e:
+        logging.error(f"خطا در فیلتر Decision Tree برای {symbol} @ {tf}: {e}")
+        prediction_result = True
+
     if not prediction_result:
         logging.warning(f"رد به خاطر فیلتر Decision Tree برای {symbol} @ {tf}: result={prediction_result}")
         return None
@@ -881,83 +918,81 @@ async def analyze_symbol(exchange, symbol, tf):
         for condition, passed in short_conditions.items():
             if not passed:
                 logging.info(f" - شرط Short رد شد: {condition}={passed}")
-        return None
+        # استراتژی رگرسیون خطی (حفظ شده)
+        if tf == "1d":
+            floor_145, ceiling_145, slope_145, current_price = IndicatorCalculator.compute_linear_regression(df, 145)
+            floor_360, ceiling_360, slope_360, _ = IndicatorCalculator.compute_linear_regression(df, 360)
 
-    # استراتژی رگرسیون خطی (حفظ شده)
-    if tf == "1d" and result is None:
-        floor_145, ceiling_145, slope_145, current_price = IndicatorCalculator.compute_linear_regression(df, 145)
-        floor_360, ceiling_360, slope_360, _ = IndicatorCalculator.compute_linear_regression(df, 360)
+            if floor_145 is None or floor_360 is None:
+                logging.warning(f"محاسبه رگرسیون خطی برای {symbol} @ {tf} ناموفق بود.")
+                return None
 
-        if floor_145 is None or floor_360 is None:
-            logging.warning(f"محاسبه رگرسیون خطی برای {symbol} @ {tf} ناموفق بود.")
-            return None
+            proximity_threshold = 0.02
+            strength_threshold = 10
 
-        proximity_threshold = 0.02
-        strength_threshold = 10
+            floor_hit_145 = abs(current_price - floor_145) / floor_145 <= proximity_threshold
+            floor_hit_360 = abs(current_price - floor_360) / floor_360 <= proximity_threshold
+            strong_support_145 = abs(current_price - support) / current_price <= proximity_threshold
+            strong_support_360 = abs(current_price - support) / current_price <= proximity_threshold
 
-        floor_hit_145 = abs(current_price - floor_145) / floor_145 <= proximity_threshold
-        floor_hit_360 = abs(current_price - floor_360) / floor_360 <= proximity_threshold
-        strong_support_145 = abs(current_price - support) / current_price <= proximity_threshold
-        strong_support_360 = abs(current_price - support) / current_price <= proximity_threshold
+            if (floor_hit_145 or floor_hit_360) and (strong_support_145 or strong_support_360):
+                entry = float(current_price)
+                nearest_support = support * 0.99
+                nearest_resistance = resistance * 0.99
+                sl = nearest_support
+                tp = nearest_resistance
+                rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
+                position_size = calculate_position_size(10000, 1, entry, sl)
+                result = {
+                    "نوع معامله": "Long (نوسان‌گیری رگرسیون)",
+                    "نماد": symbol,
+                    "تایم‌فریم": tf,
+                    "قیمت ورود": entry,
+                    "حد ضرر": sl,
+                    "هدف سود": tp,
+                    "ریسک به ریوارد": rr,
+                    "حجم پوزیشن": position_size,
+                    "سطح اطمینان": 70,
+                    "قدرت سیگنال": "متوسط",
+                    "تحلیل": f"قیمت به کف رگرسیون رسید (۱۴۵ روز: floor={floor_145:.2f}, ۳۶۰ روز: floor={floor_360:.2f}) | سطح حمایتی قوی وجود دارد",
+                    "روانشناسی": psych_long,
+                    "روند بازار": "صعودی (بر اساس رگرسیون)",
+                    "فاندامنتال": f"امتیاز: {fundamental_score}"
+                }
+                logging.info(f"سیگنال نوسان‌گیری Long (رگرسیون) برای {symbol} @ {tf}: {result}")
+                return result
 
-        if (floor_hit_145 or floor_hit_360) and (strong_support_145 or strong_support_360):
-            entry = float(current_price)
-            nearest_support = support * 0.99
-            nearest_resistance = resistance * 0.99
-            sl = nearest_support
-            tp = nearest_resistance
-            rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
-            position_size = calculate_position_size(10000, 1, entry, sl)
-            result = {
-                "نوع معامله": "Long (نوسان‌گیری رگرسیون)",
-                "نماد": symbol,
-                "تایم‌فریم": tf,
-                "قیمت ورود": entry,
-                "حد ضرر": sl,
-                "هدف سود": tp,
-                "ریسک به ریوارد": rr,
-                "حجم پوزیشن": position_size,
-                "سطح اطمینان": 70,
-                "قدرت سیگنال": "متوسط",
-                "تحلیل": f"قیمت به کف رگرسیون رسید (۱۴۵ روز: floor={floor_145:.2f}, ۳۶۰ روز: floor={floor_360:.2f}) | سطح حمایتی قوی وجود دارد",
-                "روانشناسی": psych_long,
-                "روند بازار": "صعودی (بر اساس رگرسیون)",
-                "فاندامنتال": f"امتیاز: {fundamental_score}"
-            }
-            logging.info(f"سیگنال نوسان‌گیری Long (رگرسیون) برای {symbol} @ {tf}: {result}")
-            return result
+            ceiling_hit_145 = abs(current_price - ceiling_145) / ceiling_145 <= proximity_threshold
+            ceiling_hit_360 = abs(current_price - ceiling_360) / ceiling_360 <= proximity_threshold
+            strong_resistance_145 = abs(current_price - resistance) / current_price <= proximity_threshold
+            strong_resistance_360 = abs(current_price - resistance) / current_price <= proximity_threshold
 
-        ceiling_hit_145 = abs(current_price - ceiling_145) / ceiling_145 <= proximity_threshold
-        ceiling_hit_360 = abs(current_price - ceiling_360) / ceiling_360 <= proximity_threshold
-        strong_resistance_145 = abs(current_price - resistance) / current_price <= proximity_threshold
-        strong_resistance_360 = abs(current_price - resistance) / current_price <= proximity_threshold
-
-        if (ceiling_hit_145 or ceiling_hit_360) and (strong_resistance_145 or strong_resistance_360):
-            entry = float(current_price)
-            nearest_resistance = resistance * 1.01
-            nearest_support = support * 1.01
-            sl = nearest_resistance
-            tp = nearest_support
-            rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
-            position_size = calculate_position_size(10000, 1, entry, sl)
-            result = {
-                "نوع معامله": "Short (نوسان‌گیری رگرسیون)",
-                "نماد": symbol,
-                "تایم‌فریم": tf,
-                "قیمت ورود": entry,
-                "حد ضرر": sl,
-                "هدف سود": tp,
-                "ریسک به ریوارد": rr,
-                "حجم پوزیشن": position_size,
-                "سطح اطمینان": 70,
-                "قدرت سیگنال": "متوسط",
-                "تحلیل": f"قیمت به سقف رگرسیون رسید (۱۴۵ روز: ceiling={ceiling_145:.2f}, ۳۶۰ روز: ceiling={ceiling_360:.2f}) | سطح مقاومتی قوی وجود دارد",
-                "روانشناسی": psych_short,
-                "روند بازار": "نزولی (بر اساس رگرسیون)",
-                "فاندامنتال": f"امتیاز: {fundamental_score}"
-            }
-            logging.info(f"سیگنال نوسان‌گیری Short (رگرسیون) برای {symbol} @ {tf}: {result}")
-            return result
+            if (ceiling_hit_145 or ceiling_hit_360) and (strong_resistance_145 or strong_resistance_360):
+                entry = float(current_price)
+                nearest_resistance = resistance * 1.01
+                nearest_support = support * 1.01
+                sl = nearest_resistance
+                tp = nearest_support
+                rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
+                position_size = calculate_position_size(10000, 1, entry, sl)
+                result = {
+                    "نوع معامله": "Short (نوسان‌گیری رگرسیون)",
+                    "نماد": symbol,
+                    "تایم‌فریم": tf,
+                    "قیمت ورود": entry,
+                    "حد ضرر": sl,
+                    "هدف سود": tp,
+                    "ریسک به ریوارد": rr,
+                    "حجم پوزیشن": position_size,
+                    "سطح اطمینان": 70,
+                    "قدرت سیگنال": "متوسط",
+                    "تحلیل": f"قیمت به سقف رگرسیون رسید (۱۴۵ روز: ceiling={ceiling_145:.2f}, ۳۶۰ روز: ceiling={ceiling_360:.2f}) | سطح مقاومتی قوی وجود دارد",
+                    "روانشناسی": psych_short,
+                    "روند بازار": "نزولی (بر اساس رگرسیون)",
+                    "فاندامنتال": f"امتیاز: {fundamental_score}"
+                }
+                logging.info(f"سیگنال نوسان‌گیری Short (رگرسیون) برای {symbol} @ {tf}: {result}")
+                return result
 
     logging.info(f"هیچ سیگنالی برای {symbol} @ {tf} تولید نشد")
     return None
