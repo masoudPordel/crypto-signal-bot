@@ -295,38 +295,38 @@ class PatternDetector:
         return broken
 
     @staticmethod
-def is_valid_breakout(df, level, direction="support", vol_threshold=1.0):
-last_vol = df['volume'].iloc[-1]
-vol_avg = df['volume'].rolling(VOLUME_WINDOW).mean().iloc[-1]
-vol_condition = last_vol >= vol_threshold * vol_avg
-logging.debug(f"بررسی حجم برای شکست: last_vol={last_vol:.2f}, vol_avg={vol_avg:.2f}, threshold={vol_threshold * vol_avg:.2f}, vol_condition={vol_condition}")
-if not vol_condition:
-logging.warning(f"شکست رد شد: حجم ناکافی (current={last_vol:.2f}, threshold={vol_threshold * vol_avg:.2f})")
-return False
-if direction == "support":
-support_broken = df['close'].iloc[-1] < level # فقط آخرین کندل رو بررسی می‌کنیم
-logging.debug(f"بررسی شکست حمایت: support_broken={support_broken}")
-if not support_broken:
-logging.warning(f"شکست رد شد: حمایت شکسته نشده")
-return False
-if direction == "resistance":
-resistance_broken = df['close'].iloc[-1] > level # فقط آخرین کندل رو بررسی می‌کنیم
-logging.debug(f"بررسی شکست مقاومت: resistance_broken={resistance_broken}")
-if not resistance_broken:
-logging.warning(f"شکست رد شد: مقاومت شکسته نشده")
-return False
-last_candle = df.iloc[-1]
-body = abs(last_candle['close'] - last_candle['open'])
-wick_lower = min(last_candle['close'], last_candle['open']) - last_candle['low']
-wick_upper = last_candle['high'] - max(last_candle['close'], last_candle['open'])
-candle_condition = body >= 0.6 * (last_candle['high'] - last_candle['low']) and wick_lower <= 0.2 * body and wick_upper <= 0.2 * body
-logging.debug(f"بررسی کندل شکست: body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f}, candle_condition={candle_condition}")
-if not candle_condition:
-logging.warning(f"شکست رد شد: کندل ضعیف (body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f})")
-return False
-logging.info(f"شکست معتبر: direction={direction}, level={level:.2f}")
-return True
-    
+    def is_valid_breakout(df, level, direction="support", vol_threshold=1.0):
+     last_vol = df['volume'].iloc[-1]
+     vol_avg = df['volume'].rolling(VOLUME_WINDOW).mean().iloc[-1]
+     vol_condition = last_vol >= vol_threshold * vol_avg
+     logging.debug(f"بررسی حجم برای شکست: last_vol={last_vol:.2f}, vol_avg={vol_avg:.2f}, threshold={vol_threshold * vol_avg:.2f}, vol_condition={vol_condition}")
+     if not vol_condition:
+        logging.warning(f"شکست رد شد: حجم ناکافی (current={last_vol:.2f}, threshold={vol_threshold * vol_avg:.2f})")
+        return False
+     if direction == "support":
+        support_broken = df['close'].iloc[-1] < level # فقط آخرین کندل رو بررسی می‌کنیم
+        logging.debug(f"بررسی شکست حمایت: support_broken={support_broken}")
+        if not support_broken:
+           logging.warning(f"شکست رد شد: حمایت شکسته نشده")
+           return False
+        if direction == "resistance":
+           resistance_broken = df['close'].iloc[-1] > level # فقط آخرین کندل رو بررسی می‌کنیم
+           logging.debug(f"بررسی شکست مقاومت: resistance_broken={resistance_broken}")
+           if not resistance_broken:
+              logging.warning(f"شکست رد شد: مقاومت شکسته نشده")
+              return False
+         last_candle = df.iloc[-1]
+         body = abs(last_candle['close'] - last_candle['open'])
+         wick_lower = min(last_candle['close'], last_candle['open']) - last_candle['low']
+         wick_upper = last_candle['high'] - max(last_candle['close'], last_candle['open'])
+         candle_condition = body >= 0.6 * (last_candle['high'] - last_candle['low']) and wick_lower <= 0.2 * body and wick_upper <= 0.2 * body
+         logging.debug(f"بررسی کندل شکست: body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f}, candle_condition={candle_condition}")
+         if not candle_condition:
+            logging.warning(f"شکست رد شد: کندل ضعیف (body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f})")
+            return False
+            logging.info(f"شکست معتبر: direction={direction}, level={level:.2f}")
+            return True
+
 # فیلتر نهایی با Decision Tree
 class SignalFilter:
     def __init__(self):
