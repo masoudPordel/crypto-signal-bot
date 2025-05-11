@@ -516,10 +516,10 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=51):
         try:
             data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
             df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume"])
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)  # تبدیل به tz-aware
             df.set_index("timestamp", inplace=True)
-            current_time = pd.Timestamp.now(tz='UTC')
-            if len(df) > 0 and (current_time - df.index[-1]).total_seconds() < 60:
+            current_time = pd.Timestamp.now(tz='UTC')  # زمان فعلی با tz-aware
+            if len(df) > 0 and (current_time - df.index[-1]).total_seconds() < 60:  # مقایسه tz-aware
                 df = df.iloc[:-1].copy()
                 logging.debug(f"کندل ناقص برای {symbol} @ {tf} حذف شد")
             CACHE[key] = {"data": df.copy(), "time": now}
