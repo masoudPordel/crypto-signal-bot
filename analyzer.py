@@ -13,14 +13,16 @@ import logging
 from datetime import datetime, timedelta
 from sklearn.tree import DecisionTreeClassifier
 
-# تنظیمات logging
+# تنظیمات لاگ
 logging.basicConfig(
-level=logging.DEBUG,  # تغییر از INFO به DEBUG
-format='%(asctime)s - %(levelname)s - %(message)s',
-handlers=[
-    logging.FileHandler("debug.log", encoding="utf-8"),  # ذخیره لاگ‌ها توی فایل
-    logging.StreamHandler()  # نمایش لاگ‌ها توی کنسول
-]
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+    
+        logging.FileHandler("debug.log", encoding="utf-8"),  # ذخیره لاگ‌ها توی فایل
+        
+        logging.StreamHandler()  # نمایش لاگ‌ها توی کنسول
+    ]
 )
 # کلیدهای API
 CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
