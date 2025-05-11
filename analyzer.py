@@ -13,7 +13,8 @@ import logging
 from datetime import datetime, timedelta
 from sklearn.tree import DecisionTreeClassifier
 
-# تنظیمات logging.basicConfig(
+# تنظیمات logging.basicConfig(# تنظیمات logging
+logging.basicConfig(
     level=logging.DEBUG,  # تغییر از INFO به DEBUG
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
