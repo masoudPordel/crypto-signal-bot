@@ -516,10 +516,10 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=51):
         try:
             data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
             df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume"])
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)  # تبدیل به tz-aware
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
             df.set_index("timestamp", inplace=True)
-            current_time = pd.Timestamp.now(tz='UTC')  # زمان فعلی با tz-aware
-            if len(df) > 0 and (current_time - df.index[-1]).total_seconds() < 60:  # مقایسه tz-aware
+            current_time = pd.Timestamp.now(tz='UTC')
+            if len(df) > 0 and (current_time - df.index[-1]).total_seconds() < 60:
                 df = df.iloc[:-1].copy()
                 logging.debug(f"کندل ناقص برای {symbol} @ {tf} حذف شد")
             CACHE[key] = {"data": df.copy(), "time": now}
@@ -631,9 +631,7 @@ async def analyze_symbol(exchange, symbol, tf):
     dynamic_scaling = await dynamic_volume_scaling(exchange, symbol, tf, df)
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = dynamic_scaling.get(tf, 0.2)
-    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor * 0.01)
-    if dynamic_threshold <= 0:
-        dynamic_threshold = VOLUME_THRESHOLD * 10
+    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor * 0.01, 0.01)  # حداقل 0.01
     current_vol = df["volume"].iloc[-1]
     logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor:.4f}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}")
     
@@ -766,18 +764,18 @@ async def analyze_symbol(exchange, symbol, tf):
     logging.debug(f"بررسی تولید سیگنال Short: score_short={score_short}, short_trend={short_trend}, has_trend={has_trend}, psych_short={psych_short}, ADX={last['ADX']}")
 
     # بررسی سیگنال Long
-    long_score_condition = score_long >= 0
-    long_trend_condition = long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)
-    long_has_trend_condition = has_trend
     long_indicators_condition = confirm_combined_indicators(df, "Long")
+    logging.debug(f"تأیید اندیکاتورها برای Long: {long_indicators_condition}")
     long_mtf_condition = await multi_timeframe_confirmation(df, symbol, exchange)
+    logging.debug(f"تأیید مولتی تایم‌فریم برای Long: {long_mtf_condition}")
     long_breakout_condition = PatternDetector.is_valid_breakout(df, resistance, direction="resistance") if long_indicators_condition and long_mtf_condition else False
+    logging.debug(f"تأیید شکست برای Long: {long_breakout_condition}")
     long_filter_condition = signal_filter.predict(features) if long_breakout_condition else False
 
-    logging.debug(f"شرایط سیگنال Long برای {symbol} @ {tf}: score_long>=0={long_score_condition}, trend_condition={long_trend_condition}, has_trend={long_has_trend_condition}, indicators={long_indicators_condition}, mtf={long_mtf_condition}, breakout={long_breakout_condition}, filter={long_filter_condition}")
+    logging.debug(f"شرایط سیگنال Long برای {symbol} @ {tf}: score_long>=0={score_long >= 0}, trend_condition={long_trend or (psych_long == 'اشباع فروش' and last['ADX'] < ADX_THRESHOLD)}, has_trend={has_trend}, indicators={long_indicators_condition}, mtf={long_mtf_condition}, breakout={long_breakout_condition}, filter={long_filter_condition}")
 
-    if (long_score_condition and long_trend_condition and long_has_trend_condition and 
-        long_indicators_condition and long_mtf_condition and long_breakout_condition and long_filter_condition):
+    if (score_long >= 0 and (long_trend or (psych_long == "اشباع فروش" and last["ADX"] < ADX_THRESHOLD)) and 
+        has_trend and long_indicators_condition and long_mtf_condition and long_breakout_condition and long_filter_condition):
         entry = float(last["close"])
         atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
         sl = entry - 2 * atr_avg
@@ -803,19 +801,19 @@ async def analyze_symbol(exchange, symbol, tf):
         return result
 
     # بررسی سیگنال Short
-    short_score_condition = score_short >= 0
-    short_trend_condition = short_trend or psych_short == "اشباع خرید"
-    short_has_trend_condition = has_trend
     short_indicators_condition = confirm_combined_indicators(df, "Short")
+    logging.debug(f"تأیید اندیکاتورها برای Short: {short_indicators_condition}")
     short_mtf_condition = await multi_timeframe_confirmation(df, symbol, exchange)
+    logging.debug(f"تأیید مولتی تایم‌فریم برای Short: {short_mtf_condition}")
     short_divergence_condition = not (bearish_rsi_div or bearish_macd_div or PatternDetector.detect_hammer(df).iloc[-1] or (last["Engulfing"] and last["close"] > last["open"]))
     short_breakout_condition = PatternDetector.is_valid_breakout(df, support, direction="support") if short_indicators_condition and short_mtf_condition and short_divergence_condition else False
+    logging.debug(f"تأیید شکست برای Short: {short_breakout_condition}")
     short_filter_condition = signal_filter.predict(features) if short_breakout_condition else False
 
     logging.debug(f"شرایط سیگنال Short برای {symbol} @ {tf}: score_short>=0={short_score_condition}, trend_condition={short_trend_condition}, has_trend={short_has_trend_condition}, indicators={short_indicators_condition}, mtf={short_mtf_condition}, divergence={short_divergence_condition}, breakout={short_breakout_condition}, filter={short_filter_condition}")
 
-    if (short_score_condition and short_trend_condition and short_has_trend_condition and 
-        short_indicators_condition and short_mtf_condition and short_divergence_condition and 
+    if (score_short >= 0 and (short_trend or psych_short == "اشباع خرید") and 
+        has_trend and short_indicators_condition and short_mtf_condition and short_divergence_condition and 
         short_breakout_condition and short_filter_condition):
         entry = float(last["close"])
         atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
