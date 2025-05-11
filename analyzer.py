@@ -49,12 +49,12 @@ def get_coin_id(symbol):
 
 # پارامترهای اصلی (تغییر آستانه‌ها برای شل کردن فیلترها)
 VOLUME_WINDOW = 20
-S_R_BUFFER = 0.002
+S_R_BUFFER = 0.01
 ADX_THRESHOLD = 10  # از 15 به 10 تغییر کرد
 ADX_TREND_THRESHOLD = 20  # از 25 به 20 تغییر کرد
 CACHE = {}
 CACHE_TTL = 300
-VOLUME_THRESHOLD = 0.0001
+VOLUME_THRESHOLD = 0.002
 MAX_CONCURRENT_REQUESTS = 15
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
