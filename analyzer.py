@@ -13,11 +13,14 @@ import logging
 from datetime import datetime, timedelta
 from sklearn.tree import DecisionTreeClassifier
 
+# تنظیمات logging
 logging.basicConfig(
-level=logging.DEBUG, # تغییر به DEBUG
-format="%(asctime)s - %(levelname)s - %(message)s",
-handlers=[logging.StreamHandler()],
-force=True
+    level=logging.DEBUG,  # تغییر از INFO به DEBUG
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("debug.log", encoding="utf-8"),  # ذخیره لاگ‌ها توی فایل
+        logging.StreamHandler()  # نمایش لاگ‌ها توی کنسول
+    ]
 )
 
 # کلیدهای API
@@ -296,36 +299,36 @@ class PatternDetector:
 
     @staticmethod
     def is_valid_breakout(df, level, direction="support", vol_threshold=1.0):
-     last_vol = df['volume'].iloc[-1]
-     vol_avg = df['volume'].rolling(VOLUME_WINDOW).mean().iloc[-1]
-     vol_condition = last_vol >= vol_threshold * vol_avg
-     logging.debug(f"بررسی حجم برای شکست: last_vol={last_vol:.2f}, vol_avg={vol_avg:.2f}, threshold={vol_threshold * vol_avg:.2f}, vol_condition={vol_condition}")
-     if not vol_condition:
-        logging.warning(f"شکست رد شد: حجم ناکافی (current={last_vol:.2f}, threshold={vol_threshold * vol_avg:.2f})")
-        return False
-     if direction == "support":
-        support_broken = df['close'].iloc[-1] < level # فقط آخرین کندل رو بررسی می‌کنیم
-        logging.debug(f"بررسی شکست حمایت: support_broken={support_broken}")
-        if not support_broken:
-           logging.warning(f"شکست رد شد: حمایت شکسته نشده")
-           return False
+        last_vol = df['volume'].iloc[-1]
+        vol_avg = df['volume'].rolling(VOLUME_WINDOW).mean().iloc[-1]
+        vol_condition = last_vol >= vol_threshold * vol_avg
+        logging.debug(f"بررسی حجم برای شکست: last_vol={last_vol:.2f}, vol_avg={vol_avg:.2f}, threshold={vol_threshold * vol_avg:.2f}, vol_condition={vol_condition}")
+        if not vol_condition:
+            logging.warning(f"شکست رد شد: حجم ناکافی (current={last_vol:.2f}, threshold={vol_threshold * vol_avg:.2f})")
+            return False
+        if direction == "support":
+            support_broken = df['close'].iloc[-1] < level  # فقط آخرین کندل رو بررسی می‌کنیم
+            logging.debug(f"بررسی شکست حمایت: support_broken={support_broken}")
+            if not support_broken:
+                logging.warning(f"شکست رد شد: حمایت شکسته نشده")
+                return False
         if direction == "resistance":
-           resistance_broken = df['close'].iloc[-1] > level # فقط آخرین کندل رو بررسی می‌کنیم
-           logging.debug(f"بررسی شکست مقاومت: resistance_broken={resistance_broken}")
-           if not resistance_broken:
-              logging.warning(f"شکست رد شد: مقاومت شکسته نشده")
-              return False
-         last_candle = df.iloc[-1]
-         body = abs(last_candle['close'] - last_candle['open'])
-         wick_lower = min(last_candle['close'], last_candle['open']) - last_candle['low']
-         wick_upper = last_candle['high'] - max(last_candle['close'], last_candle['open'])
-         candle_condition = body >= 0.6 * (last_candle['high'] - last_candle['low']) and wick_lower <= 0.2 * body and wick_upper <= 0.2 * body
-         logging.debug(f"بررسی کندل شکست: body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f}, candle_condition={candle_condition}")
-         if not candle_condition:
+            resistance_broken = df['close'].iloc[-1] > level  # فقط آخرین کندل رو بررسی می‌کنیم
+            logging.debug(f"بررسی شکست مقاومت: resistance_broken={resistance_broken}")
+            if not resistance_broken:
+                logging.warning(f"شکست رد شد: مقاومت شکسته نشده")
+                return False
+        last_candle = df.iloc[-1]
+        body = abs(last_candle['close'] - last_candle['open'])
+        wick_lower = min(last_candle['close'], last_candle['open']) - last_candle['low']
+        wick_upper = last_candle['high'] - max(last_candle['close'], last_candle['open'])
+        candle_condition = body >= 0.6 * (last_candle['high'] - last_candle['low']) and wick_lower <= 0.2 * body and wick_upper <= 0.2 * body
+        logging.debug(f"بررسی کندل شکست: body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f}, candle_condition={candle_condition}")
+        if not candle_condition:
             logging.warning(f"شکست رد شد: کندل ضعیف (body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f})")
             return False
-            logging.info(f"شکست معتبر: direction={direction}, level={level:.2f}")
-            return True
+        logging.info(f"شکست معتبر: direction={direction}, level={level:.2f}")
+        return True
 
 # فیلتر نهایی با Decision Tree
 class SignalFilter:
@@ -804,7 +807,7 @@ async def analyze_symbol(exchange, symbol, tf):
     logging.debug(f"تأیید شکست برای Short: {short_breakout_condition}")
     short_filter_condition = signal_filter.predict(features) if short_breakout_condition else False
 
-    logging.debug(f"شرایط سیگنال Short برای {symbol} @ {tf}: score_short>=0={short_score_condition}, trend_condition={short_trend_condition}, has_trend={short_has_trend_condition}, indicators={short_indicators_condition}, mtf={short_mtf_condition}, divergence={short_divergence_condition}, breakout={short_breakout_condition}, filter={short_filter_condition}")
+    logging.debug(f"شرایط سیگنال Short برای {symbol} @ {tf}: score_short>=0={score_short >= 0}, trend_condition={short_trend or (psych_short == 'اشباع خرید')}, has_trend={has_trend}, indicators={short_indicators_condition}, mtf={short_mtf_condition}, divergence={short_divergence_condition}, breakout={short_breakout_condition}, filter={short_filter_condition}")
 
     if (score_short >= 0 and (short_trend or psych_short == "اشباع خرید") and 
         has_trend and short_indicators_condition and short_mtf_condition and short_divergence_condition and 
