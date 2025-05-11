@@ -294,7 +294,7 @@ class PatternDetector:
         logging.debug(f"بررسی شکست مقاومت: resistance={resistance:.2f}, recent_closes={recent_closes.tolist()}, broken={broken}")
         return broken
 
-    @@staticmethod
+    @staticmethod
 def is_valid_breakout(df, level, direction="support", vol_threshold=1.0):
 last_vol = df['volume'].iloc[-1]
 vol_avg = df['volume'].rolling(VOLUME_WINDOW).mean().iloc[-1]
