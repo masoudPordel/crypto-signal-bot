@@ -803,7 +803,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_long += 10 if long_breakout_condition else 0
     score_long += 10 if long_filter_condition else 0
 
-    if score_long >= 40:  # حداقل امتیاز برای تولید سیگنال
+    if score_long >= 60:  # حداقل امتیاز برای تولید سیگنال
         entry = float(last["close"])
         atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
         sl = entry - 2 * atr_avg
@@ -843,7 +843,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short += 10 if short_breakout_condition else 0
     score_short += 10 if short_filter_condition else 0
 
-    if score_short >= 40:  # حداقل امتیاز برای تولید سیگنال
+    if score_short >= 60:  # حداقل امتیاز برای تولید سیگنال
         entry = float(last["close"])
         atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
         sl = entry + 2 * atr_avg
