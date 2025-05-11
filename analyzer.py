@@ -45,7 +45,7 @@ def get_coin_id(symbol):
 
 # پارامترهای اصلی
 VOLUME_WINDOW = 20
-S_R_BUFFER = 0.005  # کاهش از 0.01 به 0.005
+S_R_BUFFER = 0.002  # کاهش از 0.005 به 0.002
 ADX_THRESHOLD = 15  # کاهش از 20 به 15
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
@@ -467,7 +467,7 @@ def calculate_position_size(account_balance, risk_percentage, entry, stop_loss):
     logging.info(f"محاسبه حجم پوزیشن: risk_amount={risk_amount:.2f}, distance={distance:.4f}, position_size={position_size:.2f}")
     return round(position_size, 2)
 
-# تأیید مولتی تایم‌فریم
+# تأیید مولتی تایم‌فریم (با لاگ اضافه‌شده)
 async def multi_timeframe_confirmation(df, symbol, exchange):
     weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "30m": 0.1}
     total_weight = 0
@@ -593,7 +593,7 @@ async def dynamic_volume_scaling(exchange, symbol, tf, df):
     logging.info(f"تنظیم پویای VOLUME_SCALING برای {symbol} @ {tf}: volatility_factor={volatility_factor:.4f}, liquidity_factor={liquidity_factor:.4f}, dynamic_factor={dynamic_factor:.4f}, new_scaling={dynamic_scaling}")
     return dynamic_scaling
 
-# تحلیل نماد (به‌روزرسانی‌شده با اضافه کردن لاگ‌های دیباگ)
+# تحلیل نماد (به‌روزرسانی‌شده با تغییرات)
 async def analyze_symbol(exchange, symbol, tf):
     global VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
@@ -607,7 +607,7 @@ async def analyze_symbol(exchange, symbol, tf):
     dynamic_scaling = await dynamic_volume_scaling(exchange, symbol, tf, df)
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = dynamic_scaling.get(tf, 0.2)
-    dynamic_threshold = max(25, VOLUME_THRESHOLD, vol_avg * scale_factor)
+    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor * 0.5)  # تغییر به 0.5 ضریب
     current_vol = df["volume"].iloc[-1]
     logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor:.4f}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}")
     
@@ -647,7 +647,7 @@ async def analyze_symbol(exchange, symbol, tf):
         else:
             logging.warning(f"داده چند تایم‌فریمی برای {symbol} @ {tf} کافی نیست (ادامه می‌دهیم)")
 
-    if volatility <= VOLATILITY_THRESHOLD:  # تغییر از < به <=
+    if volatility <= VOLATILITY_THRESHOLD:
         logging.warning(f"رد {symbol} @ {tf}: نوسان خیلی کم (current={volatility:.4f})")
         return None
     logging.debug(f"فیلتر نوسانات برای {symbol} @ {tf} پاس شد")
@@ -725,7 +725,6 @@ async def analyze_symbol(exchange, symbol, tf):
     has_trend = last["ADX"] > ADX_TREND_THRESHOLD
     features = [rsi, last["ADX"], last["volume"] / vol_avg]
 
-    # اضافه کردن لاگ‌های دیباگ برای دیباگ بهتر
     logging.debug(f"بررسی تولید سیگنال Long: score_long={score_long}, long_trend={long_trend}, has_trend={has_trend}, psych_long={psych_long}, ADX={last['ADX']}")
     logging.debug(f"بررسی تولید سیگنال Short: score_short={score_short}, short_trend={short_trend}, has_trend={has_trend}, psych_short={psych_short}, ADX={last['ADX']}")
 
