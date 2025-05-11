@@ -47,18 +47,18 @@ def get_coin_id(symbol):
         logging.error(f"خطا در دریافت آیدی برای {symbol}: {e}")
         return None
 
-# پارامترهای اصلی
+# پارامترهای اصلی (تغییر آستانه‌ها برای شل کردن فیلترها)
 VOLUME_WINDOW = 20
 S_R_BUFFER = 0.002
-ADX_THRESHOLD = 15
-ADX_TREND_THRESHOLD = 25
+ADX_THRESHOLD = 10  # از 15 به 10 تغییر کرد
+ADX_TREND_THRESHOLD = 20  # از 25 به 20 تغییر کرد
 CACHE = {}
 CACHE_TTL = 600
 VOLUME_THRESHOLD = 0.0001
 MAX_CONCURRENT_REQUESTS = 5
 WAIT_BETWEEN_REQUESTS = 2.0
 WAIT_BETWEEN_CHUNKS = 3
-VOLATILITY_THRESHOLD = 0.003
+VOLATILITY_THRESHOLD = 0.002  # از 0.003 به 0.002 تغییر کرد
 LIQUIDITY_SPREAD_THRESHOLD = 0.01
 
 # ضرایب مقیاس‌پذیری حجم (به صورت پایه، ولی به صورت پویا تنظیم می‌شن)
@@ -322,7 +322,7 @@ class PatternDetector:
         body = abs(last_candle['close'] - last_candle['open'])
         wick_lower = min(last_candle['close'], last_candle['open']) - last_candle['low']
         wick_upper = last_candle['high'] - max(last_candle['close'], last_candle['open'])
-        candle_condition = body >= 0.6 * (last_candle['high'] - last_candle['low']) and wick_lower <= 0.2 * body and wick_upper <= 0.2 * body
+        candle_condition = body >= 0.4 * (last_candle['high'] - last_candle['low']) and wick_lower <= 0.3 * body and wick_upper <= 0.3 * body  # از 0.6 به 0.4 و از 0.2 به 0.3
         logging.debug(f"بررسی کندل شکست: body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f}, candle_condition={candle_condition}")
         if not candle_condition:
             logging.warning(f"شکست رد شد: کندل ضعیف (body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f})")
@@ -446,7 +446,7 @@ def compute_indicators(df):
     logging.info(f"محاسبه اندیکاتورها: RSI={df['RSI'].iloc[-1]:.2f}, ADX={df['ADX'].iloc[-1]:.2f}, Stochastic={df['Stochastic'].iloc[-1]:.2f}, MFI={df['MFI'].iloc[-1]:.2f}")
     return df
 
-# تأیید اندیکاتورهای ترکیبی
+# تأیید اندیکاتورهای ترکیبی (تغییر آستانه RSI)
 def confirm_combined_indicators(df, trend_type):
     global symbol, tf
     last = df.iloc[-1]
@@ -456,10 +456,10 @@ def confirm_combined_indicators(df, trend_type):
     bearish_engulf = last["Engulfing"] and last["close"] < last["open"]
     macd_cross_long = df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1]
     macd_cross_short = df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1]
-    if rsi > 75:
+    if rsi > 80:  # از 75 به 80 تغییر کرد
         logging.warning(f"رد {symbol} @ {tf}: RSI خیلی بالا (RSI={rsi:.2f})")
         return False
-    if rsi < 20:
+    if rsi < 15:  # از 20 به 15 تغییر کرد
         logging.warning(f"رد {symbol} @ {tf}: RSI خیلی پایین (RSI={rsi:.2f})")
         return False
     if trend_type == "Long":
@@ -479,7 +479,7 @@ def calculate_position_size(account_balance, risk_percentage, entry, stop_loss):
     logging.info(f"محاسبه حجم پوزیشن: risk_amount={risk_amount:.2f}, distance={distance:.4f}, position_size={position_size:.2f}")
     return round(position_size, 2)
 
-# تأیید مولتی تایم‌فریم
+# تأیید مولتی تایم‌فریم (تغییر آستانه)
 async def multi_timeframe_confirmation(df, symbol, exchange):
     weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "30m": 0.1}
     total_weight = 0
@@ -496,7 +496,7 @@ async def multi_timeframe_confirmation(df, symbol, exchange):
             logging.debug(f"داده برای تایم‌فریم {tf} کافی نیست، وزن {weight} نادیده گرفته شد")
         total_weight += weight
     final_score = trend_score / total_weight if total_weight > 0 else 0
-    passed = abs(final_score) >= 0.5
+    passed = abs(final_score) >= 0.3  # از 0.5 به 0.3 تغییر کرد
     logging.debug(f"نتیجه نهایی مولتی تایم‌فریم برای {symbol}: trend_score={trend_score:.2f}, total_weight={total_weight:.2f}, final_score={final_score:.2f}, passed={passed}")
     return passed
 
@@ -583,7 +583,7 @@ X_train = np.array([[30, 25, 2], [70, 20, 1], [50, 30, 1.5], [20, 40, 3]])
 y_train = np.array([1, 0, 0, 1])
 signal_filter.train(X_train, y_train)
 
-# تابع تنظیم پویای ضرایب
+# تابع تنظیم پویای ضرایب (تغییر scale_factor برای شل کردن)
 async def dynamic_volume_scaling(exchange, symbol, tf, df):
     atr = IndicatorCalculator.compute_atr(df).iloc[-1]
     volatility_factor = atr / df["close"].iloc[-1]
@@ -628,7 +628,7 @@ async def analyze_symbol(exchange, symbol, tf):
     dynamic_scaling = await dynamic_volume_scaling(exchange, symbol, tf, df)
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = dynamic_scaling.get(tf, 0.2)
-    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor * 0.01, 0.01)  # حداقل 0.01
+    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor * 0.005, 0.01)  # از 0.01 به 0.005 تغییر کرد
     current_vol = df["volume"].iloc[-1]
     logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor:.4f}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}")
     
