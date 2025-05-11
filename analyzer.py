@@ -45,12 +45,12 @@ def get_coin_id(symbol):
 
 # پارامترهای اصلی
 VOLUME_WINDOW = 20
-S_R_BUFFER = 0.002  # کاهش از 0.005 به 0.002
-ADX_THRESHOLD = 15  # کاهش از 20 به 15
+S_R_BUFFER = 0.002
+ADX_THRESHOLD = 15
 ADX_TREND_THRESHOLD = 25
 CACHE = {}
 CACHE_TTL = 600
-VOLUME_THRESHOLD = 0.001  # کاهش از 0.01 به 0.001
+VOLUME_THRESHOLD = 0.0001  # تغییر از 0.001 به 0.0001
 MAX_CONCURRENT_REQUESTS = 5
 WAIT_BETWEEN_REQUESTS = 2.0
 WAIT_BETWEEN_CHUNKS = 3
@@ -451,11 +451,11 @@ def confirm_combined_indicators(df, trend_type):
         logging.warning(f"رد {symbol} @ {tf}: RSI خیلی پایین (RSI={rsi:.2f})")
         return False
     if trend_type == "Long":
-        conditions = [rsi < 40, macd_cross_long, bullish_engulf]
+        conditions = [rsi < 50, macd_cross_long, bullish_engulf]  # تغییر از 40 به 50
         logging.debug(f"تأیید Long: conditions={conditions}")
         return sum(conditions) >= 1
     else:
-        conditions = [rsi > 70, macd_cross_short, bearish_engulf]
+        conditions = [rsi > 60, macd_cross_short, bearish_engulf]  # تغییر از 70 به 60
         logging.debug(f"تأیید Short: conditions={conditions}")
         return sum(conditions) >= 1
 
@@ -588,7 +588,7 @@ async def dynamic_volume_scaling(exchange, symbol, tf, df):
         "1d": 0.20
     }
     dynamic_factor = volatility_weight * liquidity_factor * (total_depth / 1000)
-    dynamic_factor = min(dynamic_factor, 10)
+    dynamic_factor = min(dynamic_factor, 5)  # سقف 5 برای dynamic_factor
     dynamic_scaling = {tf: base_scaling[tf] * dynamic_factor for tf in base_scaling}
     logging.info(f"تنظیم پویای VOLUME_SCALING برای {symbol} @ {tf}: volatility_factor={volatility_factor:.4f}, liquidity_factor={liquidity_factor:.4f}, dynamic_factor={dynamic_factor:.4f}, new_scaling={dynamic_scaling}")
     return dynamic_scaling
@@ -607,7 +607,7 @@ async def analyze_symbol(exchange, symbol, tf):
     dynamic_scaling = await dynamic_volume_scaling(exchange, symbol, tf, df)
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = dynamic_scaling.get(tf, 0.2)
-    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor * 0.5)  # تغییر به 0.5 ضریب
+    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor * 0.1)  # تغییر به 0.1 ضریب
     current_vol = df["volume"].iloc[-1]
     logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor:.4f}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}")
     
@@ -629,7 +629,7 @@ async def analyze_symbol(exchange, symbol, tf):
 
     long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
     short_trend = not long_trend
-    logging.debug(f"روند بازار: long_trend={long_trend}, short_trend={short_trend}")
+    logging.info(f"روند بازار: long_trend={long_trend}, short_trend={short_trend}")
 
     if tf == "1h":
         df4 = await get_ohlcv_cached(exchange, symbol, "4h")
