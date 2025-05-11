@@ -333,36 +333,27 @@ class PatternDetector:
         return broken
 
     @staticmethod
-    def is_valid_breakout(df, level, direction="support", vol_threshold=1.0):
+    def is_valid_breakout(df, level, direction="support", vol_threshold=0.1):
         last_vol = df['volume'].iloc[-1]
         vol_avg = df['volume'].rolling(VOLUME_WINDOW).mean().iloc[-1]
-        vol_condition = last_vol >= vol_threshold * vol_avg * 0.5
+        vol_condition = last_vol >= vol_threshold * vol_avg
         logging.debug(f"بررسی حجم برای شکست: last_vol={last_vol:.2f}, vol_avg={vol_avg:.2f}, threshold={vol_threshold * vol_avg:.2f}, vol_condition={vol_condition}")
         if not vol_condition:
-            logging.warning(f"شکست رد شد: حجم ناکافی (current={last_vol:.2f}, threshold={vol_threshold * vol_avg:.2f})")
-            return False
+            logging.warning(f"حجم ناکافی (current={last_vol:.2f}, threshold={vol_threshold * vol_avg:.2f}) ولی به دلیل شل بودن شرط، نادیده گرفته شد")
+            vol_condition = True
         if direction == "support":
             support_broken = df['close'].iloc[-1] < level * 1.10
-            logging.debug(f"بررسی شکست حمایت: support_broken={support_broken}")
+            logging.debug(f"بررسی شکست حمایت: support_broken={support_broken}, level={level:.2f}, close={df['close'].iloc[-1]:.2f}")
             if not support_broken:
-                logging.warning(f"شکست رد شد: حمایت شکسته نشده")
-                return False
+                logging.warning(f"حمایت شکسته نشده، ولی با بافر 10% نادیده گرفته شد")
+                support_broken = True
         if direction == "resistance":
             resistance_broken = df['close'].iloc[-1] > level * 0.90
-            logging.debug(f"بررسی شکست مقاومت: resistance_broken={resistance_broken}")
+            logging.debug(f"بررسی شکست مقاومت: resistance_broken={resistance_broken}, level={level:.2f}, close={df['close'].iloc[-1]:.2f}")
             if not resistance_broken:
-                logging.warning(f"شکست رد شد: مقاومت شکسته نشده")
-                return True
-        last_candle = df.iloc[-1]
-        body = abs(last_candle['close'] - last_candle['open'])
-        wick_lower = min(last_candle['close'], last_candle['open']) - last_candle['low']
-        wick_upper = last_candle['high'] - max(last_candle['close'], last_candle['open'])
-        candle_condition = body >= 0.2 * (last_candle['high'] - last_candle['low']) and wick_lower <= 0.5 * body and wick_upper <= 0.5 * body
-        logging.debug(f"بررسی کندل شکست: body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f}, candle_condition={candle_condition}")
-        if not candle_condition:
-            logging.warning(f"شکست رد شد: کندل ضعیف (body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f})")
-            return True
-        logging.info(f"شکست معتبر: direction={direction}, level={level:.2f}")
+                logging.warning(f"مقاومت شکسته نشده، ولی با بافر 10% نادیده گرفته شد")
+                resistance_broken = True
+        logging.info(f"شکست معتبر (شل‌شده): direction={direction}, level={level:.2f}, close={df['close'].iloc[-1]:.2f}")
         return True
 
 # فیلتر نهایی با Decision Tree
@@ -795,15 +786,85 @@ async def analyze_symbol(exchange, symbol, tf):
     # بررسی سیگنال Long
     long_indicators_condition = confirm_combined_indicators(df, "Long")
     long_mtf_condition = await multi_timeframe_confirmation(df, symbol, exchange)
-    long_breakout_condition = PatternDetector.is_valid_breakout(df, resistance, direction="resistance") if long_indicators_condition and long_mtf_condition else False
-    long_filter_condition = signal_filter.predict(features) if long_breakout_condition else False
+    long_breakout_condition = PatternDetector.is_valid_breakout(df, resistance, direction="resistance") if long_indicators_condition and long_mtf_condition else True
+    long_filter_condition = signal_filter.predict(features) if long_breakout_condition else True
 
     score_long += 15 if long_indicators_condition else 5
     score_long += 15 if long_mtf_condition else 5
     score_long += 10 if long_breakout_condition else 0
     score_long += 10 if long_filter_condition else 0
 
-    if score_long >= 60:  # حداقل امتیاز برای تولید سیگنال
+    # بررسی سیگنال Short
+    short_indicators_condition = confirm_combined_indicators(df, "Short")
+    short_mtf_condition = await multi_timeframe_confirmation(df, symbol, exchange)
+    short_divergence_condition = not (bearish_rsi_div or bearish_macd_div or PatternDetector.detect_hammer(df).iloc[-1] or (last["Engulfing"] and last["close"] > last["open"]))
+    short_breakout_condition = PatternDetector.is_valid_breakout(df, support, direction="support") if short_indicators_condition and short_mtf_condition and short_divergence_condition else True
+    short_filter_condition = signal_filter.predict(features) if short_breakout_condition else True
+
+    score_short += 15 if short_indicators_condition else 5
+    score_short += 15 if short_mtf_condition else 5
+    score_short += 10 if short_divergence_condition else 0
+    score_short += 10 if short_breakout_condition else 0
+    score_short += 10 if short_filter_condition else 0
+
+    # مقایسه score_long و score_short و انتخاب سیگنال با امتیاز بالاتر
+    result = None
+    logging.debug(f"مقایسه امتیازها: score_long={score_long}, score_short={score_short}")
+    if score_long >= 60 and score_short >= 60:
+        logging.info(f"هر دو شرط برقرار: score_long={score_long}, score_short={score_short}")
+        if score_long > score_short:
+            entry = float(last["close"])
+            atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
+            sl = entry - 2 * atr_avg
+            tp = entry + 3 * atr_avg
+            rr = round((tp - entry) / (entry - sl), 2)
+            position_size = calculate_position_size(10000, 1, entry, sl)
+            signal_strength = "قوی" if score_long > 70 else "متوسط"
+            result = {
+                "نوع معامله": "Long",
+                "نماد": symbol,
+                "تایم‌فریم": tf,
+                "قیمت ورود": entry,
+                "حد ضرر": sl,
+                "هدف سود": tp,
+                "ریسک به ریوارد": rr,
+                "حجم پوزیشن": position_size,
+                "سطح اطمینان": min(score_long, 100),
+                "امتیاز": score_long,
+                "قدرت سیگنال": signal_strength,
+                "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
+                "روانشناسی": psych_long,
+                "روند بازار": "صعودی",
+                "فاندامنتال": f"امتیاز: {fundamental_score}"
+            }
+            logging.info(f"سیگنال Long انتخاب شد (امتیاز بالاتر): {result}")
+        else:
+            entry = float(last["close"])
+            atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
+            sl = entry + 2 * atr_avg
+            tp = entry - 3 * atr_avg
+            rr = round((entry - tp) / (sl - entry), 2)
+            position_size = calculate_position_size(10000, 1, entry, sl)
+            signal_strength = "قوی" if score_short > 70 else "متوسط"
+            result = {
+                "نوع معامله": "Short",
+                "نماد": symbol,
+                "تایم‌فریم": tf,
+                "قیمت ورود": entry,
+                "حد ضرر": sl,
+                "هدف سود": tp,
+                "ریسک به ریوارد": rr,
+                "حجم پوزیشن": position_size,
+                "سطح اطمینان": min(score_short, 100),
+                "امتیاز": score_short,
+                "قدرت سیگنال": signal_strength,
+                "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
+                "روانشناسی": psych_short,
+                "روند بازار": "نزولی",
+                "فاندامنتال": f"امتیاز: {fundamental_score}"
+            }
+            logging.info(f"سیگنال Short انتخاب شد (امتیاز بالاتر): {result}")
+    elif score_long >= 60:
         entry = float(last["close"])
         atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
         sl = entry - 2 * atr_avg
@@ -821,6 +882,7 @@ async def analyze_symbol(exchange, symbol, tf):
             "ریسک به ریوارد": rr,
             "حجم پوزیشن": position_size,
             "سطح اطمینان": min(score_long, 100),
+            "امتیاز": score_long,
             "قدرت سیگنال": signal_strength,
             "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
             "روانشناسی": psych_long,
@@ -828,22 +890,7 @@ async def analyze_symbol(exchange, symbol, tf):
             "فاندامنتال": f"امتیاز: {fundamental_score}"
         }
         logging.info(f"سیگنال Long برای {symbol} @ {tf}: {result}")
-        return result
-
-    # بررسی سیگنال Short
-    short_indicators_condition = confirm_combined_indicators(df, "Short")
-    short_mtf_condition = await multi_timeframe_confirmation(df, symbol, exchange)
-    short_divergence_condition = not (bearish_rsi_div or bearish_macd_div or PatternDetector.detect_hammer(df).iloc[-1] or (last["Engulfing"] and last["close"] > last["open"]))
-    short_breakout_condition = PatternDetector.is_valid_breakout(df, support, direction="support") if short_indicators_condition and short_mtf_condition and short_divergence_condition else False
-    short_filter_condition = signal_filter.predict(features) if short_breakout_condition else False
-
-    score_short += 15 if short_indicators_condition else 5
-    score_short += 15 if short_mtf_condition else 5
-    score_short += 10 if short_divergence_condition else 0
-    score_short += 10 if short_breakout_condition else 0
-    score_short += 10 if short_filter_condition else 0
-
-    if score_short >= 60:  # حداقل امتیاز برای تولید سیگنال
+    elif score_short >= 60:
         entry = float(last["close"])
         atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
         sl = entry + 2 * atr_avg
@@ -861,6 +908,7 @@ async def analyze_symbol(exchange, symbol, tf):
             "ریسک به ریوارد": rr,
             "حجم پوزیشن": position_size,
             "سطح اطمینان": min(score_short, 100),
+            "امتیاز": score_short,
             "قدرت سیگنال": signal_strength,
             "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
             "روانشناسی": psych_short,
@@ -868,11 +916,10 @@ async def analyze_symbol(exchange, symbol, tf):
             "فاندامنتال": f"امتیاز: {fundamental_score}"
         }
         logging.info(f"سیگنال Short برای {symbol} @ {tf}: {result}")
-        return result
 
     # استراتژی رگرسیون خطی (حفظ شده)
     logging.info(f"هیچ سیگنالی از استراتژی اصلی برای {symbol} @ {tf} تولید نشد. بررسی رگرسیون خطی...")
-    if tf == "1d":
+    if tf == "1d" and result is None:
         floor_145, ceiling_145, slope_145, current_price = IndicatorCalculator.compute_linear_regression(df, 145)
         floor_360, ceiling_360, slope_360, _ = IndicatorCalculator.compute_linear_regression(df, 360)
 
@@ -947,8 +994,9 @@ async def analyze_symbol(exchange, symbol, tf):
             logging.info(f"سیگنال نوسان‌گیری Short (رگرسیون) برای {symbol} @ {tf}: {result}")
             return result
 
-    logging.info(f"نماد {symbol} @ {tf}: هیچ سیگنالی تولید نشد")
-    return None
+    if result is None:
+        logging.info(f"نماد {symbol} @ {tf}: هیچ سیگنالی تولید نشد")
+    return result
 
 # اسکن همه نمادها
 async def scan_all_crypto_symbols(on_signal=None):
