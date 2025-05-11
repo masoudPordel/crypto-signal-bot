@@ -294,7 +294,7 @@ class PatternDetector:
         return broken
 
     @staticmethod
-    def is_valid_breakout(df, level, direction="support", vol_threshold=1.0):  # تغییر از 1.5 به 1.0
+    def is_valid_breakout(df, level, direction="support", vol_threshold=1.0):
         last_vol = df['volume'].iloc[-1]
         vol_avg = df['volume'].rolling(VOLUME_WINDOW).mean().iloc[-1]
         if last_vol < vol_threshold * vol_avg:
@@ -452,12 +452,12 @@ def confirm_combined_indicators(df, trend_type):
         logging.warning(f"رد {symbol} @ {tf}: RSI خیلی پایین (RSI={rsi:.2f})")
         return False
     if trend_type == "Long":
-        conditions = [rsi < 50, macd_cross_long, bullish_engulf, stochastic < 30]  # اضافه کردن Stochastic
-        logging.debug(f"تأیید Long: conditions={conditions}")
+        conditions = [rsi < 50, macd_cross_long, bullish_engulf, stochastic < 40]  # تغییر 30 به 40
+        logging.debug(f"شرایط تأیید Long: rsi={rsi < 50}, macd_cross_long={macd_cross_long}, bullish_engulf={bullish_engulf}, stochastic={stochastic < 40}")
         return sum(conditions) >= 1
     else:
-        conditions = [rsi > 60, macd_cross_short, bearish_engulf, stochastic > 70]  # اضافه کردن Stochastic
-        logging.debug(f"تأیید Short: conditions={conditions}")
+        conditions = [rsi > 60, macd_cross_short, bearish_engulf, stochastic > 50]  # تغییر 60 به 50
+        logging.debug(f"شرایط تأیید Short: rsi={rsi > 60}, macd_cross_short={macd_cross_short}, bearish_engulf={bearish_engulf}, stochastic={stochastic > 50}")
         return sum(conditions) >= 1
 
 # مدیریت ریسک و اندازه پوزیشن
@@ -584,10 +584,10 @@ async def dynamic_volume_scaling(exchange, symbol, tf, df):
         total_depth = 1000
         liquidity_factor = 1.0
     base_scaling = {
-        "30m": 0.0025,  # تغییر از 0.005 به 0.0025
-        "1h": 0.015,    # تغییر از 0.03 به 0.015
-        "4h": 0.05,     # تغییر از 0.10 به 0.05
-        "1d": 0.10      # تغییر از 0.20 به 0.10
+        "30m": 0.0025,
+        "1h": 0.015,
+        "4h": 0.05,
+        "1d": 0.10
     }
     dynamic_factor = volatility_weight * liquidity_factor * (total_depth / 1000)
     dynamic_factor = min(dynamic_factor, 5)
@@ -609,7 +609,9 @@ async def analyze_symbol(exchange, symbol, tf):
     dynamic_scaling = await dynamic_volume_scaling(exchange, symbol, tf, df)
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     scale_factor = dynamic_scaling.get(tf, 0.2)
-    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor * 0.01)  # تغییر به 0.01
+    dynamic_threshold = max(VOLUME_THRESHOLD, vol_avg * scale_factor * 0.01)
+    if dynamic_threshold <= 0:
+        dynamic_threshold = VOLUME_THRESHOLD * 10  # رفع باگ
     current_vol = df["volume"].iloc[-1]
     logging.info(f"نماد {symbol} @ {tf}: vol_avg={vol_avg:.2f}, scale_factor={scale_factor:.4f}, dynamic_threshold={dynamic_threshold:.2f}, current_vol={current_vol:.2f}")
     
@@ -766,7 +768,7 @@ async def analyze_symbol(exchange, symbol, tf):
         return result
 
     if (score_short >= 0 and 
-        (short_trend or psych_short == "اشباع خرید") and  # شرط تغییر کرده
+        (short_trend or psych_short == "اشباع خرید") and 
         has_trend and confirm_combined_indicators(df, "Short") and 
         await multi_timeframe_confirmation(df, symbol, exchange)):
         logging.debug(f"چک شکست حمایت برای {symbol} @ {tf}: support={support}")
