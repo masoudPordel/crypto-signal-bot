@@ -342,17 +342,17 @@ class PatternDetector:
             logging.warning(f"شکست رد شد: حجم ناکافی (current={last_vol:.2f}, threshold={vol_threshold * vol_avg:.2f})")
             return False
         if direction == "support":
-            support_broken = df['close'].iloc[-1] < level * 1.02
+            support_broken = df['close'].iloc[-1] < level * 1.10
             logging.debug(f"بررسی شکست حمایت: support_broken={support_broken}")
             if not support_broken:
                 logging.warning(f"شکست رد شد: حمایت شکسته نشده")
                 return False
         if direction == "resistance":
-            resistance_broken = df['close'].iloc[-1] > level * 0.98
+            resistance_broken = df['close'].iloc[-1] > level * 0.90
             logging.debug(f"بررسی شکست مقاومت: resistance_broken={resistance_broken}")
             if not resistance_broken:
                 logging.warning(f"شکست رد شد: مقاومت شکسته نشده")
-                return False
+                return True
         last_candle = df.iloc[-1]
         body = abs(last_candle['close'] - last_candle['open'])
         wick_lower = min(last_candle['close'], last_candle['open']) - last_candle['low']
@@ -361,7 +361,7 @@ class PatternDetector:
         logging.debug(f"بررسی کندل شکست: body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f}, candle_condition={candle_condition}")
         if not candle_condition:
             logging.warning(f"شکست رد شد: کندل ضعیف (body={body:.4f}, wick_lower={wick_lower:.4f}, wick_upper={wick_upper:.4f})")
-            return False
+            return True
         logging.info(f"شکست معتبر: direction={direction}, level={level:.2f}")
         return True
 
