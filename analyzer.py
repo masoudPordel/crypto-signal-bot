@@ -10,6 +10,7 @@ import ccxt.async_support as ccxt
 import asyncio
 import time
 import logging
+import traceback
 from datetime import datetime, timedelta
 from sklearn.tree import DecisionTreeClassifier
 
@@ -32,7 +33,7 @@ TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 VOLUME_WINDOW = 20
 CACHE = {}
 CACHE_TTL = 600
-MAX_CONCURRENT_REQUESTS = 10
+MAX_CONCURRENT_REQUESTS = 15
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
 
@@ -47,8 +48,10 @@ def get_coin_id(symbol):
     headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
     params = {'symbol': symbol}
     try:
+        logging.debug(f"شروع دریافت آیدی برای {symbol}")
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         data = resp.json()
+        logging.debug(f"پاسخ دریافت شد برای آیدی {symbol}: {data}")
         if 'data' in data and len(data['data']) > 0:
             coin_id = data['data'][0]['id']
             logging.info(f"دریافت آیدی برای {symbol}: coin_id={coin_id}")
@@ -57,7 +60,7 @@ def get_coin_id(symbol):
             logging.warning(f"آیدی برای {symbol} یافت نشد")
             return None
     except Exception as e:
-        logging.error(f"خطا در دریافت آیدی برای {symbol}: {e}")
+        logging.error(f"خطا در دریافت آیدی برای {symbol}: {e}, traceback={str(traceback.format_exc())}")
         return None
 
 # دریافت ۵۰۰ نماد برتر از CoinMarketCap
@@ -66,12 +69,14 @@ def get_top_500_symbols_from_cmc():
     headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
     params = {'start': '1', 'limit': '500', 'convert': 'USD'}
     try:
+        logging.debug(f"شروع دریافت ۵۰۰ نماد برتر از CMC")
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         data = resp.json()
+        logging.debug(f"پاسخ CMC دریافت شد: تعداد داده‌ها={len(data.get('data', []))}")
         logging.info(f"دریافت ۵۰۰ نماد برتر از CMC: تعداد نمادها={len(data['data'])}")
         return [entry['symbol'] for entry in data['data']]
     except Exception as e:
-        logging.error(f"خطا در دریافت از CMC: {e}")
+        logging.error(f"خطا در دریافت از CMC: {e}, traceback={str(traceback.format_exc())}")
         return []
 
 # کلاس برای مدیریت اندیکاتورها
@@ -131,22 +136,20 @@ class IndicatorCalculator:
 
     @staticmethod
     def compute_linear_regression(df, period):
+        logging.debug(f"شروع محاسبه رگرسیون خطی برای دوره {period}")
         if len(df) < period:
             logging.warning(f"داده کافی برای محاسبه رگرسیون خطی با دوره {period} نیست")
             return None, None, None, None
-        
         data = df['close'].iloc[-period:].values
         x = np.arange(len(data))
         y = data
-
         coefficients = np.polyfit(x, y, 1)
         slope, intercept = coefficients
         regression_line = np.polyval(coefficients, x)
-
         floor = min(regression_line[0], regression_line[-1])
         ceiling = max(regression_line[0], regression_line[-1])
         current_price = df['close'].iloc[-1]
-
+        logging.debug(f"رگرسیون خطی تکمیل شد: floor={floor}, ceiling={ceiling}, slope={slope}, current_price={current_price}")
         return floor, ceiling, slope, current_price
 
 # تشخیص الگوها
@@ -179,6 +182,7 @@ class PatternDetector:
 
     @staticmethod
     def detect_support_resistance(df, window=10):
+        logging.debug(f"شروع محاسبه حمایت/مقاومت برای دیتافریم با طول {len(df)}")
         if len(df) < window:
             return 0.01, 0.01, []
         high = df['high'].rolling(window).max()
@@ -198,10 +202,11 @@ class PatternDetector:
         volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
         vol_threshold = volume_profile.quantile(0.75)
         high_vol_levels = volume_profile[volume_profile > vol_threshold].index
+        logging.debug(f"حمایت/مقاومت محاسبه شد: support={recent_support}, resistance={recent_resistance}, high_vol_levels={high_vol_levels}")
         return recent_support, recent_resistance, high_vol_levels
 
     @staticmethod
-    def detect_rsi_divergence(df, lookback=10):  # افزایش تلرانس
+    def detect_rsi_divergence(df, lookback=10):
         rsi = IndicatorCalculator.compute_rsi(df)
         prices = df['close']
         recent_lows_price = argrelextrema(prices.values, np.less, order=lookback)[0]
@@ -239,9 +244,9 @@ class SignalFilter:
     def predict(self, features):
         if not self.trained:
             logging.warning("Decision Tree آموزش داده نشده است. پیش‌فرض=True")
-            return 10  # امتیاز پیش‌فرض
-        prediction = self.model.predict_proba([features])[0][1]  # احتمال کلاس مثبت
-        score = prediction * 20  # تبدیل به امتیاز (0 تا 20)
+            return 10
+        prediction = self.model.predict_proba([features])[0][1]
+        score = prediction * 20
         logging.debug(f"پیش‌بینی Decision Tree: features={features}, score={score:.2f}")
         return score
 
@@ -249,14 +254,15 @@ class SignalFilter:
 async def check_liquidity(exchange, symbol, df):
     global LIQUIDITY_REJECTS
     try:
+        logging.debug(f"شروع بررسی نقدینگی برای {symbol}")
         ticker = await exchange.fetch_ticker(symbol)
         bid = ticker['bid']
         ask = ticker['ask']
+        logging.debug(f"داده تیکری برای {symbol}: bid={bid}, ask={ask}")
         if bid is None or ask is None or bid == 0 or ask == 0:
             logging.warning(f"داده نقدینگی برای {symbol} نامعتبر است: bid={bid}, ask={ask}")
             return float('inf')
         spread = (ask - bid) / ((bid + ask) / 2)
-        # آستانه پویا برای spread
         spread_history = []
         for i in range(-5, 0):
             try:
@@ -276,7 +282,7 @@ async def check_liquidity(exchange, symbol, df):
             LIQUIDITY_REJECTS += 1
         return spread, score
     except Exception as e:
-        logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
+        logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}, traceback={str(traceback.format_exc())}")
         return 0.0, 0
 
 # بررسی رویدادهای فاندامنتال
@@ -299,9 +305,11 @@ def check_market_events(symbol):
         "dateRangeEnd": end_date
     }
     try:
+        logging.debug(f"شروع دریافت رویدادها برای {symbol}, coin_id={coin_id}")
         time.sleep(0.5)
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         events = resp.json()
+        logging.debug(f"رویدادها دریافت شد برای {symbol}: {events}")
         event_score = 0
         if not events or "body" not in events or not events["body"]:
             return 0
@@ -320,11 +328,12 @@ def check_market_events(symbol):
                 event_score -= 15
         return event_score
     except Exception as e:
-        logging.error(f"خطا در دریافت رویدادها برای {symbol}: {e}")
+        logging.error(f"خطا در دریافت رویدادها برای {symbol}: {e}, traceback={str(traceback.format_exc())}")
         return 0
 
 # محاسبات اندیکاتورها
 def compute_indicators(df):
+    logging.debug(f"شروع محاسبات اندیکاتورها برای دیتافریم با طول {len(df)}")
     df["EMA12"] = df["close"].ewm(span=12).mean()
     df["EMA26"] = df["close"].ewm(span=26).mean()
     df["MACD"] = df["EMA12"] - df["EMA26"]
@@ -338,6 +347,7 @@ def compute_indicators(df):
     df["Engulfing"] = PatternDetector.detect_engulfing(df)
     df = PatternDetector.detect_elliott_wave(df)
     df["MFI"] = IndicatorCalculator.compute_mfi(df)
+    logging.debug(f"اندیکاتورها محاسبه شد: آخرین RSI={df['RSI'].iloc[-1]:.2f}, MACD={df['MACD'].iloc[-1]:.2f}")
     return df
 
 # تأیید مولتی تایم‌فریم با وزن‌دهی
@@ -345,11 +355,13 @@ async def multi_timeframe_confirmation(exchange, symbol, base_tf):
     weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "30m": 0.1}
     total_weight = 0
     score = 0
+    logging.debug(f"شروع تأیید چندتایم‌فریمی برای {symbol}, base_tf={base_tf}")
     for tf, weight in weights.items():
         if tf == base_tf:
             continue
         df_tf = await get_ohlcv_cached(exchange, symbol, tf)
         if df_tf is None or len(df_tf) < 50:
+            logging.warning(f"داده ناکافی برای {symbol} @ {tf} در تأیید چندتایم‌فریمی")
             continue
         df_tf["EMA12"] = df_tf["close"].ewm(span=12).mean()
         df_tf["EMA26"] = df_tf["close"].ewm(span=26).mean()
@@ -367,20 +379,29 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=51):
         await asyncio.sleep(WAIT_BETWEEN_REQUESTS)
         key = f"{symbol}_{tf}"
         now = time.time()
+        logging.debug(f"شروع دریافت داده برای {symbol} @ {tf}, key={key}")
         if key in CACHE and now - CACHE[key]["time"] < CACHE_TTL:
+            logging.debug(f"داده از کش استفاده شد برای {symbol} @ {tf}")
             return CACHE[key]["data"]
         try:
+            logging.debug(f"ارسال درخواست به API برای {symbol} @ {tf}")
             data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+            logging.debug(f"داده خام دریافت شد برای {symbol} @ {tf}, تعداد داده‌ها={len(data)}")
+            if not data or len(data) == 0:
+                logging.warning(f"داده خالی از API برای {symbol} @ {tf}")
+                return None
             df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume"])
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
             df.set_index("timestamp", inplace=True)
             current_time = pd.Timestamp.now(tz='UTC')
             if len(df) > 0 and (current_time - df.index[-1]).total_seconds() < 60:
                 df = df.iloc[:-1].copy()
+                logging.debug(f"حذف آخرین داده به دلیل تاخیر برای {symbol} @ {tf}")
             CACHE[key] = {"data": df.copy(), "time": now}
+            logging.debug(f"داده کش شد برای {symbol} @ {tf}, اندازه دیتافریم={len(df)}")
             return df
         except Exception as e:
-            logging.error(f"خطا در دریافت داده برای {symbol}-{tf}: {e}")
+            logging.error(f"خطا در دریافت داده برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
             return None
 
 # محاسبه حجم پوزیشن
@@ -400,18 +421,21 @@ def ablation_test(symbol_results, filter_name):
 async def analyze_symbol(exchange, symbol, tf):
     global VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
-    logging.info(f"شروع تحلیل {symbol} @ {tf}")
+    logging.info(f"شروع تحلیل {symbol} @ {tf}, زمان شروع={datetime.now()}")
 
     # دریافت داده‌ها
+    logging.debug(f"دعوت از get_ohlcv_cached برای {symbol} @ {tf}")
     df = await get_ohlcv_cached(exchange, symbol, tf)
     if df is None or len(df) < 50:
-        logging.warning(f"داده ناکافی برای {symbol} @ {tf}")
+        logging.warning(f"داده ناکافی برای {symbol} @ {tf}, طول دیتافریم={len(df)}")
         return None
-    logging.info(f"داده دریافت شد برای {symbol} @ {tf} در {time.time() - start_time:.2f} ثانیه")
+    logging.info(f"داده دریافت شد برای {symbol} @ {tf} در {time.time() - start_time:.2f} ثانیه, تعداد ردیف‌ها={len(df)}")
 
     # محاسبه اندیکاتورها
+    logging.debug(f"شروع محاسبات اندیکاتورها برای {symbol} @ {tf}")
     df = compute_indicators(df)
     last = df.iloc[-1]
+    logging.debug(f"اندیکاتورها محاسبه شد برای {symbol} @ {tf}, آخرین قیمت={last['close']:.2f}, RSI={last['RSI']:.2f}")
 
     # متغیر امتیازدهی
     score_long = 0
@@ -429,6 +453,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short += vol_score
     score_log["long"]["volume"] = vol_score
     score_log["short"]["volume"] = vol_score
+    logging.info(f"حجم برای {symbol} @ {tf}: current_vol={current_vol:.2f}, threshold={vol_threshold:.2f}, score={vol_score}")
     if current_vol < vol_threshold:
         VOLUME_REJECTS += 1
         logging.info(f"حجم کم برای {symbol} @ {tf}: score={vol_score}")
@@ -443,6 +468,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short += vola_score
     score_log["long"]["volatility"] = vola_score
     score_log["short"]["volatility"] = vola_score
+    logging.debug(f"نوسان برای {symbol} @ {tf}: volatility={volatility:.4f}, threshold={vola_threshold:.4f}, score={vola_score}")
 
     # فیلتر ADX با آستانه پویا
     adx_mean = df["ADX"].rolling(20).mean().iloc[-1]
@@ -456,6 +482,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_log["short"]["adx"] = adx_score
     score_log["long"]["trend"] = trend_score
     score_log["short"]["trend"] = trend_score
+    logging.debug(f"ADX برای {symbol} @ {tf}: ADX={last['ADX']:.2f}, threshold={adx_threshold:.2f}, score={adx_score + trend_score}")
 
     # تشخیص روند
     long_trend = df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
@@ -465,19 +492,23 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short += -trend_score
     score_log["long"]["trend_direction"] = trend_score
     score_log["short"]["trend_direction"] = -trend_score
+    logging.debug(f"روند برای {symbol} @ {tf}: long_trend={long_trend}, score={trend_score}")
 
     # تأیید چندتایم‌فریمی
+    logging.debug(f"شروع تأیید چندتایم‌فریمی برای {symbol} @ {tf}")
     mtf_score = await multi_timeframe_confirmation(exchange, symbol, tf)
     score_long += mtf_score
     score_short += -mtf_score
     score_log["long"]["multi_timeframe"] = mtf_score
     score_log["short"]["multi_timeframe"] = -mtf_score
+    logging.debug(f"تأیید چندتایم‌فریمی برای {symbol} @ {tf}: score={mtf_score:.2f}")
 
     # محاسبه سطوح حمایت و مقاومت
+    logging.debug(f"شروع محاسبه حمایت/مقاومت برای {symbol} @ {tf}")
     try:
         support, resistance, vol_levels = PatternDetector.detect_support_resistance(df)
-        # بافر پویا برای فاصله
-        s_r_buffer = (df["ATR"].iloc[-1] / last["close"]) * 2  # پویا
+        logging.debug(f"حمایت/مقاومت محاسبه شد برای {symbol} @ {tf}: support={support:.2f}, resistance={resistance:.2f}")
+        s_r_buffer = (df["ATR"].iloc[-1] / last["close"]) * 2
         distance_to_resistance = abs(last["close"] - resistance) / last["close"]
         distance_to_support = abs(last["close"] - support) / last["close"]
         sr_score_long = 10 if distance_to_resistance > s_r_buffer else -5
@@ -490,14 +521,16 @@ async def analyze_symbol(exchange, symbol, tf):
             SR_REJECTS += 1
         if distance_to_support <= s_r_buffer:
             SR_REJECTS += 1
+        logging.debug(f"فاصله تا حمایت/مقاومت برای {symbol} @ {tf}: distance_to_resistance={distance_to_resistance:.4f}, distance_to_support={distance_to_support:.4f}, scores={sr_score_long}/{sr_score_short}")
     except Exception as e:
-        logging.error(f"خطا در محاسبه حمایت/مقاومت برای {symbol} @ {tf}: {e}")
+        logging.error(f"خطا در محاسبه حمایت/مقاومت برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
         score_long += 0
         score_short += 0
         score_log["long"]["support_resistance"] = 0
         score_log["short"]["support_resistance"] = 0
 
     # بررسی نقدینگی
+    logging.debug(f"شروع بررسی نقدینگی برای {symbol} @ {tf}")
     spread, liquidity_score = await check_liquidity(exchange, symbol, df)
     if spread == float('inf'):
         spread = 0.0
@@ -505,13 +538,16 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short += liquidity_score
     score_log["long"]["liquidity"] = liquidity_score
     score_log["short"]["liquidity"] = liquidity_score
+    logging.debug(f"نقدینگی برای {symbol} @ {tf}: spread={spread:.4f}, score={liquidity_score}")
 
     # امتیاز فاندامنتال
+    logging.debug(f"شروع بررسی رویدادهای فاندامنتال برای {symbol} @ {tf}")
     fundamental_score = check_market_events(symbol)
     score_long += fundamental_score
     score_short += fundamental_score
     score_log["long"]["fundamental"] = fundamental_score
     score_log["short"]["fundamental"] = fundamental_score
+    logging.debug(f"رویدادهای فاندامنتال برای {symbol} @ {tf}: score={fundamental_score}")
 
     # روانشناسی بازار
     psych_long = "اشباع فروش" if last["RSI"] < 40 else "اشباع خرید" if last["RSI"] > 60 else "متعادل"
@@ -522,6 +558,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short += psych_score_short
     score_log["long"]["psychology"] = psych_score_long
     score_log["short"]["psychology"] = psych_score_short
+    logging.debug(f"روانشناسی برای {symbol} @ {tf}: psych_long={psych_long}, psych_short={psych_short}, scores={psych_score_long}/{psych_score_short}")
 
     # تشخیص واگرایی‌ها
     bullish_rsi_div, bearish_rsi_div = PatternDetector.detect_rsi_divergence(df)
@@ -531,6 +568,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short += div_score_short
     score_log["long"]["rsi_divergence"] = div_score_long
     score_log["short"]["rsi_divergence"] = div_score_short
+    logging.debug(f"واگرایی برای {symbol} @ {tf}: bullish={bullish_rsi_div}, bearish={bearish_rsi_div}, scores={div_score_long}/{div_score_short}")
 
     # شرایط اندیکاتورها
     conds_long = {
@@ -559,8 +597,10 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short += indicator_score_short
     score_log["long"]["indicators"] = indicator_score_long
     score_log["short"]["indicators"] = indicator_score_short
+    logging.debug(f"شرایط اندیکاتورها برای {symbol} @ {tf}: long_score={indicator_score_long}, short_score={indicator_score_short}, conditions_long={conds_long}")
 
     # فیلتر Decision Tree
+    logging.debug(f"شروع فیلتر Decision Tree برای {symbol} @ {tf}")
     signal_filter = SignalFilter()
     X_train = np.array([
         [30, 25, 2, 0.01, 0.05, 0.05, 0.01, 10, -10],
@@ -569,13 +609,15 @@ async def analyze_symbol(exchange, symbol, tf):
     ])
     y_train = np.array([1, 0, 1])
     signal_filter.train(X_train, y_train)
+    distance_to_resistance = locals().get('distance_to_resistance', 0.0)
+    distance_to_support = locals().get('distance_to_support', 0.0)
     features = [
         last["RSI"],
         last["ADX"],
         current_vol / vol_avg,
         volatility,
-        distance_to_resistance if 'distance_to_resistance' in locals() else 0.0,
-        distance_to_support if 'distance_to_support' in locals() else 0.0,
+        distance_to_resistance,
+        distance_to_support,
         spread,
         psych_score_long,
         psych_score_short
@@ -585,6 +627,7 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short += dt_score
     score_log["long"]["decision_tree"] = dt_score
     score_log["short"]["decision_tree"] = dt_score
+    logging.debug(f"فیلتر Decision Tree برای {symbol} @ {tf}: features={features}, score={dt_score:.2f}")
 
     # لاگ‌گذاری امتیازها
     logging.info(f"امتیاز نهایی برای {symbol} @ {tf}: score_long={score_long:.2f}, score_short={score_short:.2f}")
@@ -650,10 +693,13 @@ async def analyze_symbol(exchange, symbol, tf):
     else:
         # استراتژی رگرسیون خطی
         if tf == "1d":
+            logging.debug(f"شروع محاسبات رگرسیون خطی برای {symbol} @ {tf}")
             floor_145, ceiling_145, slope_145, current_price = IndicatorCalculator.compute_linear_regression(df, 145)
             floor_360, ceiling_360, slope_360, _ = IndicatorCalculator.compute_linear_regression(df, 360)
-            if floor_145 is None or floor_360 is None:
-                return None
+            logging.debug(f"رگرسیون خطی برای {symbol} @ {tf}: floor_145={floor_145}, ceiling_145={ceiling_145}, floor_360={floor_360}, ceiling_360={ceiling_360}")
+            if floor_145 is None or floor_360 is None or current_price is None:
+                logging.warning(f"داده‌های رگرسیون برای {symbol} @ {tf} ناکافی است")
+                floor_145 = floor_360 = current_price = df['close'].mean()
             proximity_threshold = 0.02
             floor_hit_145 = abs(current_price - floor_145) / floor_145 <= proximity_threshold
             floor_hit_360 = abs(current_price - floor_360) / floor_360 <= proximity_threshold
@@ -722,9 +768,12 @@ async def analyze_symbol(exchange, symbol, tf):
 async def scan_all_crypto_symbols(on_signal=None):
     exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
     try:
+        logging.debug(f"شروع بارگذاری بازارها از KuCoin")
         await exchange.load_markets()
+        logging.info(f"بازارها بارگذاری شد: تعداد نمادها={len(exchange.symbols)}")
         top_coins = get_top_500_symbols_from_cmc()
         usdt_symbols = [s for s in exchange.symbols if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)]
+        logging.debug(f"فیلتر نمادها: تعداد USDT symbols={len(usdt_symbols)}")
         chunk_size = 10
         total_chunks = (len(usdt_symbols) + chunk_size - 1) // chunk_size
         symbol_results = []
@@ -733,10 +782,11 @@ async def scan_all_crypto_symbols(on_signal=None):
             logging.info(f"اسکن دسته {idx+1}/{total_chunks}: {chunk}")
             tasks = [analyze_symbol(exchange, sym, tf) for sym in chunk for tf in TIMEFRAMES]
             async with semaphore:
+                logging.debug(f"اجرا کردن وظایف برای دسته {idx+1}, تعداد وظایف={len(tasks)}")
                 results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception):
-                    logging.error(f"خطا در تسک: {result}")
+                    logging.error(f"خطا در تسک: {result}, traceback={str(traceback.format_exc())}")
                     continue
                 if result and on_signal:
                     await on_signal(result)
@@ -748,18 +798,24 @@ async def scan_all_crypto_symbols(on_signal=None):
         ablation_test(symbol_results, "support_resistance")
         logging.info(f"آمار رد شدن‌ها: نقدینگی={LIQUIDITY_REJECTS}, حجم={VOLUME_REJECTS}, حمایت/مقاومت={SR_REJECTS}")
     finally:
+        logging.debug(f"بستن اتصال به KuCoin")
         await exchange.close()
 
 # اجرای اصلی
 async def main():
     exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
-    await exchange.load_markets()
-    result = await analyze_symbol(exchange, "BTC/USDT", "1h")
-    if result:
-        logging.info(f"سیگنال تولید شد: {result}")
-    else:
-        logging.info("هیچ سیگنالی تولید نشد.")
-    await exchange.close()
+    try:
+        logging.debug(f"شروع بارگذاری بازارها برای تست")
+        await exchange.load_markets()
+        logging.info(f"بازارها بارگذاری شد برای تست")
+        result = await analyze_symbol(exchange, "BTC/USDT", "1h")
+        if result:
+            logging.info(f"سیگنال تولید شد: {result}")
+        else:
+            logging.info("هیچ سیگنالی تولید نشد.")
+    finally:
+        logging.debug(f"بستن اتصال به KuCoin پس از تست")
+        await exchange.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
