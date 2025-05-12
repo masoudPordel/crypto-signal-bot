@@ -13,6 +13,7 @@ import logging
 import traceback
 from datetime import datetime, timedelta
 from sklearn.tree import DecisionTreeClassifier
+from typing import Optional, Dict, Any, List
 
 # تنظیمات logging
 logging.basicConfig(
@@ -34,8 +35,8 @@ VOLUME_WINDOW = 20
 CACHE = {}
 CACHE_TTL = 600
 MAX_CONCURRENT_REQUESTS = 15
-WAIT_BETWEEN_REQUESTS = 0.5
-WAIT_BETWEEN_CHUNKS = 3
+WAIT_BETWEEN_REQUESTS = 0.3  # کاهش تأخیر برای بهبود سرعت
+WAIT_BETWEEN_CHUNKS = 2  # کاهش تأخیر بین دسته‌ها
 
 # متغیرهای شمارشگر رد شدن‌ها
 LIQUIDITY_REJECTS = 0
@@ -43,7 +44,7 @@ VOLUME_REJECTS = 0
 SR_REJECTS = 0
 
 # دریافت آیدی ارز
-def get_coin_id(symbol):
+def get_coin_id(symbol: str) -> Optional[int]:
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/map"
     headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
     params = {'symbol': symbol}
@@ -64,7 +65,7 @@ def get_coin_id(symbol):
         return None
 
 # دریافت ۵۰۰ نماد برتر از CoinMarketCap
-def get_top_500_symbols_from_cmc():
+def get_top_500_symbols_from_cmc() -> List[str]:
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
     headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
     params = {'start': '1', 'limit': '500', 'convert': 'USD'}
@@ -82,30 +83,33 @@ def get_top_500_symbols_from_cmc():
 # کلاس برای مدیریت اندیکاتورها
 class IndicatorCalculator:
     @staticmethod
-    def compute_rsi(df, period=14):
+    def compute_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
         delta = df["close"].diff()
         gain = delta.where(delta > 0, 0).rolling(period).mean()
         loss = -delta.where(delta < 0, 0).rolling(period).mean()
         rs = gain / loss.replace(0, 1e-10)
         rsi = 100 - (100 / (1 + rs))
+        logging.debug(f"RSI محاسبه شد: آخرین مقدار={rsi.iloc[-1] if not rsi.empty else 'خالی'}")
         return rsi
 
     @staticmethod
-    def compute_atr(df, period=14):
+    def compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
         tr = pd.concat([df["high"] - df["low"], abs(df["high"] - df["close"].shift()), abs(df["low"] - df["close"].shift())], axis=1).max(axis=1)
         atr = tr.rolling(period).mean()
+        logging.debug(f"ATR محاسبه شد: آخرین مقدار={atr.iloc[-1] if not atr.empty else 'خالی'}")
         return atr
 
     @staticmethod
-    def compute_bollinger_bands(df, period=20, std_dev=2):
+    def compute_bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float = 2) -> tuple:
         sma = df["close"].rolling(period).mean()
         std = df["close"].rolling(period).std()
         upper = sma + std_dev * std
         lower = sma - std_dev * std
+        logging.debug(f"Bollinger Bands محاسبه شد: upper={upper.iloc[-1] if not upper.empty else 'خالی'}, lower={lower.iloc[-1] if not lower.empty else 'خالی'}")
         return upper, lower
 
     @staticmethod
-    def compute_adx(df, period=14):
+    def compute_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
         df["up"] = df["high"].diff()
         df["down"] = -df["low"].diff()
         df["+DM"] = np.where((df["up"] > df["down"]) & (df["up"] > 0), df["up"], 0.0)
@@ -116,26 +120,29 @@ class IndicatorCalculator:
         minus_di = 100 * (df["-DM"].rolling(window=period).sum() / tr_smooth)
         dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
         adx = dx.rolling(window=period).mean()
+        logging.debug(f"ADX محاسبه شد: آخرین مقدار={adx.iloc[-1] if not adx.empty else 'خالی'}")
         return adx
 
     @staticmethod
-    def compute_stochastic(df, period=14):
+    def compute_stochastic(df: pd.DataFrame, period: int = 14) -> pd.Series:
         low_min = df["low"].rolling(window=period).min()
         high_max = df["high"].rolling(window=period).max()
         k = 100 * (df["close"] - low_min) / (high_max - low_min).replace(0, 1e-10)
+        logging.debug(f"Stochastic محاسبه شد: آخرین مقدار={k.iloc[-1] if not k.empty else 'خالی'}")
         return k
 
     @staticmethod
-    def compute_mfi(df, period=14):
+    def compute_mfi(df: pd.DataFrame, period: int = 14) -> pd.Series:
         typical_price = (df['high'] + df['low'] + df['close']) / 3
         raw_money_flow = typical_price * df['volume']
         positive_flow = raw_money_flow.where(typical_price > typical_price.shift(1), 0).rolling(period).sum()
         negative_flow = raw_money_flow.where(typical_price < typical_price.shift(1), 0).rolling(period).sum()
         mfi = 100 - (100 / (1 + positive_flow / negative_flow.replace(0, 1e-10)))
+        logging.debug(f"MFI محاسبه شد: آخرین مقدار={mfi.iloc[-1] if not mfi.empty else 'خالی'}")
         return mfi
 
     @staticmethod
-    def compute_linear_regression(df, period):
+    def compute_linear_regression(df: pd.DataFrame, period: int) -> tuple:
         logging.debug(f"شروع محاسبه رگرسیون خطی برای دوره {period}")
         if len(df) < period:
             logging.warning(f"داده کافی برای محاسبه رگرسیون خطی با دوره {period} نیست")
@@ -155,33 +162,36 @@ class IndicatorCalculator:
 # تشخیص الگوها
 class PatternDetector:
     @staticmethod
-    def detect_pin_bar(df):
+    def detect_pin_bar(df: pd.DataFrame) -> pd.Series:
         df["body"] = abs(df["close"] - df["open"])
         df["range"] = df["high"] - df["low"]
         df["upper"] = df["high"] - df[["close", "open"]].max(axis=1)
         df["lower"] = df[["close", "open"]].min(axis=1) - df["low"]
         pin_bar = (df["body"] < 0.3 * df["range"]) & ((df["upper"] > 2 * df["body"]) | (df["lower"] > 2 * df["body"]))
+        logging.debug(f"Pin Bar تشخیص داده شد: تعداد موارد={pin_bar.sum()}")
         return pin_bar
 
     @staticmethod
-    def detect_engulfing(df):
+    def detect_engulfing(df: pd.DataFrame) -> pd.Series:
         prev_o = df["open"].shift(1)
         prev_c = df["close"].shift(1)
         engulfing = (((df["close"] > df["open"]) & (prev_c < prev_o) & (df["close"] > prev_o) & (df["open"] < prev_c)) |
                      ((df["close"] < df["open"]) & (prev_c > prev_o) & (df["close"] < prev_o) & (df["open"] > prev_c)))
+        logging.debug(f"Engulfing تشخیص داده شد: تعداد موارد={engulfing.sum()}")
         return engulfing
 
     @staticmethod
-    def detect_elliott_wave(df):
+    def detect_elliott_wave(df: pd.DataFrame) -> pd.DataFrame:
         df["WavePoint"] = np.nan
         highs = argrelextrema(df['close'].values, np.greater, order=5)[0]
         lows = argrelextrema(df['close'].values, np.less, order=5)[0]
         df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
         df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
+        logging.debug(f"Elliott Wave تشخیص داده شد: تعداد نقاط اوج={len(highs)}, تعداد نقاط پایین={len(lows)}")
         return df
 
     @staticmethod
-    def detect_support_resistance(df, window=10):
+    def detect_support_resistance(df: pd.DataFrame, window: int = 10) -> tuple:
         logging.debug(f"شروع محاسبه حمایت/مقاومت برای دیتافریم با طول {len(df)}")
         if len(df) < window:
             return 0.01, 0.01, []
@@ -201,12 +211,12 @@ class PatternDetector:
             recent_support = df['close'].mean() or 0.01
         volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
         vol_threshold = volume_profile.quantile(0.75)
-        high_vol_levels = volume_profile[volume_profile > vol_threshold].index
+        high_vol_levels = volume_profile[volume_profile > vol_threshold].index.tolist()
         logging.debug(f"حمایت/مقاومت محاسبه شد: support={recent_support}, resistance={recent_resistance}, high_vol_levels={high_vol_levels}")
         return recent_support, recent_resistance, high_vol_levels
 
     @staticmethod
-    def detect_rsi_divergence(df, lookback=10):
+    def detect_rsi_divergence(df: pd.DataFrame, lookback: int = 10) -> tuple:
         rsi = IndicatorCalculator.compute_rsi(df)
         prices = df['close']
         recent_lows_price = argrelextrema(prices.values, np.less, order=lookback)[0]
@@ -227,6 +237,7 @@ class PatternDetector:
             last_rsi_high = rsi.iloc[recent_highs_rsi[-1]]
             prev_rsi_high = rsi.iloc[recent_highs_rsi[-2]]
             bearish_divergence = (last_price_high > prev_price_high * 0.98) and (last_rsi_high < prev_rsi_high * 1.02)
+        logging.debug(f"واگرایی RSI تشخیص داده شد: bullish={bullish_divergence}, bearish={bearish_divergence}")
         return bullish_divergence, bearish_divergence
 
 # فیلتر نهایی با Decision Tree
@@ -235,43 +246,52 @@ class SignalFilter:
         self.model = DecisionTreeClassifier(max_depth=3)
         self.trained = False
 
-    def train(self, X, y):
+    def train(self, X: np.ndarray, y: np.ndarray) -> None:
         if len(X) > 0 and len(y) > 0:
             self.model.fit(X, y)
             self.trained = True
             logging.info("Decision Tree آموزش داده شد.")
+        else:
+            logging.warning("داده‌های آموزشی برای Decision Tree کافی نیست.")
 
-    def predict(self, features):
+    def predict(self, features: list) -> float:
         if not self.trained:
             logging.warning("Decision Tree آموزش داده نشده است. پیش‌فرض=True")
             return 10
-        prediction = self.model.predict_proba([features])[0][1]
-        score = prediction * 20
-        logging.debug(f"پیش‌بینی Decision Tree: features={features}, score={score:.2f}")
-        return score
+        try:
+            prediction = self.model.predict_proba([features])[0][1]
+            score = prediction * 20
+            logging.debug(f"پیش‌بینی Decision Tree: features={features}, score={score:.2f}")
+            return score
+        except Exception as e:
+            logging.error(f"خطا در پیش‌بینی Decision Tree: {e}, traceback={str(traceback.format_exc())}")
+            return 0
 
 # بررسی نقدینگی
-async def check_liquidity(exchange, symbol, df):
+async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame) -> tuple:
     global LIQUIDITY_REJECTS
     try:
         logging.debug(f"شروع بررسی نقدینگی برای {symbol}")
         ticker = await exchange.fetch_ticker(symbol)
-        bid = ticker['bid']
-        ask = ticker['ask']
+        bid = ticker.get('bid')
+        ask = ticker.get('ask')
         logging.debug(f"داده تیکری برای {symbol}: bid={bid}, ask={ask}")
         if bid is None or ask is None or bid == 0 or ask == 0:
             logging.warning(f"داده نقدینگی برای {symbol} نامعتبر است: bid={bid}, ask={ask}")
-            return float('inf')
+            return float('inf'), 0
         spread = (ask - bid) / ((bid + ask) / 2)
         spread_history = []
         for i in range(-5, 0):
             try:
                 past_ticker = await exchange.fetch_ticker(symbol)
-                past_bid = past_ticker['bid']
-                past_ask = past_ticker['ask']
+                past_bid = past_ticker.get('bid')
+                past_ask = past_ticker.get('ask')
+                if past_bid is None or past_ask is None or past_bid == 0 or past_ask == 0:
+                    continue
                 past_spread = (past_ask - past_bid) / ((past_bid + past_ask) / 2)
                 spread_history.append(past_spread)
-            except:
+            except Exception as e:
+                logging.warning(f"خطا در دریافت داده گذشته برای {symbol}: {e}")
                 continue
         spread_mean = np.mean(spread_history) if spread_history else 0.02
         spread_std = np.std(spread_history) if spread_history else 0.005
@@ -286,7 +306,7 @@ async def check_liquidity(exchange, symbol, df):
         return 0.0, 0
 
 # بررسی رویدادهای فاندامنتال
-def check_market_events(symbol):
+def check_market_events(symbol: str) -> int:
     coin_id = get_coin_id(symbol.split('/')[0])
     if not coin_id:
         return 0
@@ -332,7 +352,7 @@ def check_market_events(symbol):
         return 0
 
 # محاسبات اندیکاتورها
-def compute_indicators(df):
+def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     logging.debug(f"شروع محاسبات اندیکاتورها برای دیتافریم با طول {len(df)}")
     df["EMA12"] = df["close"].ewm(span=12).mean()
     df["EMA26"] = df["close"].ewm(span=26).mean()
@@ -351,7 +371,7 @@ def compute_indicators(df):
     return df
 
 # تأیید مولتی تایم‌فریم با وزن‌دهی
-async def multi_timeframe_confirmation(exchange, symbol, base_tf):
+async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, base_tf: str) -> float:
     weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "30m": 0.1}
     total_weight = 0
     score = 0
@@ -374,7 +394,7 @@ async def multi_timeframe_confirmation(exchange, symbol, base_tf):
 
 # دریافت داده‌ها با کش
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-async def get_ohlcv_cached(exchange, symbol, tf, limit=51):
+async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit: int = 51) -> Optional[pd.DataFrame]:
     async with semaphore:
         await asyncio.sleep(WAIT_BETWEEN_REQUESTS)
         key = f"{symbol}_{tf}"
@@ -405,20 +425,24 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=51):
             return None
 
 # محاسبه حجم پوزیشن
-def calculate_position_size(account_balance, risk_percentage, entry, stop_loss):
+def calculate_position_size(account_balance: float, risk_percentage: float, entry: float, stop_loss: float) -> float:
+    if entry is None or stop_loss is None or entry == 0 or stop_loss == 0:
+        logging.warning(f"مقادیر نامعتبر برای محاسبه حجم پوزیشن: entry={entry}, stop_loss={stop_loss}")
+        return 0
     risk_amount = account_balance * (risk_percentage / 100)
     distance = abs(entry - stop_loss)
     position_size = risk_amount / distance if distance != 0 else 0
+    logging.debug(f"حجم پوزیشن محاسبه شد: account_balance={account_balance}, risk={risk_percentage}, entry={entry}, stop_loss={stop_loss}, position_size={position_size}")
     return round(position_size, 2)
 
 # تابع Ablation Testing
-def ablation_test(symbol_results, filter_name):
+def ablation_test(symbol_results: list, filter_name: str) -> int:
     total_signals = len([r for r in symbol_results if r is not None])
     logging.info(f"Ablation Test برای فیلتر {filter_name}: تعداد سیگنال‌های اولیه={total_signals}")
     return total_signals
 
 # تحلیل نماد با سیستم امتیازدهی
-async def analyze_symbol(exchange, symbol, tf):
+async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optional[dict]:
     global VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
     logging.info(f"شروع تحلیل {symbol} @ {tf}, زمان شروع={datetime.now()}")
@@ -427,7 +451,7 @@ async def analyze_symbol(exchange, symbol, tf):
     logging.debug(f"دعوت از get_ohlcv_cached برای {symbol} @ {tf}")
     df = await get_ohlcv_cached(exchange, symbol, tf)
     if df is None or len(df) < 50:
-        logging.warning(f"داده ناکافی برای {symbol} @ {tf}, طول دیتافریم={len(df)}")
+        logging.warning(f"داده ناکافی برای {symbol} @ {tf}, طول دیتافریم={len(df) if df is not None else 'None'}")
         return None
     logging.info(f"داده دریافت شد برای {symbol} @ {tf} در {time.time() - start_time:.2f} ثانیه, تعداد ردیف‌ها={len(df)}")
 
@@ -435,7 +459,7 @@ async def analyze_symbol(exchange, symbol, tf):
     logging.debug(f"شروع محاسبات اندیکاتورها برای {symbol} @ {tf}")
     df = compute_indicators(df)
     last = df.iloc[-1]
-    logging.debug(f"اندیکاتورها برای {symbol} @ {tf} محاسبه شد: آخرین RSI={df['RSI'].iloc[-1]:.2f}, MACD={df['MACD'].iloc[-1]:.2f}")
+    logging.debug(f"اندیکاتورها برای {symbol} @ {tf} محاسبه شد: آخرین RSI={last['RSI']:.2f}, MACD={last['MACD']:.2f}")
     logging.debug(f"اندیکاتورها محاسبه شد برای {symbol} @ {tf}, آخرین قیمت={last['close']:.2f}, RSI={last['RSI']:.2f}")
 
     # متغیر امتیازدهی
@@ -443,12 +467,12 @@ async def analyze_symbol(exchange, symbol, tf):
     score_short = 0
     score_log = {"long": {}, "short": {}}
 
-    # بررسی حجم
+    # بررسی حجم با آستانه پویا
     vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
     current_vol = df["volume"].iloc[-1]
     vol_mean = df["volume"].rolling(20).mean().iloc[-1]
     vol_std = df["volume"].rolling(20).std().iloc[-1]
-    vol_threshold = vol_mean + vol_std
+    vol_threshold = vol_mean + 0.5 * vol_std  # کاهش ضریب برای منطقی‌تر شدن آستانه
     vol_score = 10 if current_vol >= vol_threshold else -5
     score_long += vol_score
     score_short += vol_score
@@ -497,7 +521,6 @@ async def analyze_symbol(exchange, symbol, tf):
 
     # تأیید چندتایم‌فریمی
     logging.debug(f"دعوت از multi_timeframe_confirmation برای {symbol} @ {tf}")
-    logging.debug(f"شروع تأیید چندتایم‌فریمی برای {symbol} @ {tf}")
     mtf_score = await multi_timeframe_confirmation(exchange, symbol, tf)
     score_long += mtf_score
     score_short += -mtf_score
@@ -616,7 +639,7 @@ async def analyze_symbol(exchange, symbol, tf):
     features = [
         last["RSI"],
         last["ADX"],
-        current_vol / vol_avg,
+        current_vol / vol_avg if vol_avg != 0 else 0,
         volatility,
         distance_to_resistance,
         distance_to_support,
@@ -643,7 +666,7 @@ async def analyze_symbol(exchange, symbol, tf):
         atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
         sl = entry - 2 * atr_avg
         tp = entry + 3 * atr_avg
-        rr = round((tp - entry) / (entry - sl), 2)
+        rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
         position_size = calculate_position_size(10000, 1, entry, sl)
         signal_strength = "قوی" if score_long > 80 else "متوسط"
         result = {
@@ -670,7 +693,7 @@ async def analyze_symbol(exchange, symbol, tf):
         atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
         sl = entry + 2 * atr_avg
         tp = entry - 3 * atr_avg
-        rr = round((entry - tp) / (sl - entry), 2)
+        rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
         position_size = calculate_position_size(10000, 1, entry, sl)
         signal_strength = "قوی" if score_short > 80 else "متوسط"
         result = {
@@ -696,7 +719,6 @@ async def analyze_symbol(exchange, symbol, tf):
         # استراتژی رگرسیون خطی
         if tf == "1d":
             logging.debug(f"ورود به استراتژی رگرسیون خطی برای {symbol} @ {tf}")
-            logging.debug(f"شروع محاسبات رگرسیون خطی برای {symbol} @ {tf}")
             floor_145, ceiling_145, slope_145, current_price = IndicatorCalculator.compute_linear_regression(df, 145)
             floor_360, ceiling_360, slope_360, _ = IndicatorCalculator.compute_linear_regression(df, 360)
             logging.debug(f"رگرسیون خطی برای {symbol} @ {tf}: floor_145={floor_145}, ceiling_145={ceiling_145}, floor_360={floor_360}, ceiling_360={ceiling_360}")
@@ -768,7 +790,7 @@ async def analyze_symbol(exchange, symbol, tf):
     return None
 
 # اسکن همه نمادها
-async def scan_all_crypto_symbols(on_signal=None):
+async def scan_all_crypto_symbols(on_signal=None) -> None:
     exchange = ccxt.kucoin({'enableRateLimit': True, 'rateLimit': 2000})
     try:
         logging.debug(f"شروع بارگذاری بازارها از KuCoin")
