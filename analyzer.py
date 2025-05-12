@@ -35,8 +35,8 @@ VOLUME_WINDOW = 20
 CACHE = {}
 CACHE_TTL = 600
 MAX_CONCURRENT_REQUESTS = 15
-WAIT_BETWEEN_REQUESTS = 0.3
-WAIT_BETWEEN_CHUNKS = 2
+WAIT_BETWEEN_REQUESTS = 0.5  # افزایش به 0.5 ثانیه
+WAIT_BETWEEN_CHUNKS = 3      # افزایش به 3 ثانیه
 
 # متغیرهای شمارشگر رد شدن‌ها
 LIQUIDITY_REJECTS = 0
@@ -351,23 +351,55 @@ def check_market_events(symbol: str) -> int:
         logging.error(f"خطا در دریافت رویدادها برای {symbol}: {e}, traceback={str(traceback.format_exc())}")
         return 0
 
-# محاسبات اندیکاتورها
+# محاسبات اندیکاتورها با مدیریت داده‌های ناقص
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     logging.debug(f"شروع محاسبات اندیکاتورها برای دیتافریم با طول {len(df)}")
-    df["EMA12"] = df["close"].ewm(span=12).mean()
-    df["EMA26"] = df["close"].ewm(span=26).mean()
-    df["MACD"] = df["EMA12"] - df["EMA26"]
-    df["Signal"] = df["MACD"].ewm(span=9).mean()
-    df["RSI"] = IndicatorCalculator.compute_rsi(df)
-    df["ATR"] = IndicatorCalculator.compute_atr(df)
-    df["ADX"] = IndicatorCalculator.compute_adx(df)
-    df["Stochastic"] = IndicatorCalculator.compute_stochastic(df)
-    df["BB_upper"], df["BB_lower"] = IndicatorCalculator.compute_bollinger_bands(df)
-    df["PinBar"] = PatternDetector.detect_pin_bar(df)
-    df["Engulfing"] = PatternDetector.detect_engulfing(df)
-    df = PatternDetector.detect_elliott_wave(df)
-    df["MFI"] = IndicatorCalculator.compute_mfi(df)
-    logging.debug(f"اندیکاتورها محاسبه شد: آخرین RSI={df['RSI'].iloc[-1]:.2f}, MACD={df['MACD'].iloc[-1]:.2f}")
+    try:
+        # پر کردن مقادیر ناقص با میانگین یا صفر
+        df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        if df['close'].isnull().any() or df['high'].isnull().any() or df['low'].isnull().any() or df['volume'].isnull().any():
+            logging.warning(f"داده‌های ناقص در دیتافریم شناسایی شد، پر کردن با میانگین: close={df['close'].mean()}, volume={df['volume'].mean()}")
+            df['close'] = df['close'].fillna(df['close'].mean())
+            df['high'] = df['high'].fillna(df['close'].mean())
+            df['low'] = df['low'].fillna(df['close'].mean())
+            df['volume'] = df['volume'].fillna(0)
+
+        df["EMA12"] = df["close"].ewm(span=12).mean()
+        logging.debug(f"EMA12 محاسبه شد: آخرین مقدار={df['EMA12'].iloc[-1] if not df['EMA12'].empty else 'خالی'}")
+        df["EMA26"] = df["close"].ewm(span=26).mean()
+        logging.debug(f"EMA26 محاسبه شد: آخرین مقدار={df['EMA26'].iloc[-1] if not df['EMA26'].empty else 'خالی'}")
+        df["MACD"] = df["EMA12"] - df["EMA26"]
+        logging.debug(f"MACD محاسبه شد: آخرین مقدار={df['MACD'].iloc[-1] if not df['MACD'].empty else 'خالی'}")
+        df["Signal"] = df["MACD"].ewm(span=9).mean()
+        logging.debug(f"Signal محاسبه شد: آخرین مقدار={df['Signal'].iloc[-1] if not df['Signal'].empty else 'خالی'}")
+        df["RSI"] = IndicatorCalculator.compute_rsi(df)
+        df["ATR"] = IndicatorCalculator.compute_atr(df)
+        df["ADX"] = IndicatorCalculator.compute_adx(df)
+        df["Stochastic"] = IndicatorCalculator.compute_stochastic(df)
+        df["BB_upper"], df["BB_lower"] = IndicatorCalculator.compute_bollinger_bands(df)
+        df["PinBar"] = PatternDetector.detect_pin_bar(df)
+        df["Engulfing"] = PatternDetector.detect_engulfing(df)
+        df = PatternDetector.detect_elliott_wave(df)
+        df["MFI"] = IndicatorCalculator.compute_mfi(df)
+        logging.debug(f"اندیکاتورها محاسبه شد: آخرین RSI={df['RSI'].iloc[-1]:.2f}, MACD={df['MACD'].iloc[-1]:.2f}")
+    except Exception as e:
+        logging.error(f"خطا در محاسبات اندیکاتورها: {str(e)}, traceback={str(traceback.format_exc())}")
+        # در صورت خطا، دیتافریم را با مقادیر پیش‌فرض پر می‌کنیم
+        df["EMA12"] = df["close"].mean()
+        df["EMA26"] = df["close"].mean()
+        df["MACD"] = 0
+        df["Signal"] = 0
+        df["RSI"] = 50
+        df["ATR"] = 0
+        df["ADX"] = 0
+        df["Stochastic"] = 50
+        df["BB_upper"] = df["close"].mean() * 1.1
+        df["BB_lower"] = df["close"].mean() * 0.9
+        df["PinBar"] = False
+        df["Engulfing"] = False
+        df["WavePoint"] = np.nan
+        df["MFI"] = 50
+        logging.warning(f"اندیکاتورها با مقادیر پیش‌فرض پر شدند برای ادامه فرآیند")
     return df
 
 # تأیید مولتی تایم‌فریم با وزن‌دهی
@@ -455,12 +487,21 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         return None
     logging.info(f"داده دریافت شد برای {symbol} @ {tf} در {time.time() - start_time:.2f} ثانیه, تعداد ردیف‌ها={len(df)}")
 
-    # محاسبه اندیکاتورها
+    # بررسی داده‌ها قبل از محاسبات
+    if df['close'].isnull().any() or df['high'].isnull().any() or df['low'].isnull().any() or df['volume'].isnull().any():
+        logging.error(f"داده‌های ناقص در {symbol} @ {tf}: close={df['close'].isnull().sum()}, high={df['high'].isnull().sum()}, low={df['low'].isnull().sum()}, volume={df['volume'].isnull().sum()}")
+        df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
+
+    # محاسبات اندیکاتورها با لاگ‌گذاری بهبودیافته
     logging.debug(f"شروع محاسبات اندیکاتورها برای {symbol} @ {tf}")
-    df = compute_indicators(df)
-    last = df.iloc[-1]
-    logging.debug(f"اندیکاتورها برای {symbol} @ {tf} محاسبه شد: آخرین RSI={last['RSI']:.2f}, MACD={last['MACD']:.2f}")
-    logging.debug(f"اندیکاتورها محاسبه شد برای {symbol} @ {tf}, آخرین قیمت={last['close']:.2f}, RSI={last['RSI']:.2f}")
+    try:
+        df = compute_indicators(df)
+        last = df.iloc[-1]
+        logging.debug(f"اندیکاتورها برای {symbol} @ {tf} محاسبه شد: آخرین RSI={last['RSI']:.2f}, MACD={last['MACD']:.2f}, close={last['close']:.2f}")
+    except Exception as e:
+        logging.error(f"خطا در محاسبات اندیکاتورها برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
+        return None
+    logging.debug(f"اتمام محاسبات اندیکاتورها برای {symbol} @ {tf} در {time.time() - start_time:.2f} ثانیه")
 
     # متغیر امتیازدهی
     score_long = 0
