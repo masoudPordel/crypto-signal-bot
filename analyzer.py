@@ -35,8 +35,8 @@ VOLUME_WINDOW = 20
 CACHE = {}
 CACHE_TTL = 600
 MAX_CONCURRENT_REQUESTS = 15
-WAIT_BETWEEN_REQUESTS = 0.3  # کاهش تأخیر برای بهبود سرعت
-WAIT_BETWEEN_CHUNKS = 2  # کاهش تأخیر بین دسته‌ها
+WAIT_BETWEEN_REQUESTS = 0.3
+WAIT_BETWEEN_CHUNKS = 2
 
 # متغیرهای شمارشگر رد شدن‌ها
 LIQUIDITY_REJECTS = 0
@@ -472,7 +472,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
     current_vol = df["volume"].iloc[-1]
     vol_mean = df["volume"].rolling(20).mean().iloc[-1]
     vol_std = df["volume"].rolling(20).std().iloc[-1]
-    vol_threshold = vol_mean + 0.5 * vol_std  # کاهش ضریب برای منطقی‌تر شدن آستانه
+    vol_threshold = vol_mean + 0.5 * vol_std
     vol_score = 10 if current_vol >= vol_threshold else -5
     score_long += vol_score
     score_short += vol_score
@@ -716,8 +716,8 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"سیگنال Short تولید شد: {result}")
         return result
     else:
-        # استراتژی رگرسیون خطی
-        if tf == "1d":
+        # استراتژی رگرسیون خطی موقتاً غیرفعال شده است
+        if False:  # شرط نادرست برای غیرفعال کردن
             logging.debug(f"ورود به استراتژی رگرسیون خطی برای {symbol} @ {tf}")
             floor_145, ceiling_145, slope_145, current_price = IndicatorCalculator.compute_linear_regression(df, 145)
             floor_360, ceiling_360, slope_360, _ = IndicatorCalculator.compute_linear_regression(df, 360)
