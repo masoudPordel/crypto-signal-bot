@@ -25,11 +25,9 @@ logging.basicConfig(
     ]
 )
 
-# کلیدهای API
-CMC_API_KEY = "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7"
-COINMARKETCAL_API_KEY = "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa"
-MEXC_API_KEY = "mxOvgIE3AY5RRGmXv"
-MEXC_SECRET_KEY = "fe9027867da14a82a908933a2b421c42"
+# کلیدهای API (فقط برای CMC و CoinMarketCal نیازه)
+CMC_API_KEY = os.getenv("CMC_API_KEY", "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7")
+COINMARKETCAL_API_KEY = os.getenv("COINMARKETCAL_API_KEY", "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa")
 TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 
 # پارامترهای اصلی
@@ -576,7 +574,6 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["long"]["indicators"] = indicator_score_long
         score_log["short"]["indicators"] = indicator_score_short
 
-        # Decision Tree به حالت کامل‌تر با لاگ‌گذاری دقیق‌تر
         logging.debug(f"شروع فیلتر Decision Tree برای {symbol} @ {tf}")
         signal_filter = SignalFilter()
         X_train = np.array([
@@ -674,8 +671,6 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 # اسکن همه نمادها
 async def scan_all_crypto_symbols(on_signal=None) -> None:
     exchange = ccxt.mexc({
-        'apiKey': MEXC_API_KEY,
-        'secret': MEXC_SECRET_KEY,
         'enableRateLimit': True,
         'rateLimit': 2000
     })
@@ -723,8 +718,6 @@ async def scan_all_crypto_symbols(on_signal=None) -> None:
 # اجرای اصلی
 async def main():
     exchange = ccxt.mexc({
-        'apiKey': MEXC_API_KEY,
-        'secret': MEXC_SECRET_KEY,
         'enableRateLimit': True,
         'rateLimit': 2000
     })
