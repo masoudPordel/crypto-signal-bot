@@ -14,6 +14,7 @@ import traceback
 from datetime import datetime, timedelta
 from sklearn.tree import DecisionTreeClassifier
 from typing import Optional, Dict, Any, List
+import asyncio
 
 # تنظیمات logging
 logging.basicConfig(
@@ -34,9 +35,9 @@ TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 VOLUME_WINDOW = 20
 CACHE = {}
 CACHE_TTL = 600
-MAX_CONCURRENT_REQUESTS = 5  # کاهش به 5 برای کاهش فشار روی API
-WAIT_BETWEEN_REQUESTS = 2.0  # افزایش به 2 ثانیه
-WAIT_BETWEEN_CHUNKS = 5      # بدون تغییر
+MAX_CONCURRENT_REQUESTS = 5
+WAIT_BETWEEN_REQUESTS = 2.0
+WAIT_BETWEEN_CHUNKS = 5
 
 # متغیرهای شمارشگر رد شدن‌ها
 LIQUIDITY_REJECTS = 0
@@ -383,7 +384,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         logging.warning(f"اندیکاتورها با مقادیر پیش‌فرض پر شدند برای ادامه فرآیند")
     return df
 
-# تأیید مولتی تایم‌فریم با وزن‌دهی
+# تأیید مولتی تایم‌فریم با وزن‌دهی و مدیریت بهتر
 async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, base_tf: str) -> float:
     weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "30m": 0.1}
     total_weight = 0
@@ -392,8 +393,10 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
     for tf, weight in weights.items():
         if tf == base_tf:
             continue
+        logging.debug(f"بررسی تایم‌فریم {tf} برای {symbol}")
         try:
-            df_tf = await get_ohlcv_cached(exchange, symbol, tf)
+            # تلاش برای دریافت داده با تایم‌اوت
+            df_tf = await asyncio.wait_for(get_ohlcv_cached(exchange, symbol, tf), timeout=10)
             if df_tf is None or len(df_tf) < 50:
                 logging.warning(f"داده ناکافی برای {symbol} @ {tf} در تأیید چندتایم‌فریمی")
                 continue
@@ -402,11 +405,15 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
             long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]
             score += (weight * 10) if long_trend else (-weight * 5)
             total_weight += weight
+            logging.debug(f"تایم‌فریم {tf} برای {symbol} پردازش شد: trend={long_trend}, score_added={weight * 10 if long_trend else -weight * 5}")
+        except asyncio.TimeoutError:
+            logging.error(f"تایم‌اوت در دریافت داده برای {symbol} @ {tf}")
+            continue
         except Exception as e:
-            logging.error(f"خطا در تأیید چندتایم‌فریمی برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
+            logging.error(f"خطا در پردازش تایم‌فریم {tf} برای {symbol}: {str(e)}, traceback={str(traceback.format_exc())}")
             continue
     final_score = score if total_weight > 0 else 0
-    logging.info(f"مولتی تایم‌فریم برای {symbol}: score={final_score:.2f}")
+    logging.info(f"مولتی تایم‌فریم برای {symbol} تکمیل شد: score={final_score:.2f}, total_weight={total_weight}")
     return final_score
 
 # دریافت داده‌ها با کش و مدیریت محدودیت API
@@ -565,7 +572,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             score_short += -mtf_score
             score_log["long"]["multi_timeframe"] = mtf_score
             score_log["short"]["multi_timeframe"] = -mtf_score
-            logging.debug(f"تأیید چندتایم‌فریمی برای {symbol} @ {tf}: score={mtf_score:.2f}")
+            logging.debug(f"تأیید چندتایم‌فریمی برای {symbol} @ {tf} تکمیل شد: score={mtf_score:.2f}")
         except Exception as e:
             logging.error(f"خطا در تأیید چندتایم‌فریمی برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
             score_log["long"]["multi_timeframe"] = 0
