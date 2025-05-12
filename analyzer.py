@@ -605,7 +605,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 85
+        THRESHOLD = 95
         if score_long >= THRESHOLD:
             entry = float(last["close"])
             atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
