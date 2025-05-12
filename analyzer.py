@@ -35,8 +35,8 @@ VOLUME_WINDOW = 20
 CACHE = {}
 CACHE_TTL = 600
 MAX_CONCURRENT_REQUESTS = 15
-WAIT_BETWEEN_REQUESTS = 0.5  # افزایش به 0.5 ثانیه
-WAIT_BETWEEN_CHUNKS = 3      # افزایش به 3 ثانیه
+WAIT_BETWEEN_REQUESTS = 1.0  # افزایش به 1 ثانیه
+WAIT_BETWEEN_CHUNKS = 5      # افزایش به 5 ثانیه
 
 # متغیرهای شمارشگر رد شدن‌ها
 LIQUIDITY_REJECTS = 0
@@ -355,8 +355,8 @@ def check_market_events(symbol: str) -> int:
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     logging.debug(f"شروع محاسبات اندیکاتورها برای دیتافریم با طول {len(df)}")
     try:
-        # پر کردن مقادیر ناقص با میانگین یا صفر
-        df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        # پر کردن مقادیر ناقص با روش به‌روز
+        df = df.ffill().bfill().fillna(0)
         if df['close'].isnull().any() or df['high'].isnull().any() or df['low'].isnull().any() or df['volume'].isnull().any():
             logging.warning(f"داده‌های ناقص در دیتافریم شناسایی شد، پر کردن با میانگین: close={df['close'].mean()}, volume={df['volume'].mean()}")
             df['close'] = df['close'].fillna(df['close'].mean())
@@ -384,7 +384,6 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         logging.debug(f"اندیکاتورها محاسبه شد: آخرین RSI={df['RSI'].iloc[-1]:.2f}, MACD={df['MACD'].iloc[-1]:.2f}")
     except Exception as e:
         logging.error(f"خطا در محاسبات اندیکاتورها: {str(e)}, traceback={str(traceback.format_exc())}")
-        # در صورت خطا، دیتافریم را با مقادیر پیش‌فرض پر می‌کنیم
         df["EMA12"] = df["close"].mean()
         df["EMA26"] = df["close"].mean()
         df["MACD"] = 0
@@ -424,7 +423,7 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
     logging.info(f"مولتی تایم‌فریم برای {symbol}: score={final_score:.2f}")
     return final_score
 
-# دریافت داده‌ها با کش
+# دریافت داده‌ها با کش و مدیریت محدودیت API
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit: int = 51) -> Optional[pd.DataFrame]:
     async with semaphore:
@@ -452,6 +451,14 @@ async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit:
             CACHE[key] = {"data": df.copy(), "time": now}
             logging.debug(f"داده کش شد برای {symbol} @ {tf}, اندازه دیتافریم={len(df)}")
             return df
+        except ccxt.RequestTimeout as e:
+            logging.error(f"تایم‌اوت در دریافت داده برای {symbol} @ {tf}: {str(e)}")
+            await asyncio.sleep(5)  # تأخیر اضافی در صورت خطا
+            return None
+        except ccxt.RateLimitExceeded as e:
+            logging.error(f"محدودیت نرخ API برای {symbol} @ {tf}: {str(e)}")
+            await asyncio.sleep(10)  # تأخیر بیشتر در صورت محدودیت نرخ
+            return None
         except Exception as e:
             logging.error(f"خطا در دریافت داده برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
             return None
@@ -490,7 +497,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
     # بررسی داده‌ها قبل از محاسبات
     if df['close'].isnull().any() or df['high'].isnull().any() or df['low'].isnull().any() or df['volume'].isnull().any():
         logging.error(f"داده‌های ناقص در {symbol} @ {tf}: close={df['close'].isnull().sum()}, high={df['high'].isnull().sum()}, low={df['low'].isnull().sum()}, volume={df['volume'].isnull().sum()}")
-        df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        df = df.ffill().bfill().fillna(0)
 
     # محاسبات اندیکاتورها با لاگ‌گذاری بهبودیافته
     logging.debug(f"شروع محاسبات اندیکاتورها برای {symbol} @ {tf}")
@@ -562,12 +569,17 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
     # تأیید چندتایم‌فریمی
     logging.debug(f"دعوت از multi_timeframe_confirmation برای {symbol} @ {tf}")
-    mtf_score = await multi_timeframe_confirmation(exchange, symbol, tf)
-    score_long += mtf_score
-    score_short += -mtf_score
-    score_log["long"]["multi_timeframe"] = mtf_score
-    score_log["short"]["multi_timeframe"] = -mtf_score
-    logging.debug(f"تأیید چندتایم‌فریمی برای {symbol} @ {tf}: score={mtf_score:.2f}")
+    try:
+        mtf_score = await multi_timeframe_confirmation(exchange, symbol, tf)
+        score_long += mtf_score
+        score_short += -mtf_score
+        score_log["long"]["multi_timeframe"] = mtf_score
+        score_log["short"]["multi_timeframe"] = -mtf_score
+        logging.debug(f"تأیید چندتایم‌فریمی برای {symbol} @ {tf}: score={mtf_score:.2f}")
+    except Exception as e:
+        logging.error(f"خطا در تأیید چندتایم‌فریمی برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
+        score_log["long"]["multi_timeframe"] = 0
+        score_log["short"]["multi_timeframe"] = 0
 
     # محاسبه سطوح حمایت و مقاومت
     logging.debug(f"شروع محاسبه حمایت/مقاومت برای {symbol} @ {tf}")
@@ -597,103 +609,133 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
     # بررسی نقدینگی
     logging.debug(f"شروع بررسی نقدینگی برای {symbol} @ {tf}")
-    spread, liquidity_score = await check_liquidity(exchange, symbol, df)
-    if spread == float('inf'):
-        spread = 0.0
-    score_long += liquidity_score
-    score_short += liquidity_score
-    score_log["long"]["liquidity"] = liquidity_score
-    score_log["short"]["liquidity"] = liquidity_score
-    logging.debug(f"نقدینگی برای {symbol} @ {tf}: spread={spread:.4f}, score={liquidity_score}")
+    try:
+        spread, liquidity_score = await check_liquidity(exchange, symbol, df)
+        if spread == float('inf'):
+            spread = 0.0
+        score_long += liquidity_score
+        score_short += liquidity_score
+        score_log["long"]["liquidity"] = liquidity_score
+        score_log["short"]["liquidity"] = liquidity_score
+        logging.debug(f"نقدینگی برای {symbol} @ {tf}: spread={spread:.4f}, score={liquidity_score}")
+    except Exception as e:
+        logging.error(f"خطا در بررسی نقدینگی برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
+        score_log["long"]["liquidity"] = 0
+        score_log["short"]["liquidity"] = 0
 
     # امتیاز فاندامنتال
     logging.debug(f"شروع بررسی رویدادهای فاندامنتال برای {symbol} @ {tf}")
-    fundamental_score = check_market_events(symbol)
-    score_long += fundamental_score
-    score_short += fundamental_score
-    score_log["long"]["fundamental"] = fundamental_score
-    score_log["short"]["fundamental"] = fundamental_score
-    logging.debug(f"رویدادهای فاندامنتال برای {symbol} @ {tf}: score={fundamental_score}")
+    try:
+        fundamental_score = check_market_events(symbol)
+        score_long += fundamental_score
+        score_short += fundamental_score
+        score_log["long"]["fundamental"] = fundamental_score
+        score_log["short"]["fundamental"] = fundamental_score
+        logging.debug(f"رویدادهای فاندامنتال برای {symbol} @ {tf}: score={fundamental_score}")
+    except Exception as e:
+        logging.error(f"خطا در بررسی رویدادهای فاندامنتال برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
+        score_log["long"]["fundamental"] = 0
+        score_log["short"]["fundamental"] = 0
 
     # روانشناسی بازار
-    psych_long = "اشباع فروش" if last["RSI"] < 40 else "اشباع خرید" if last["RSI"] > 60 else "متعادل"
-    psych_short = "اشباع خرید" if last["RSI"] > 60 else "اشباع فروش" if last["RSI"] < 40 else "متعادل"
-    psych_score_long = 10 if psych_long == "اشباع فروش" else -10 if psych_long == "اشباع خرید" else 0
-    psych_score_short = 10 if psych_short == "اشباع خرید" else -10 if psych_short == "اشباع فروش" else 0
-    score_long += psych_score_long
-    score_short += psych_score_short
-    score_log["long"]["psychology"] = psych_score_long
-    score_log["short"]["psychology"] = psych_score_short
-    logging.debug(f"روانشناسی برای {symbol} @ {tf}: psych_long={psych_long}, psych_short={psych_short}, scores={psych_score_long}/{psych_score_short}")
+    try:
+        psych_long = "اشباع فروش" if last["RSI"] < 40 else "اشباع خرید" if last["RSI"] > 60 else "متعادل"
+        psych_short = "اشباع خرید" if last["RSI"] > 60 else "اشباع فروش" if last["RSI"] < 40 else "متعادل"
+        psych_score_long = 10 if psych_long == "اشباع فروش" else -10 if psych_long == "اشباع خرید" else 0
+        psych_score_short = 10 if psych_short == "اشباع خرید" else -10 if psych_short == "اشباع فروش" else 0
+        score_long += psych_score_long
+        score_short += psych_score_short
+        score_log["long"]["psychology"] = psych_score_long
+        score_log["short"]["psychology"] = psych_score_short
+        logging.debug(f"روانشناسی برای {symbol} @ {tf}: psych_long={psych_long}, psych_short={psych_short}, scores={psych_score_long}/{psych_score_short}")
+    except Exception as e:
+        logging.error(f"خطا در بررسی روانشناسی برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
+        score_log["long"]["psychology"] = 0
+        score_log["short"]["psychology"] = 0
 
     # تشخیص واگرایی‌ها
-    bullish_rsi_div, bearish_rsi_div = PatternDetector.detect_rsi_divergence(df)
-    div_score_long = 10 if bullish_rsi_div else 0
-    div_score_short = 10 if bearish_rsi_div else 0
-    score_long += div_score_long
-    score_short += div_score_short
-    score_log["long"]["rsi_divergence"] = div_score_long
-    score_log["short"]["rsi_divergence"] = div_score_short
-    logging.debug(f"واگرایی برای {symbol} @ {tf}: bullish={bullish_rsi_div}, bearish={bearish_rsi_div}, scores={div_score_long}/{div_score_short}")
+    try:
+        bullish_rsi_div, bearish_rsi_div = PatternDetector.detect_rsi_divergence(df)
+        div_score_long = 10 if bullish_rsi_div else 0
+        div_score_short = 10 if bearish_rsi_div else 0
+        score_long += div_score_long
+        score_short += div_score_short
+        score_log["long"]["rsi_divergence"] = div_score_long
+        score_log["short"]["rsi_divergence"] = div_score_short
+        logging.debug(f"واگرایی برای {symbol} @ {tf}: bullish={bullish_rsi_div}, bearish={bearish_rsi_div}, scores={div_score_long}/{div_score_short}")
+    except Exception as e:
+        logging.error(f"خطا در تشخیص واگرایی برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
+        score_log["long"]["rsi_divergence"] = 0
+        score_log["short"]["rsi_divergence"] = 0
 
     # شرایط اندیکاتورها
-    conds_long = {
-        "PinBar": last["PinBar"] and last["lower"] > 2 * last["body"],
-        "Engulfing": last["Engulfing"] and last["close"] > last["open"],
-        "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and long_trend,
-        "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
-        "RSI_Oversold": last["RSI"] < 30,
-        "Stochastic_Oversold": last["Stochastic"] < 20,
-        "BB_Breakout": last["close"] > last["BB_upper"],
-        "MFI_Oversold": last["MFI"] < 20
-    }
-    conds_short = {
-        "PinBar": last["PinBar"] and last["upper"] > 2 * last["body"],
-        "Engulfing": last["Engulfing"] and last["close"] < last["open"],
-        "EMA_Cross": df["EMA12"].iloc[-2] > df["EMA26"].iloc[-2] and short_trend,
-        "MACD_Cross": df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1],
-        "RSI_Overbought": last["RSI"] > 70,
-        "Stochastic_Overbought": last["Stochastic"] > 80,
-        "BB_Breakout": last["close"] < last["BB_lower"],
-        "MFI_Overbought": last["MFI"] > 80
-    }
-    indicator_score_long = sum(5 for v in conds_long.values() if v)
-    indicator_score_short = sum(5 for v in conds_short.values() if v)
-    score_long += indicator_score_long
-    score_short += indicator_score_short
-    score_log["long"]["indicators"] = indicator_score_long
-    score_log["short"]["indicators"] = indicator_score_short
-    logging.debug(f"شرایط اندیکاتورها برای {symbol} @ {tf}: long_score={indicator_score_long}, short_score={indicator_score_short}, conditions_long={conds_long}")
+    try:
+        conds_long = {
+            "PinBar": last["PinBar"] and last["lower"] > 2 * last["body"],
+            "Engulfing": last["Engulfing"] and last["close"] > last["open"],
+            "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and long_trend,
+            "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
+            "RSI_Oversold": last["RSI"] < 30,
+            "Stochastic_Oversold": last["Stochastic"] < 20,
+            "BB_Breakout": last["close"] > last["BB_upper"],
+            "MFI_Oversold": last["MFI"] < 20
+        }
+        conds_short = {
+            "PinBar": last["PinBar"] and last["upper"] > 2 * last["body"],
+            "Engulfing": last["Engulfing"] and last["close"] < last["open"],
+            "EMA_Cross": df["EMA12"].iloc[-2] > df["EMA26"].iloc[-2] and short_trend,
+            "MACD_Cross": df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1],
+            "RSI_Overbought": last["RSI"] > 70,
+            "Stochastic_Overbought": last["Stochastic"] > 80,
+            "BB_Breakout": last["close"] < last["BB_lower"],
+            "MFI_Overbought": last["MFI"] > 80
+        }
+        indicator_score_long = sum(5 for v in conds_long.values() if v)
+        indicator_score_short = sum(5 for v in conds_short.values() if v)
+        score_long += indicator_score_long
+        score_short += indicator_score_short
+        score_log["long"]["indicators"] = indicator_score_long
+        score_log["short"]["indicators"] = indicator_score_short
+        logging.debug(f"شرایط اندیکاتورها برای {symbol} @ {tf}: long_score={indicator_score_long}, short_score={indicator_score_short}, conditions_long={conds_long}")
+    except Exception as e:
+        logging.error(f"خطا در بررسی شرایط اندیکاتورها برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
+        score_log["long"]["indicators"] = 0
+        score_log["short"]["indicators"] = 0
 
     # فیلتر Decision Tree
     logging.debug(f"شروع فیلتر Decision Tree برای {symbol} @ {tf}")
-    signal_filter = SignalFilter()
-    X_train = np.array([
-        [30, 25, 2, 0.01, 0.05, 0.05, 0.01, 10, -10],
-        [70, 20, 1, 0.02, 0.03, 0.03, 0.02, -10, 10],
-        [50, 30, 1.5, 0.01, 0.04, 0.04, 0.01, 0, 0],
-    ])
-    y_train = np.array([1, 0, 1])
-    signal_filter.train(X_train, y_train)
-    distance_to_resistance = locals().get('distance_to_resistance', 0.0)
-    distance_to_support = locals().get('distance_to_support', 0.0)
-    features = [
-        last["RSI"],
-        last["ADX"],
-        current_vol / vol_avg if vol_avg != 0 else 0,
-        volatility,
-        distance_to_resistance,
-        distance_to_support,
-        spread,
-        psych_score_long,
-        psych_score_short
-    ]
-    dt_score = signal_filter.predict(features)
-    score_long += dt_score
-    score_short += dt_score
-    score_log["long"]["decision_tree"] = dt_score
-    score_log["short"]["decision_tree"] = dt_score
-    logging.debug(f"فیلتر Decision Tree برای {symbol} @ {tf}: features={features}, score={dt_score:.2f}")
+    try:
+        signal_filter = SignalFilter()
+        X_train = np.array([
+            [30, 25, 2, 0.01, 0.05, 0.05, 0.01, 10, -10],
+            [70, 20, 1, 0.02, 0.03, 0.03, 0.02, -10, 10],
+            [50, 30, 1.5, 0.01, 0.04, 0.04, 0.01, 0, 0],
+        ])
+        y_train = np.array([1, 0, 1])
+        signal_filter.train(X_train, y_train)
+        distance_to_resistance = locals().get('distance_to_resistance', 0.0)
+        distance_to_support = locals().get('distance_to_support', 0.0)
+        features = [
+            last["RSI"],
+            last["ADX"],
+            current_vol / vol_avg if vol_avg != 0 else 0,
+            volatility,
+            distance_to_resistance,
+            distance_to_support,
+            spread if 'spread' in locals() else 0.0,
+            psych_score_long if 'psych_score_long' in locals() else 0,
+            psych_score_short if 'psych_score_short' in locals() else 0
+        ]
+        dt_score = signal_filter.predict(features)
+        score_long += dt_score
+        score_short += dt_score
+        score_log["long"]["decision_tree"] = dt_score
+        score_log["short"]["decision_tree"] = dt_score
+        logging.debug(f"فیلتر Decision Tree برای {symbol} @ {tf}: features={features}, score={dt_score:.2f}")
+    except Exception as e:
+        logging.error(f"خطا در فیلتر Decision Tree برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
+        score_log["long"]["decision_tree"] = 0
+        score_log["short"]["decision_tree"] = 0
 
     # لاگ‌گذاری امتیازها
     logging.info(f"امتیاز نهایی برای {symbol} @ {tf}: score_long={score_long:.2f}, score_short={score_short:.2f}")
@@ -702,131 +744,65 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
     # تصمیم‌گیری نهایی
     THRESHOLD = 70
-    if score_long >= THRESHOLD:
-        entry = float(last["close"])
-        atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
-        sl = entry - 2 * atr_avg
-        tp = entry + 3 * atr_avg
-        rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
-        position_size = calculate_position_size(10000, 1, entry, sl)
-        signal_strength = "قوی" if score_long > 80 else "متوسط"
-        result = {
-            "نوع معامله": "Long",
-            "نماد": symbol,
-            "تایم‌فریم": tf,
-            "قیمت ورود": entry,
-            "حد ضرر": sl,
-            "هدف سود": tp,
-            "ریسک به ریوارد": rr,
-            "حجم پوزیشن": position_size,
-            "سطح اطمینان": min(score_long, 100),
-            "امتیاز": score_long,
-            "قدرت سیگنال": signal_strength,
-            "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
-            "روانشناسی": psych_long,
-            "روند بازار": "صعودی",
-            "فاندامنتال": f"امتیاز: {fundamental_score}"
-        }
-        logging.info(f"سیگنال Long تولید شد: {result}")
-        return result
-    elif score_short >= THRESHOLD:
-        entry = float(last["close"])
-        atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
-        sl = entry + 2 * atr_avg
-        tp = entry - 3 * atr_avg
-        rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
-        position_size = calculate_position_size(10000, 1, entry, sl)
-        signal_strength = "قوی" if score_short > 80 else "متوسط"
-        result = {
-            "نوع معامله": "Short",
-            "نماد": symbol,
-            "تایم‌فریم": tf,
-            "قیمت ورود": entry,
-            "حد ضرر": sl,
-            "هدف سود": tp,
-            "ریسک به ریوارد": rr,
-            "حجم پوزیشن": position_size,
-            "سطح اطمینان": min(score_short, 100),
-            "امتیاز": score_short,
-            "قدرت سیگنال": signal_strength,
-            "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
-            "روانشناسی": psych_short,
-            "روند بازار": "نزولی",
-            "فاندامنتال": f"امتیاز: {fundamental_score}"
-        }
-        logging.info(f"سیگنال Short تولید شد: {result}")
-        return result
-    else:
-        # استراتژی رگرسیون خطی موقتاً غیرفعال شده است
-        if False:  # شرط نادرست برای غیرفعال کردن
-            logging.debug(f"ورود به استراتژی رگرسیون خطی برای {symbol} @ {tf}")
-            floor_145, ceiling_145, slope_145, current_price = IndicatorCalculator.compute_linear_regression(df, 145)
-            floor_360, ceiling_360, slope_360, _ = IndicatorCalculator.compute_linear_regression(df, 360)
-            logging.debug(f"رگرسیون خطی برای {symbol} @ {tf}: floor_145={floor_145}, ceiling_145={ceiling_145}, floor_360={floor_360}, ceiling_360={ceiling_360}")
-            if floor_145 is None or floor_360 is None or current_price is None:
-                logging.warning(f"داده‌های رگرسیون برای {symbol} @ {tf} ناکافی است")
-                floor_145 = floor_360 = current_price = df['close'].mean()
-            proximity_threshold = 0.02
-            floor_hit_145 = abs(current_price - floor_145) / floor_145 <= proximity_threshold
-            floor_hit_360 = abs(current_price - floor_360) / floor_360 <= proximity_threshold
-            strong_support_145 = abs(current_price - support) / current_price <= proximity_threshold
-            strong_support_360 = abs(current_price - support) / current_price <= proximity_threshold
-            if (floor_hit_145 or floor_hit_360) and (strong_support_145 or strong_support_360):
-                entry = float(current_price)
-                nearest_support = support * 0.99
-                nearest_resistance = resistance * 0.99
-                sl = nearest_support
-                tp = nearest_resistance
-                rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
-                position_size = calculate_position_size(10000, 1, entry, sl)
-                result = {
-                    "نوع معامله": "Long (نوسان‌گیری رگرسیون)",
-                    "نماد": symbol,
-                    "تایم‌فریم": tf,
-                    "قیمت ورود": entry,
-                    "حد ضرر": sl,
-                    "هدف سود": tp,
-                    "ریسک به ریوارد": rr,
-                    "حجم پوزیشن": position_size,
-                    "سطح اطمینان": 70,
-                    "قدرت سیگنال": "متوسط",
-                    "تحلیل": f"قیمت به کف رگرسیون رسید (۱۴۵ روز: floor={floor_145:.2f}, ۳۶۰ روز: floor={floor_360:.2f})",
-                    "روانشناسی": psych_long,
-                    "روند بازار": "صعودی (رگرسیون)",
-                    "فاندامنتال": f"امتیاز: {fundamental_score}"
-                }
-                logging.info(f"سیگنال نوسان‌گیری Long (رگرسیون): {result}")
-                return result
-            ceiling_hit_145 = abs(current_price - ceiling_145) / ceiling_145 <= proximity_threshold
-            ceiling_hit_360 = abs(current_price - ceiling_360) / ceiling_360 <= proximity_threshold
-            strong_resistance_145 = abs(current_price - resistance) / current_price <= proximity_threshold
-            strong_resistance_360 = abs(current_price - resistance) / current_price <= proximity_threshold
-            if (ceiling_hit_145 or ceiling_hit_360) and (strong_resistance_145 or strong_resistance_360):
-                entry = float(current_price)
-                nearest_resistance = resistance * 1.01
-                nearest_support = support * 1.01
-                sl = nearest_resistance
-                tp = nearest_support
-                rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
-                position_size = calculate_position_size(10000, 1, entry, sl)
-                result = {
-                    "نوع معامله": "Short (نوسان‌گیری رگرسیون)",
-                    "نماد": symbol,
-                    "تایم‌فریم": tf,
-                    "قیمت ورود": entry,
-                    "حد ضرر": sl,
-                    "هدف سود": tp,
-                    "ریسک به ریوارد": rr,
-                    "حجم پوزیشن": position_size,
-                    "سطح اطمینان": 70,
-                    "قدرت سیگنال": "متوسط",
-                    "تحلیل": f"قیمت به سقف رگرسیون رسید (۱۴۵ روز: ceiling={ceiling_145:.2f}, ۳۶۰ روز: ceiling={ceiling_360:.2f})",
-                    "روانشناسی": psych_short,
-                    "روند بازار": "نزولی (رگرسیون)",
-                    "فاندامنتال": f"امتیاز: {fundamental_score}"
-                }
-                logging.info(f"سیگنال نوسان‌گیری Short (رگرسیون): {result}")
-                return result
+    try:
+        if score_long >= THRESHOLD:
+            entry = float(last["close"])
+            atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
+            sl = entry - 2 * atr_avg
+            tp = entry + 3 * atr_avg
+            rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
+            position_size = calculate_position_size(10000, 1, entry, sl)
+            signal_strength = "قوی" if score_long > 80 else "متوسط"
+            result = {
+                "نوع معامله": "Long",
+                "نماد": symbol,
+                "تایم‌فریم": tf,
+                "قیمت ورود": entry,
+                "حد ضرر": sl,
+                "هدف سود": tp,
+                "ریسک به ریوارد": rr,
+                "حجم پوزیشن": position_size,
+                "سطح اطمینان": min(score_long, 100),
+                "امتیاز": score_long,
+                "قدرت سیگنال": signal_strength,
+                "تحلیل": " | ".join([k for k, v in conds_long.items() if v]) if 'conds_long' in locals() else "",
+                "روانشناسی": psych_long if 'psych_long' in locals() else "نامشخص",
+                "روند بازار": "صعودی",
+                "فاندامنتال": f"امتیاز: {fundamental_score}" if 'fundamental_score' in locals() else "نامشخص"
+            }
+            logging.info(f"سیگنال Long تولید شد: {result}")
+            return result
+        elif score_short >= THRESHOLD:
+            entry = float(last["close"])
+            atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
+            sl = entry + 2 * atr_avg
+            tp = entry - 3 * atr_avg
+            rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
+            position_size = calculate_position_size(10000, 1, entry, sl)
+            signal_strength = "قوی" if score_short > 80 else "متوسط"
+            result = {
+                "نوع معامله": "Short",
+                "نماد": symbol,
+                "تایم‌فریم": tf,
+                "قیمت ورود": entry,
+                "حد ضرر": sl,
+                "هدف سود": tp,
+                "ریسک به ریوارد": rr,
+                "حجم پوزیشن": position_size,
+                "سطح اطمینان": min(score_short, 100),
+                "امتیاز": score_short,
+                "قدرت سیگنال": signal_strength,
+                "تحلیل": " | ".join([k for k, v in conds_short.items() if v]) if 'conds_short' in locals() else "",
+                "روانشناسی": psych_short if 'psych_short' in locals() else "نامشخص",
+                "روند بازار": "نزولی",
+                "فاندامنتال": f"امتیاز: {fundamental_score}" if 'fundamental_score' in locals() else "نامشخص"
+            }
+            logging.info(f"سیگنال Short تولید شد: {result}")
+            return result
+    except Exception as e:
+        logging.error(f"خطا در تصمیم‌گیری نهایی برای {symbol} @ {tf}: {str(e)}, traceback={str(traceback.format_exc())}")
+        return None
+
     logging.info(f"سیگنال برای {symbol} @ {tf} رد شد: score_long={score_long:.2f}, score_short={score_short:.2f}")
     return None
 
