@@ -547,32 +547,37 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["long"]["rsi_divergence"] = div_score_long
         score_log["short"]["rsi_divergence"] = div_score_short
 
+        # تغییرات اعمال‌شده: شرایط سخت‌گیرانه‌تر برای فیلترهای تکنیکال
+        min_conditions = 2
         conds_long = {
-            "PinBar": last["PinBar"] and last["lower"] > 2 * last["body"],
-            "Engulfing": last["Engulfing"] and last["close"] > last["open"],
-            "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and long_trend,
-            "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1],
-            "RSI_Oversold": last["RSI"] < 30,
-            "Stochastic_Oversold": last["Stochastic"] < 20,
-            "BB_Breakout": last["close"] > last["BB_upper"],
-            "MFI_Oversold": last["MFI"] < 20
+            "PinBar": last["PinBar"] and last["lower"] > 3 * last["body"],
+            "Engulfing": last["Engulfing"] and last["close"] > last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
+            "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and long_trend and (df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1] * 1.05),
+            "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1] and (df["MACD"].iloc[-1] > 0),
+            "RSI_Oversold": last["RSI"] < 25,
+            "Stochastic_Oversold": last["Stochastic"] < 15,
+            "BB_Breakout": last["close"] > last["BB_upper"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
+            "MFI_Oversold": last["MFI"] < 15,
+            "ADX_Strong": last["ADX"] > 25
         }
         conds_short = {
-            "PinBar": last["PinBar"] and last["upper"] > 2 * last["body"],
-            "Engulfing": last["Engulfing"] and last["close"] < last["open"],
-            "EMA_Cross": df["EMA12"].iloc[-2] > df["EMA26"].iloc[-2] and short_trend,
-            "MACD_Cross": df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1],
-            "RSI_Overbought": last["RSI"] > 70,
-            "Stochastic_Overbought": last["Stochastic"] > 80,
-            "BB_Breakout": last["close"] < last["BB_lower"],
-            "MFI_Overbought": last["MFI"] > 80
+            "PinBar": last["PinBar"] and last["upper"] > 3 * last["body"],
+            "Engulfing": last["Engulfing"] and last["close"] < last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
+            "EMA_Cross": df["EMA12"].iloc[-2] > df["EMA26"].iloc[-2] and short_trend and (df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1] * 0.95),
+            "MACD_Cross": df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1] and (df["MACD"].iloc[-1] < 0),
+            "RSI_Overbought": last["RSI"] > 75,
+            "Stochastic_Overbought": last["Stochastic"] > 85,
+            "BB_Breakout": last["close"] < last["BB_lower"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
+            "MFI_Overbought": last["MFI"] > 85,
+            "ADX_Strong": last["ADX"] > 25
         }
-        indicator_score_long = sum(5 for v in conds_long.values() if v)
-        indicator_score_short = sum(5 for v in conds_short.values() if v)
+        indicator_score_long = sum(5 for v in conds_long.values() if v) if sum(1 for v in conds_long.values() if v) >= min_conditions else 0
+        indicator_score_short = sum(5 for v in conds_short.values() if v) if sum(1 for v in conds_short.values() if v) >= min_conditions else 0
         score_long += indicator_score_long
         score_short += indicator_score_short
         score_log["long"]["indicators"] = indicator_score_long
         score_log["short"]["indicators"] = indicator_score_short
+        logging.debug(f"شرایط اندیکاتورها برای {symbol} @ {tf}: long_score={indicator_score_long}, short_score={indicator_score_short}, conditions_long={conds_long}")
 
         logging.debug(f"شروع فیلتر Decision Tree برای {symbol} @ {tf}")
         signal_filter = SignalFilter()
@@ -605,7 +610,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 95
+        THRESHOLD = 85
         if score_long >= THRESHOLD:
             entry = float(last["close"])
             atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
