@@ -537,7 +537,8 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
             continue
         try:
             df_tf = await get_ohlcv_cached(exchange, symbol, tf)
-            if df_tf is None or len(df_tf) < 50:
+            if df_tf is None or (len(df_tf) < 50 and tf != "1d") or (len(df_tf) < 30 and tf == "1d"):
+                logging.warning(f"داده ناکافی برای {symbol} @ {tf} در تأیید مولتی تایم‌فریم: تعداد کندل‌ها={len(df_tf) if df_tf is not None else 0}")
                 continue
             df_tf["EMA12"] = df_tf["close"].ewm(span=12).mean()
             df_tf["EMA26"] = df_tf["close"].ewm(span=26).mean()
@@ -557,6 +558,8 @@ async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit:
     async with semaphore:
         await asyncio.sleep(WAIT_BETWEEN_REQUESTS)
         key = f"{symbol}_{tf}_{limit}"
+        if tf == "1d":
+            limit = 100  # افزایش به 100 کندل برای 1d
         now = time.time()
         logging.debug(f"شروع دریافت داده برای {symbol} @ {tf}, key={key}")
         if key in CACHE and now - CACHE[key]["time"] < CACHE_TTL:
@@ -640,12 +643,14 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_short = 0
         score_log = {"long": {}, "short": {}}
 
+        # محاسبه حجم
         vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
         current_vol = df["volume"].iloc[-1]
         vol_mean = df["volume"].rolling(20).mean().iloc[-1]
         vol_std = df["volume"].rolling(20).std().iloc[-1]
-        vol_threshold = vol_mean + 0.2 * vol_std  # شل‌تر کردن شرط حجم
-        vol_score = 10 if current_vol >= vol_threshold else -5
+        logging.info(f"داده‌های حجم خام برای {symbol} @ {tf}: {df['volume'].tail(5).to_dict()}")  # لاگ جدید
+        vol_threshold = vol_mean  # فقط میانگین
+        vol_score = 10 if current_vol >= vol_threshold else -2  # کاهش جریمه
         score_long += vol_score
         score_short += vol_score
         score_log["long"]["volume"] = vol_score
