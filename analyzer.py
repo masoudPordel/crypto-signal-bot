@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from sklearn.tree import DecisionTreeClassifier
 from typing import Optional, Dict, Any, List
 
+# تنظیم لاگ‌ها
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s - [File: %(filename)s | Line: %(lineno)d | Func: %(funcName)s]',
@@ -24,6 +25,7 @@ logging.basicConfig(
     ]
 )
 
+# تنظیمات ثابت
 CMC_API_KEY = os.getenv("CMC_API_KEY", "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7")
 COINMARKETCAL_API_KEY = os.getenv("COINMARKETCAL_API_KEY", "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa")
 TIMEFRAMES = ["15m", "1h", "4h", "1d"]
@@ -39,6 +41,7 @@ LIQUIDITY_REJECTS = 0
 VOLUME_REJECTS = 0
 SR_REJECTS = 0
 
+# تابع دریافت آیدی کوین از CMC
 def get_coin_id(symbol: str) -> Optional[int]:
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/map"
     headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
@@ -58,6 +61,7 @@ def get_coin_id(symbol: str) -> Optional[int]:
         logging.error(f"خطا در دریافت آیدی برای {symbol}: {e}")
         return None
 
+# تابع دریافت 500 نماد برتر از CMC
 def get_top_500_symbols_from_cmc() -> List[str]:
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
     headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
@@ -72,6 +76,7 @@ def get_top_500_symbols_from_cmc() -> List[str]:
         logging.error(f"خطا در دریافت از CMC: {e}")
         return []
 
+# تابع دریافت شاخص ترس و طمع
 def get_fear_and_greed_index() -> int:
     url = "https://api.alternative.me/fng/?limit=1"
     try:
@@ -84,6 +89,7 @@ def get_fear_and_greed_index() -> int:
         logging.error(f"خطا در دریافت شاخص ترس و طمع: {e}")
         return 50
 
+# کلاس محاسبه اندیکاتورها
 class IndicatorCalculator:
     @staticmethod
     def compute_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
@@ -138,6 +144,7 @@ class IndicatorCalculator:
         mfi = 100 - (100 / (1 + positive_flow / negative_flow.replace(0, 1e-10)))
         return mfi
 
+# کلاس تشخیص الگوها
 class PatternDetector:
     @staticmethod
     def detect_pin_bar(df: pd.DataFrame) -> pd.Series:
@@ -223,6 +230,7 @@ class PatternDetector:
             bearish_divergence = (last_price_high > prev_price_high * 0.98) and (last_rsi_high < prev_rsi_high * 1.02)
         return bullish_divergence, bearish_divergence
 
+# کلاس فیلتر سیگنال
 class SignalFilter:
     def __init__(self):
         self.model = DecisionTreeClassifier(max_depth=3)
@@ -249,6 +257,7 @@ class SignalFilter:
             logging.error(f"خطا در پیش‌بینی Decision Tree: {e}, traceback={str(traceback.format_exc())}")
             return 0
 
+# تابع بررسی نقدینگی
 async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame) -> tuple:
     global LIQUIDITY_REJECTS
     try:
@@ -288,6 +297,7 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return float('inf'), 0
 
+# تابع بررسی رویدادهای بازار
 def check_market_events(symbol: str) -> int:
     coin_id = get_coin_id(symbol.split('/')[0])
     if not coin_id:
@@ -338,6 +348,7 @@ def check_market_events(symbol: str) -> int:
         logging.error(f"خطا در دریافت رویدادها برای {symbol}: {e}")
         return 0
 
+# تابع محاسبه اندیکاتورها
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df = df.ffill().bfill().fillna(0)
@@ -374,6 +385,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         logging.warning(f"اندیکاتورها با مقادیر پیش‌فرض پر شدند")
     return df
 
+# تابع تحلیل ساختار بازار
 async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict[str, Any]:
     try:
         logging.info(f"شروع تحلیل ساختار بازار برای {symbol} در تایم‌فریم 4h")
@@ -418,6 +430,7 @@ async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict
         logging.error(f"خطا در تحلیل ساختار بازار برای {symbol} @ 4h: {str(e)}")
         return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50}
 
+# تابع دریافت قیمت واقعی
 async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int = 3) -> Optional[float]:
     attempt = 0
     last_ticker = None
@@ -451,6 +464,7 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
     logging.error(f"ناتوانی در دریافت قیمت برای {symbol} پس از {max_attempts} تلاش")
     return None
 
+# تابع پیدا کردن نقطه ورود
 async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: str, support: float, resistance: float) -> Optional[float]:
     try:
         logging.info(f"شروع پیدا کردن نقطه ورود برای {symbol} در تایم‌فریم 15m - نوع سیگنال: {signal_type}")
@@ -503,6 +517,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
         logging.error(f"خطا در پیدا کردن نقطه ورود برای {symbol} @ 15m: {str(e)}")
         return None
 
+# تابع تأیید مولتی تایم‌فریم
 async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, base_tf: str) -> float:
     weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "15m": 0.1}
     total_weight = 0
@@ -527,7 +542,10 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
     logging.info(f"مولتی تایم‌فریم برای {symbol} تکمیل شد: score={final_score:.2f}, total_weight={total_weight}")
     return final_score
 
+# تنظیم سماфор برای کنترل درخواست‌ها
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+# تابع دریافت داده کندل‌ها با کش
 async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit: int = 30) -> Optional[pd.DataFrame]:
     async with semaphore:
         await asyncio.sleep(WAIT_BETWEEN_REQUESTS)
@@ -562,6 +580,7 @@ async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit:
             logging.error(f"خطا در دریافت داده برای {symbol} @ {tf}: {str(e)}")
             return None
 
+# تابع محاسبه حجم پوزیشن
 def calculate_position_size(account_balance: float, risk_percentage: float, entry: float, stop_loss: float) -> float:
     if entry is None or stop_loss is None or entry == 0 or stop_loss == 0:
         logging.warning(f"مقادیر نامعتبر برای محاسبه حجم پوزیشن: entry={entry}, stop_loss={stop_loss}")
@@ -571,11 +590,13 @@ def calculate_position_size(account_balance: float, risk_percentage: float, entr
     position_size = risk_amount / distance if distance != 0 else 0
     return round(position_size, 2)
 
+# تابع تست ablation
 def ablation_test(symbol_results: list, filter_name: str) -> int:
     total_signals = len([r for r in symbol_results if r is not None])
     logging.info(f"Ablation Test برای فیلتر {filter_name}: تعداد سیگنال‌های اولیه={total_signals}")
     return total_signals
 
+# تابع تحلیل نماد
 async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optional[dict]:
     global VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
@@ -685,7 +706,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_long += liquidity_score
         score_short += liquidity_score
         score_log["long"]["liquidity"] = liquidity_score
-        score_log["short"]["liquidity"] = liquidity_score"
+        score_log["short"]["liquidity"] = liquidity_score
         if liquidity_score < 0:
             logging.warning(f"سیگنال برای {symbol} به دلیل نقدینگی ضعیف رد شد: liquidity_score={liquidity_score}")
             return None
@@ -959,6 +980,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
         return None
 
+# تابع اسکن همه نمادها
 async def scan_all_crypto_symbols(on_signal=None) -> None:
     exchange = ccxt.mexc({
         'enableRateLimit': True,
@@ -991,7 +1013,7 @@ async def scan_all_crypto_symbols(on_signal=None) -> None:
                             await on_signal(result)
                         symbol_results.append(result)
                     except Exception as e:
-                        logging.error(f"خطا در انتظار تسک برای دسته {idx+1}: {str(e)}")
+                        logging.error(f"خطا در انتظار تسک برای دسته {idx+1}: {e}")
                         continue
             await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
         ablation_test(symbol_results, "volume")
@@ -1004,6 +1026,7 @@ async def scan_all_crypto_symbols(on_signal=None) -> None:
         logging.debug(f"بستن اتصال به MEXC")
         await exchange.close()
 
+# تابع اصلی برای تست
 async def main():
     exchange = ccxt.mexc({
         'enableRateLimit': True,
@@ -1027,5 +1050,6 @@ async def main():
         logging.debug(f"بستن اتصال به MEXC پس از تست")
         await exchange.close()
 
+# اجرای برنامه
 if __name__ == "__main__":
     asyncio.run(main())
