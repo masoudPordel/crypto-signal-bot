@@ -392,10 +392,10 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict[str, Any]:
     try:
         logging.info(f"شروع تحلیل ساختار بازار برای {symbol} در تایم‌فریم 4h")
-        df_4h = await get_ohlcv_cached(exchange, symbol, "4h")
+        df_4h = await get_ohlcv_cached(exchange, symbol, "4h", limit=50)  # افزایش به 50 کندل
         if df_4h is None or len(df_4h) < 50:
             logging.warning(f"داده ناکافی برای تحلیل ساختار بازار {symbol} @ 4h: تعداد کندل‌ها={len(df_4h) if df_4h is not None else 0}")
-            return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0}
+            return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50}  # پیش‌فرض
 
         df_4h = compute_indicators(df_4h)
         last_4h = df_4h.iloc[-1]
@@ -434,7 +434,7 @@ async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict
         return result
     except Exception as e:
         logging.error(f"خطا در تحلیل ساختار بازار برای {symbol} @ 4h: {str(e)}")
-        return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0}
+        return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50}  # پیش‌فرض
 
 # تابع جدید: گرفتن قیمت واقعی بازار
 async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int = 3) -> Optional[float]:
@@ -556,7 +556,7 @@ semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit: int = 30) -> Optional[pd.DataFrame]:
     async with semaphore:
         await asyncio.sleep(WAIT_BETWEEN_REQUESTS)
-        key = f"{symbol}_{tf}"
+        key = f"{symbol}_{tf}_{limit}"  # اضافه کردن limit به کلید کش
         now = time.time()
         logging.debug(f"شروع دریافت داده برای {symbol} @ {tf}, key={key}")
         if key in CACHE and now - CACHE[key]["time"] < CACHE_TTL:
@@ -612,7 +612,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         trend_score_4h = market_structure["score"]
         support_4h = market_structure["support"]
         resistance_4h = market_structure["resistance"]
-        fng_index = market_structure["fng_index"]
+        fng_index = market_structure.get("fng_index", 50)  # مقدار پیش‌فرض اگه fng_index نبود
 
         # فقط در تایم‌فریم 1h سیگنال تولید می‌کنیم
         if tf != "1h":
