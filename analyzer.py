@@ -1075,4 +1075,4 @@ async def main():
         await exchange.close()
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())
