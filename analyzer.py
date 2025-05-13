@@ -159,6 +159,15 @@ class PatternDetector:
         lows = argrelextrema(df['close'].values, np.less, order=5)[0]
         df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
         df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
+        # تشخیص روند موج
+        df["WaveTrend"] = np.nan
+        wave_points = df["WavePoint"].dropna().index
+        if len(wave_points) >= 5:
+            recent_points = df.loc[wave_points[-5:], "close"]
+            if recent_points.is_monotonic_increasing:
+                df.loc[wave_points[-1], "WaveTrend"] = "Up"
+            elif recent_points.is_monotonic_decreasing:
+                df.loc[wave_points[-1], "WaveTrend"] = "Down"
         return df
 
     @staticmethod
@@ -299,8 +308,14 @@ def check_market_events(symbol: str) -> int:
         if not events or "body" not in events or not events["body"]:
             return 0
         for event in events["body"]:
-            title = event.get("title", "").lower()
-            description = event.get("description", "").lower()
+            title = event.get("title", "")
+            description = event.get("description", "")
+            if isinstance(title, dict):
+                title = title.get("en", "")
+            if isinstance(description, dict):
+                description = description.get("en", "")
+            title = title.lower() if isinstance(title, str) else ""
+            description = description.lower() if isinstance(description, str) else ""
             if "burn" in title or "token burn" in description:
                 event_score += 15
             elif "listing" in title or "exchange" in description:
@@ -547,32 +562,64 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["long"]["rsi_divergence"] = div_score_long
         score_log["short"]["rsi_divergence"] = div_score_short
 
-        # تغییرات اعمال‌شده: شرایط سخت‌گیرانه‌تر برای فیلترهای تکنیکال
+        # تغییرات اعمال‌شده
+        support_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
+        resistance_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
         min_conditions = 2
         conds_long = {
             "PinBar": last["PinBar"] and last["lower"] > 3 * last["body"],
             "Engulfing": last["Engulfing"] and last["close"] > last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
-            "EMA_Cross": df["EMA12"].iloc[-2] < df["EMA26"].iloc[-2] and long_trend and (df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1] * 1.05),
+            "Elliott_Wave": df["WaveTrend"].iloc[-1] == "Up",
+            "EMA_Cross": df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
             "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1] and (df["MACD"].iloc[-1] > 0),
             "RSI_Oversold": last["RSI"] < 25,
             "Stochastic_Oversold": last["Stochastic"] < 15,
             "BB_Breakout": last["close"] > last["BB_upper"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
             "MFI_Oversold": last["MFI"] < 15,
-            "ADX_Strong": last["ADX"] > 25
+            "ADX_Strong": last["ADX"] > 25,
+            "Support_Confirmation": distance_to_support <= support_buffer and (last["PinBar"] or last["Engulfing"])
         }
         conds_short = {
             "PinBar": last["PinBar"] and last["upper"] > 3 * last["body"],
             "Engulfing": last["Engulfing"] and last["close"] < last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
-            "EMA_Cross": df["EMA12"].iloc[-2] > df["EMA26"].iloc[-2] and short_trend and (df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1] * 0.95),
+            "Elliott_Wave": df["WaveTrend"].iloc[-1] == "Down",
+            "EMA_Cross": df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
             "MACD_Cross": df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1] and (df["MACD"].iloc[-1] < 0),
             "RSI_Overbought": last["RSI"] > 75,
             "Stochastic_Overbought": last["Stochastic"] > 85,
             "BB_Breakout": last["close"] < last["BB_lower"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
             "MFI_Overbought": last["MFI"] > 85,
-            "ADX_Strong": last["ADX"] > 25
+            "ADX_Strong": last["ADX"] > 25,
+            "Resistance_Confirmation": distance_to_resistance <= resistance_buffer and (last["PinBar"] or last["Engulfing"])
         }
-        indicator_score_long = sum(5 for v in conds_long.values() if v) if sum(1 for v in conds_long.values() if v) >= min_conditions else 0
-        indicator_score_short = sum(5 for v in conds_short.values() if v) if sum(1 for v in conds_short.values() if v) >= min_conditions else 0
+        indicator_score_long = (10 if conds_long["PinBar"] else 0) + \
+                              (10 if conds_long["Engulfing"] else 0) + \
+                              (15 if conds_long["Elliott_Wave"] else 0) + \
+                              (5 if conds_long["EMA_Cross"] else 0) + \
+                              (5 if conds_long["MACD_Cross"] else 0) + \
+                              (3 if conds_long["RSI_Oversold"] else 0) + \
+                              (3 if conds_long["Stochastic_Oversold"] else 0) + \
+                              (5 if conds_long["BB_Breakout"] else 0) + \
+                              (3 if conds_long["MFI_Oversold"] else 0) + \
+                              (5 if conds_long["ADX_Strong"] else 0) + \
+                              (10 if conds_long["Support_Confirmation"] else 0)
+        indicator_score_short = (10 if conds_short["PinBar"] else 0) + \
+                               (10 if conds_short["Engulfing"] else 0) + \
+                               (15 if conds_short["Elliott_Wave"] else 0) + \
+                               (5 if conds_short["EMA_Cross"] else 0) + \
+                               (5 if conds_short["MACD_Cross"] else 0) + \
+                               (3 if conds_short["RSI_Overbought"] else 0) + \
+                               (3 if conds_short["Stochastic_Overbought"] else 0) + \
+                               (5 if conds_short["BB_Breakout"] else 0) + \
+                               (3 if conds_short["MFI_Overbought"] else 0) + \
+                               (5 if conds_short["ADX_Strong"] else 0) + \
+                               (10 if conds_short["Resistance_Confirmation"] else 0)
+
+        if sum(1 for v in conds_long.values() if v) < min_conditions:
+            indicator_score_long = 0
+        if sum(1 for v in conds_short.values() if v) < min_conditions:
+            indicator_score_short = 0
+
         score_long += indicator_score_long
         score_short += indicator_score_short
         score_log["long"]["indicators"] = indicator_score_long
@@ -610,15 +657,14 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 85
+        THRESHOLD = 90
         if score_long >= THRESHOLD:
             entry = float(last["close"])
-            atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
-            sl = entry - 2 * atr_avg
-            tp = entry + 3 * atr_avg
+            sl = min(entry - 2 * df["ATR"].rolling(5).mean().iloc[-1], support)
+            tp = max(entry + 3 * df["ATR"].rolling(5).mean().iloc[-1], resistance)
             rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
             position_size = calculate_position_size(10000, 1, entry, sl)
-            signal_strength = "قوی" if score_long > 80 else "متوسط"
+            signal_strength = "قوی" if score_long > 90 else "متوسط"
             result = {
                 "نوع معامله": "Long",
                 "نماد": symbol,
@@ -640,12 +686,11 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             return result
         elif score_short >= THRESHOLD:
             entry = float(last["close"])
-            atr_avg = df["ATR"].rolling(5).mean().iloc[-1]
-            sl = entry + 2 * atr_avg
-            tp = entry - 3 * atr_avg
+            sl = max(entry + 2 * df["ATR"].rolling(5).mean().iloc[-1], resistance)
+            tp = min(entry - 3 * df["ATR"].rolling(5).mean().iloc[-1], support)
             rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
             position_size = calculate_position_size(10000, 1, entry, sl)
-            signal_strength = "قوی" if score_short > 80 else "متوسط"
+            signal_strength = "قوی" if score_short > 90 else "متوسط"
             result = {
                 "نوع معامله": "Short",
                 "نماد": symbol,
