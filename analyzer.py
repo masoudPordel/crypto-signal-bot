@@ -284,7 +284,7 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
         spread_mean = np.mean(spread_history) if spread_history else 0.02
         spread_std = np.std(spread_history) if spread_history else 0.005
         spread_threshold = spread_mean + spread_std
-        if spread > 0.03:
+        if spread > 0.05:
             logging.warning(f"اسپرد برای {symbol} بیش از حد بالاست: spread={spread:.4f}")
             LIQUIDITY_REJECTS += 1
             return spread, -10
@@ -546,7 +546,7 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 # تابع دریافت داده کندل‌ها با کش
-async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit: int = 30) -> Optional[pd.DataFrame]:
+async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit: int = 50) -> Optional[pd.DataFrame]:
     async with semaphore:
         await asyncio.sleep(WAIT_BETWEEN_REQUESTS)
         key = f"{symbol}_{tf}_{limit}"
@@ -638,7 +638,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         vol_mean = df["volume"].rolling(20).mean().iloc[-1]
         vol_std = df["volume"].rolling(20).std().iloc[-1]
         logging.info(f"داده‌های حجم خام برای {symbol} @ {tf}: {df['volume'].tail(5).to_dict()}")
-        vol_threshold = vol_mean
+        vol_threshold = vol_mean * 0.6
         vol_score = 10 if current_vol >= vol_threshold else -2
         score_long += vol_score
         score_short += vol_score
