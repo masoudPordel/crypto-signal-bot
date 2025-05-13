@@ -442,13 +442,13 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
         last_15m = df_15m.iloc[-1]
 
         # شرایط ورود
-        volume_condition = last_15m["volume"] > df_15m["volume"].rolling(20).mean().iloc[-1] * 1.2
+        volume_condition = last_15m["volume"] > df_15m["volume"].rolling(20).mean().iloc[-1] * 1.1
         price_action = last_15m["PinBar"] or last_15m["Engulfing"]
 
         if signal_type == "Long":
             # ورود وقتی کندل بالای مقاومت بسته بشه یا نزدیک حمایت باشه با پرایس اکشن
             entry_condition = (last_15m["close"] > resistance and volume_condition) or \
-                            (abs(last_15m["close"] - support) / last_15m["close"] < 0.01 and price_action and volume_condition)
+                            (abs(last_15m["close"] - support) / last_15m["close"] < 0.015 and price_action and volume_condition)
             if entry_condition:
                 entry_price = last_15m["close"]
                 logging.info(f"نقطه ورود Long برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.2f}")
@@ -792,7 +792,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 90
+        THRESHOLD = 85
         if score_long >= THRESHOLD:
             # پیدا کردن نقطه ورود دقیق در 15m
             entry = await find_entry_point(exchange, symbol, "Long", support_4h, resistance_4h)
