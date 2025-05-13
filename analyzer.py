@@ -260,7 +260,7 @@ class SignalFilter:
             logging.error(f"خطا در پیش‌بینی Decision Tree: {e}, traceback={str(traceback.format_exc())}")
             return 0
 
-# بررسی نقدینگی (اصلاح‌شده با شرط سخت‌تر)
+# بررسی نقدینگی (اصلاح‌شده با شرط شل‌تر: 1% به جای 0.5%)
 async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame) -> tuple:
     global LIQUIDITY_REJECTS
     try:
@@ -287,8 +287,8 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
         spread_mean = np.mean(spread_history) if spread_history else 0.02
         spread_std = np.std(spread_history) if spread_history else 0.005
         spread_threshold = spread_mean + spread_std
-        # شرط سخت‌تر: اسپرد باید کمتر از 0.5% باشه
-        if spread > 0.005:  # 0.5%
+        # شرط جدید: اسپرد باید کمتر از 1% باشه (تغییر از 0.5% به 1%)
+        if spread > 0.01:  # تغییر از 0.005 به 0.01
             logging.warning(f"اسپرد برای {symbol} بیش از حد بالاست: spread={spread:.4f}")
             LIQUIDITY_REJECTS += 1
             return spread, -10
@@ -299,7 +299,7 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
         return spread, score
     except Exception as e:
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
-        return float('inf'), 0 
+        return float('inf'), 0
 
 # بررسی رویدادهای فاندامنتال
 def check_market_events(symbol: str) -> int:
@@ -720,7 +720,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
         # شرط‌های تکنیکال
         support_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
-        resistance_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
+        resistance_buffer = (df["ATR"].iloc[-1] / last["close"] * 1.5)
         min_conditions = 2
         conds_long = {
             "PinBar": last["PinBar"] and last["lower"] > 3 * last["body"],
