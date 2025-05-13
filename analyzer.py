@@ -168,7 +168,7 @@ class PatternDetector:
     @staticmethod
     def detect_elliott_wave(df: pd.DataFrame) -> pd.DataFrame:
         df["WavePoint"] = np.nan
-        highs = argrelextrema(df['close'].values, np.greaterちゃんと, order=5)[0]
+        highs = argrelextrema(df['close'].values, np.greater, order=5)[0]
         lows = argrelextrema(df['close'].values, np.less, order=5)[0]
         df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
         df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
@@ -260,7 +260,7 @@ class SignalFilter:
             logging.error(f"خطا در پیش‌بینی Decision Tree: {e}, traceback={str(traceback.format_exc())}")
             return 0
 
-# بررسی نقدینگی (اسپرد 1%)
+# بررسی نقدینگی (اسپرد 3%)
 async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame) -> tuple:
     global LIQUIDITY_REJECTS
     try:
@@ -287,7 +287,7 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
         spread_mean = np.mean(spread_history) if spread_history else 0.02
         spread_std = np.std(spread_history) if spread_history else 0.005
         spread_threshold = spread_mean + spread_std
-        if spread > 0.01:  # اسپرد 1%
+        if spread > 0.03:  # اسپرد 3%
             logging.warning(f"اسپرد برای {symbol} بیش از حد بالاست: spread={spread:.4f}")
             LIQUIDITY_REJECTS += 1
             return spread, -10
@@ -489,10 +489,10 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، سیگنال رد می‌شود")
             return None
 
-        # اعتبارسنجی اختلاف قیمت (0.5%)
+        # اعتبارسنجی اختلاف قیمت (1%)
         price_diff = abs(live_price - last_15m["close"]) / live_price if live_price != 0 else float('inf')
         logging.debug(f"مقایسه قیمت برای {symbol}: live_price={live_price:.6f}, candle_price={last_15m['close']:.6f}, اختلاف={price_diff:.4f}")
-        if price_diff > 0.005:  # اختلاف بیشتر از 0.5%
+        if price_diff > 0.01:  # اختلاف بیشتر از 1%
             logging.warning(f"اختلاف قیمت برای {symbol} بیش از حد است: live_price={live_price:.6f}, candle_price={last_15m['close']:.6f}, اختلاف={price_diff:.4f}")
             return None
 
@@ -553,7 +553,7 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
 
 # دریافت داده‌ها با کش
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit: int = 51) -> Optional[pd.DataFrame]:
+async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit: int = 30) -> Optional[pd.DataFrame]:
     async with semaphore:
         await asyncio.sleep(WAIT_BETWEEN_REQUESTS)
         key = f"{symbol}_{tf}"
@@ -642,7 +642,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         current_vol = df["volume"].iloc[-1]
         vol_mean = df["volume"].rolling(20).mean().iloc[-1]
         vol_std = df["volume"].rolling(20).std().iloc[-1]
-        vol_threshold = vol_mean + 0.5 * vol_std
+        vol_threshold = vol_mean + 0.2 * vol_std  # شل‌تر کردن شرط حجم
         vol_score = 10 if current_vol >= vol_threshold else -5
         score_long += vol_score
         score_short += vol_score
@@ -809,13 +809,13 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["short"]["market_structure_4h"] = -trend_score_4h
         logging.info(f"امتیاز ساختار بازار 4h برای {symbol}: Long={trend_score_4h}, Short={-trend_score_4h}")
 
-        # فیلتر سیگنال‌ها بر اساس روند 4h
-        if trend_4h == "Down":
-            score_long = -float('inf')
-            logging.info(f"سیگنال Long برای {symbol} رد شد: روند 4h نزولی است")
-        elif trend_4h == "Up":
-            score_short = -float('inf')
-            logging.info(f"سیگنال Short برای {symbol} رد شد: روند 4h صعودی است")
+        # # فیلتر سیگنال‌ها بر اساس روند 4h (غیرفعال شده)
+        # if trend_4h == "Down":
+        #     score_long = -float('inf')
+        #     logging.info(f"سیگنال Long برای {symbol} رد شد: روند 4h نزولی است")
+        # elif trend_4h == "Up":
+        #     score_short = -float('inf')
+        #     logging.info(f"سیگنال Short برای {symbol} رد شد: روند 4h صعودی است")
 
         logging.debug(f"شروع فیلتر Decision Tree برای {symbol} @ {tf}")
         signal_filter = SignalFilter()
@@ -848,7 +848,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 80
+        THRESHOLD = 75
         if score_long >= THRESHOLD:
             entry = await find_entry_point(exchange, symbol, "Long", support_4h, resistance_4h)
             if entry is None:
@@ -863,7 +863,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
             # اعتبارسنجی نهایی قیمت ورود
             price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
-            if price_diff > 0.005:  # اختلاف بیشتر از 0.5%
+            if price_diff > 0.01:  # اختلاف بیشتر از 1%
                 logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry:.6f}, live_price={live_price:.6f}, اختلاف={price_diff:.4f}")
                 return None
 
@@ -887,7 +887,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 return None
 
             # چک کردن فاصله منطقی با قیمت فعلی بازار
-            if abs(entry - live_price) / live_price > 0.005:  # اختلاف بیشتر از 0.5%
+            if abs(entry - live_price) / live_price > 0.01:  # اختلاف بیشتر از 1%
                 logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry:.6f}, live_price={live_price:.6f}")
                 return None
             if abs(sl - live_price) / live_price > 0.1:  # حد ضرر بیشتر از 10% دور نباشه
@@ -937,7 +937,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
             # اعتبارسنجی نهایی قیمت ورود
             price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
-            if price_diff > 0.005:  # اختلاف بیشتر از 0.5%
+            if price_diff > 0.01:  # اختلاف بیشتر از 1%
                 logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry:.6f}, live_price={live_price:.6f}, اختلاف={price_diff:.4f}")
                 return None
 
@@ -961,7 +961,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 return None
 
             # چک کردن فاصله منطقی با قیمت فعلی بازار
-            if abs(entry - live_price) / live_price > 0.005:  # اختلاف بیشتر از 0.5%
+            if abs(entry - live_price) / live_price > 0.01:  # اختلاف بیشتر از 1%
                 logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry:.6f}, live_price={live_price:.6f}")
                 return None
             if abs(sl - live_price) / live_price > 0.1:  # حد ضرر بیشتر از 10% دور نباشه
@@ -1060,11 +1060,14 @@ async def main():
         logging.debug(f"شروع بارگذاری بازارها برای تست")
         await exchange.load_markets()
         logging.info(f"بازارها بارگذاری شد برای تست")
-        result = await analyze_symbol(exchange, "ANIME/USDT", "1h")  # تست روی ANIME
-        if result:
-            logging.info(f"سیگنال تولید شد: {result}")
-        else:
-            logging.info("هیچ سیگنالی تولید نشد.")
+        test_symbols = ["ANIME/USDT", "BTC/USDT", "ETH/USDT"]
+        for symbol in test_symbols:
+            logging.info(f"شروع تست برای {symbol}")
+            result = await analyze_symbol(exchange, symbol, "1h")
+            if result:
+                logging.info(f"سیگنال تولید شد برای {symbol}: {result}")
+            else:
+                logging.info(f"هیچ سیگنالی برای {symbol} تولید نشد.")
     except Exception as e:
         logging.error(f"خطا در اجرای تست: {str(e)}")
     finally:
