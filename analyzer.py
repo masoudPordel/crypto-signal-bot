@@ -388,14 +388,14 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         logging.warning(f"اندیکاتورها با مقادیر پیش‌فرض پر شدند")
     return df
 
-# تابع جدید: تحلیل ساختار بازار (4h)
+# تابع تحلیل ساختار بازار (4h)
 async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict[str, Any]:
     try:
         logging.info(f"شروع تحلیل ساختار بازار برای {symbol} در تایم‌فریم 4h")
-        df_4h = await get_ohlcv_cached(exchange, symbol, "4h", limit=50)  # افزایش به 50 کندل
+        df_4h = await get_ohlcv_cached(exchange, symbol, "4h", limit=50)
         if df_4h is None or len(df_4h) < 50:
             logging.warning(f"داده ناکافی برای تحلیل ساختار بازار {symbol} @ 4h: تعداد کندل‌ها={len(df_4h) if df_4h is not None else 0}")
-            return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50}  # پیش‌فرض
+            return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50}
 
         df_4h = compute_indicators(df_4h)
         last_4h = df_4h.iloc[-1]
@@ -434,9 +434,9 @@ async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict
         return result
     except Exception as e:
         logging.error(f"خطا در تحلیل ساختار بازار برای {symbol} @ 4h: {str(e)}")
-        return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50}  # پیش‌فرض
+        return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50}
 
-# تابع جدید: گرفتن قیمت واقعی بازار
+# تابع گرفتن قیمت واقعی بازار
 async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int = 3) -> Optional[float]:
     attempt = 0
     last_ticker = None
@@ -449,7 +449,7 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
             if bid is None or ask is None or last is None or bid <= 0 or ask <= 0:
                 logging.warning(f"داده قیمت واقعی برای {symbol} نامعتبر است: bid={bid}, ask={ask}, last={last}")
                 attempt += 1
-                await asyncio.sleep(0.3)  # صبر بین تلاش‌ها
+                await asyncio.sleep(0.3)
                 continue
             live_price = (bid + ask) / 2 if bid and ask else last
             last_ticker = live_price
@@ -471,7 +471,7 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
     logging.error(f"ناتوانی در دریافت قیمت برای {symbol} پس از {max_attempts} تلاش")
     return None
 
-# تابع جدید: پیدا کردن نقطه ورود دقیق (15m) با قیمت واقعی
+# تابع پیدا کردن نقطه ورود دقیق (15m) با قیمت واقعی
 async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: str, support: float, resistance: float) -> Optional[float]:
     try:
         logging.info(f"شروع پیدا کردن نقطه ورود برای {symbol} در تایم‌فریم 15m - نوع سیگنال: {signal_type}")
@@ -556,7 +556,7 @@ semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit: int = 30) -> Optional[pd.DataFrame]:
     async with semaphore:
         await asyncio.sleep(WAIT_BETWEEN_REQUESTS)
-        key = f"{symbol}_{tf}_{limit}"  # اضافه کردن limit به کلید کش
+        key = f"{symbol}_{tf}_{limit}"
         now = time.time()
         logging.debug(f"شروع دریافت داده برای {symbol} @ {tf}, key={key}")
         if key in CACHE and now - CACHE[key]["time"] < CACHE_TTL:
@@ -569,6 +569,8 @@ async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit:
             if not data or len(data) == 0:
                 logging.warning(f"داده خالی از API برای {symbol} @ {tf}")
                 return None
+            else:
+                logging.info(f"تعداد کندل‌های دریافت‌شده برای {symbol} @ {tf}: {len(data)}")
             df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume"])
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
             df.set_index("timestamp", inplace=True)
@@ -612,16 +614,16 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         trend_score_4h = market_structure["score"]
         support_4h = market_structure["support"]
         resistance_4h = market_structure["resistance"]
-        fng_index = market_structure.get("fng_index", 50)  # مقدار پیش‌فرض اگه fng_index نبود
+        fng_index = market_structure.get("fng_index", 50)
 
         # فقط در تایم‌فریم 1h سیگنال تولید می‌کنیم
         if tf != "1h":
             logging.info(f"تحلیل برای {symbol} فقط در تایم‌فریم 1h انجام می‌شود. تایم‌فریم فعلی: {tf}")
             return None
 
-        df = await get_ohlcv_cached(exchange, symbol, tf)
-        if df is None or len(df) < 50:
-            logging.warning(f"داده ناکافی برای {symbol} @ {tf}")
+        df = await get_ohlcv_cached(exchange, symbol, tf, limit=50)  # افزایش به 50 کندل
+        if df is None or len(df) < 30:  # کاهش حداقل کندل‌ها به 30
+            logging.warning(f"داده ناکافی برای {symbol} @ {tf}: تعداد کندل‌ها={len(df) if df is not None else 0}")
             return None
         logging.info(f"داده دریافت شد برای {symbol} @ {tf} در {time.time() - start_time:.2f} ثانیه, تعداد ردیف‌ها={len(df)}")
 
@@ -808,14 +810,6 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["long"]["market_structure_4h"] = trend_score_4h
         score_log["short"]["market_structure_4h"] = -trend_score_4h
         logging.info(f"امتیاز ساختار بازار 4h برای {symbol}: Long={trend_score_4h}, Short={-trend_score_4h}")
-
-        # # فیلتر سیگنال‌ها بر اساس روند 4h (غیرفعال شده)
-        # if trend_4h == "Down":
-        #     score_long = -float('inf')
-        #     logging.info(f"سیگنال Long برای {symbol} رد شد: روند 4h نزولی است")
-        # elif trend_4h == "Up":
-        #     score_short = -float('inf')
-        #     logging.info(f"سیگنال Short برای {symbol} رد شد: روند 4h صعودی است")
 
         logging.debug(f"شروع فیلتر Decision Tree برای {symbol} @ {tf}")
         signal_filter = SignalFilter()
