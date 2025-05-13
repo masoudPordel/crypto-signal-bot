@@ -299,7 +299,7 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
         return spread, score
     except Exception as e:
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
-        return float('inf'), 0
+        return float('inf'), 0 
 
 # بررسی رویدادهای فاندامنتال
 def check_market_events(symbol: str) -> int:
