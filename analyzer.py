@@ -570,7 +570,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             "PinBar": last["PinBar"] and last["lower"] > 3 * last["body"],
             "Engulfing": last["Engulfing"] and last["close"] > last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
             "Elliott_Wave": df["WaveTrend"].iloc[-1] == "Up",
-            "EMA_Cross": df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
+            "EMA_Cross": df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.1),
             "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1] and (df["MACD"].iloc[-1] > 0),
             "RSI_Oversold": last["RSI"] < 25,
             "Stochastic_Oversold": last["Stochastic"] < 15,
@@ -657,7 +657,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 90
+        THRESHOLD = 85
         if score_long >= THRESHOLD:
             entry = float(last["close"])
             sl = min(entry - 2 * df["ATR"].rolling(5).mean().iloc[-1], support)
