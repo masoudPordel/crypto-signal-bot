@@ -15,20 +15,20 @@ from datetime import datetime, timedelta
 from sklearn.tree import DecisionTreeClassifier
 from typing import Optional, Dict, Any, List
 
-# تنظیمات logging
+# تنظیمات logging با جزئیات بالا
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(levelname)s - %(message)s - [File: %(filename)s | Line: %(lineno)d | Func: %(funcName)s]',
     handlers=[
-        logging.FileHandler("debug.log", encoding="utf-8"),
+        logging.FileHandler("debug_detailed.log", encoding="utf-8"),
         logging.StreamHandler()
     ]
 )
 
-# کلیدهای API (فقط برای CMC و CoinMarketCal نیازه)
+# کلیدهای API
 CMC_API_KEY = os.getenv("CMC_API_KEY", "7fc7dc4d-2d30-4c83-9836-875f9e0f74c7")
 COINMARKETCAL_API_KEY = os.getenv("COINMARKETCAL_API_KEY", "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa")
-TIMEFRAMES = ["30m", "1h", "4h", "1d"]
+TIMEFRAMES = ["15m", "1h", "4h", "1d"]
 
 # پارامترهای اصلی
 VOLUME_WINDOW = 20
@@ -77,6 +77,19 @@ def get_top_500_symbols_from_cmc() -> List[str]:
     except Exception as e:
         logging.error(f"خطا در دریافت از CMC: {e}")
         return []
+
+# تابع دریافت شاخص ترس و طمع
+def get_fear_and_greed_index() -> int:
+    url = "https://api.alternative.me/fng/?limit=1"
+    try:
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        value = int(data["data"][0]["value"])
+        logging.info(f"شاخص ترس و طمع دریافت شد: {value}")
+        return value
+    except Exception as e:
+        logging.error(f"خطا در دریافت شاخص ترس و طمع: {e}")
+        return 50  # پیش‌فرض خنثی
 
 # کلاس برای مدیریت اندیکاتورها
 class IndicatorCalculator:
@@ -159,7 +172,6 @@ class PatternDetector:
         lows = argrelextrema(df['close'].values, np.less, order=5)[0]
         df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
         df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
-        # تشخیص روند موج
         df["WaveTrend"] = np.nan
         wave_points = df["WavePoint"].dropna().index
         if len(wave_points) >= 5:
@@ -173,6 +185,7 @@ class PatternDetector:
     @staticmethod
     def detect_support_resistance(df: pd.DataFrame, window: int = 10) -> tuple:
         if len(df) < window:
+            logging.warning(f"داده ناکافی برای تشخیص حمایت/مقاومت: {len(df)} کندل")
             return 0.01, 0.01, []
         high = df['high'].rolling(window).max()
         low = df['low'].rolling(window).min()
@@ -331,7 +344,7 @@ def check_market_events(symbol: str) -> int:
         logging.error(f"خطا در دریافت رویدادها برای {symbol}: {e}")
         return 0
 
-# محاسبات اندیکاتورها با مدیریت داده‌های ناقص
+# محاسبات اندیکاتورها
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df = df.ffill().bfill().fillna(0)
@@ -348,6 +361,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df["Engulfing"] = PatternDetector.detect_engulfing(df)
         df = PatternDetector.detect_elliott_wave(df)
         df["MFI"] = IndicatorCalculator.compute_mfi(df)
+        logging.debug(f"اندیکاتورها با موفقیت محاسبه شدند: {list(df.columns)}")
     except Exception as e:
         logging.error(f"خطا در محاسبات اندیکاتورها: {str(e)}")
         df["EMA12"] = df["close"].mean()
@@ -367,9 +381,102 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         logging.warning(f"اندیکاتورها با مقادیر پیش‌فرض پر شدند")
     return df
 
-# تأیید مولتی تایم‌فریم با وزن‌دهی
+# تابع جدید: تحلیل ساختار بازار (4h)
+async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict[str, Any]:
+    try:
+        logging.info(f"شروع تحلیل ساختار بازار برای {symbol} در تایم‌فریم 4h")
+        df_4h = await get_ohlcv_cached(exchange, symbol, "4h")
+        if df_4h is None or len(df_4h) < 50:
+            logging.warning(f"داده ناکافی برای تحلیل ساختار بازار {symbol} @ 4h: تعداد کندل‌ها={len(df_4h) if df_4h is not None else 0}")
+            return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0}
+
+        df_4h = compute_indicators(df_4h)
+        last_4h = df_4h.iloc[-1]
+
+        # بررسی روند با EMA
+        trend_score = 0
+        trend_direction = "Neutral"
+        if last_4h["EMA12"] > last_4h["EMA26"]:
+            trend_score += 10
+            trend_direction = "Up"
+        elif last_4h["EMA12"] < last_4h["EMA26"]:
+            trend_score += -10
+            trend_direction = "Down"
+
+        # شناسایی سطوح حمایت و مقاومت
+        support, resistance, _ = PatternDetector.detect_support_resistance(df_4h)
+        logging.info(f"سطوح کلیدی در 4h برای {symbol}: حمایت={support:.2f}, مقاومت={resistance:.2f}")
+
+        # تأثیر شاخص ترس و طمع (فقط در 4h)
+        fng_index = get_fear_and_greed_index()
+        if fng_index < 25:  # ترس شدید
+            trend_score += 10
+            logging.info(f"شاخص ترس و طمع در 4h برای {symbol}: {fng_index} (ترس شدید) - 10 امتیاز به روند صعودی اضافه شد")
+        elif fng_index > 75:  # طمع شدید
+            trend_score += -10
+            logging.info(f"شاخص ترس و طمع در 4h برای {symbol}: {fng_index} (طمع شدید) - 10 امتیاز به روند نزولی اضافه شد")
+
+        result = {
+            "trend": trend_direction,
+            "score": trend_score,
+            "support": support,
+            "resistance": resistance,
+            "fng_index": fng_index
+        }
+        logging.info(f"تحلیل ساختار بازار برای {symbol} @ 4h تکمیل شد: {result}")
+        return result
+    except Exception as e:
+        logging.error(f"خطا در تحلیل ساختار بازار برای {symbol} @ 4h: {str(e)}")
+        return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0}
+
+# تابع جدید: پیدا کردن نقطه ورود دقیق (15m)
+async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: str, support: float, resistance: float) -> Optional[float]:
+    try:
+        logging.info(f"شروع پیدا کردن نقطه ورود برای {symbol} در تایم‌فریم 15m - نوع سیگنال: {signal_type}")
+        df_15m = await get_ohlcv_cached(exchange, symbol, "15m")
+        if df_15m is None or len(df_15m) < 20:
+            logging.warning(f"داده ناکافی برای پیدا کردن نقطه ورود {symbol} @ 15m: تعداد کندل‌ها={len(df_15m) if df_15m is not None else 0}")
+            return None
+
+        df_15m = compute_indicators(df_15m)
+        last_15m = df_15m.iloc[-1]
+
+        # شرایط ورود
+        volume_condition = last_15m["volume"] > df_15m["volume"].rolling(20).mean().iloc[-1] * 1.2
+        price_action = last_15m["PinBar"] or last_15m["Engulfing"]
+
+        if signal_type == "Long":
+            # ورود وقتی کندل بالای مقاومت بسته بشه یا نزدیک حمایت باشه با پرایس اکشن
+            entry_condition = (last_15m["close"] > resistance and volume_condition) or \
+                            (abs(last_15m["close"] - support) / last_15m["close"] < 0.01 and price_action and volume_condition)
+            if entry_condition:
+                entry_price = last_15m["close"]
+                logging.info(f"نقطه ورود Long برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.2f}")
+                return entry_price
+            else:
+                logging.info(f"شرایط ورود Long برای {symbol} @ 15m برقرار نشد")
+                return None
+
+        elif signal_type == "Short":
+            # ورود وقتی کندل زیر حمایت بسته بشه یا نزدیک مقاومت باشه با پرایس اکشن
+            entry_condition = (last_15m["close"] < support and volume_condition) or \
+                            (abs(last_15m["close"] - resistance) / last_15m["close"] < 0.01 and price_action and volume_condition)
+            if entry_condition:
+                entry_price = last_15m["close"]
+                logging.info(f"نقطه ورود Short برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.2f}")
+                return entry_price
+            else:
+                logging.info(f"شرایط ورود Short برای {symbol} @ 15m برقرار نشد")
+                return None
+
+        return None
+    except Exception as e:
+        logging.error(f"خطا در پیدا کردن نقطه ورود برای {symbol} @ 15m: {str(e)}")
+        return None
+
+# تأیید مولتی تایم‌فریم (بخش قبلی بدون تغییر)
 async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, base_tf: str) -> float:
-    weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "30m": 0.1}
+    weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "15m": 0.1}
     total_weight = 0
     score = 0
     for tf, weight in weights.items():
@@ -391,7 +498,7 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
     logging.info(f"مولتی تایم‌فریم برای {symbol} تکمیل شد: score={final_score:.2f}, total_weight={total_weight}")
     return final_score
 
-# دریافت داده‌ها با کش (بدون شرط تایم‌اوت)
+# دریافت داده‌ها با کش
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit: int = 51) -> Optional[pd.DataFrame]:
     async with semaphore:
@@ -439,13 +546,26 @@ def ablation_test(symbol_results: list, filter_name: str) -> int:
     logging.info(f"Ablation Test برای فیلتر {filter_name}: تعداد سیگنال‌های اولیه={total_signals}")
     return total_signals
 
-# تحلیل نماد با سیستم امتیازدهی
+# تحلیل نماد با سیستم امتیازدهی (اصلاح‌شده برای هماهنگی تایم‌فریم‌ها)
 async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optional[dict]:
     global VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
     logging.info(f"شروع تحلیل {symbol} @ {tf}, زمان شروع={datetime.now()}")
 
     try:
+        # مرحله 1: تحلیل ساختار بازار در 4h
+        market_structure = await analyze_market_structure(exchange, symbol)
+        trend_4h = market_structure["trend"]
+        trend_score_4h = market_structure["score"]
+        support_4h = market_structure["support"]
+        resistance_4h = market_structure["resistance"]
+        fng_index = market_structure["fng_index"]
+
+        # فقط در تایم‌فریم 1h سیگنال تولید می‌کنیم
+        if tf != "1h":
+            logging.info(f"تحلیل برای {symbol} فقط در تایم‌فریم 1h انجام می‌شود. تایم‌فریم فعلی: {tf}")
+            return None
+
         df = await get_ohlcv_cached(exchange, symbol, tf)
         if df is None or len(df) < 50:
             logging.warning(f"داده ناکافی برای {symbol} @ {tf}")
@@ -562,7 +682,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["long"]["rsi_divergence"] = div_score_long
         score_log["short"]["rsi_divergence"] = div_score_short
 
-        # تغییرات اعمال‌شده
+        # شرط‌های تکنیکال (بدون تغییر)
         support_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
         resistance_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
         min_conditions = 2
@@ -570,7 +690,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             "PinBar": last["PinBar"] and last["lower"] > 3 * last["body"],
             "Engulfing": last["Engulfing"] and last["close"] > last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
             "Elliott_Wave": df["WaveTrend"].iloc[-1] == "Up",
-            "EMA_Cross": df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.1),
+            "EMA_Cross": df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
             "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1] and (df["MACD"].iloc[-1] > 0),
             "RSI_Oversold": last["RSI"] < 25,
             "Stochastic_Oversold": last["Stochastic"] < 15,
@@ -626,6 +746,21 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["short"]["indicators"] = indicator_score_short
         logging.debug(f"شرایط اندیکاتورها برای {symbol} @ {tf}: long_score={indicator_score_long}, short_score={indicator_score_short}, conditions_long={conds_long}")
 
+        # اضافه کردن امتیاز ساختار بازار (4h)
+        score_long += trend_score_4h
+        score_short += -trend_score_4h
+        score_log["long"]["market_structure_4h"] = trend_score_4h
+        score_log["short"]["market_structure_4h"] = -trend_score_4h
+        logging.info(f"امتیاز ساختار بازار 4h برای {symbol}: Long={trend_score_4h}, Short={-trend_score_4h}")
+
+        # فیلتر سیگنال‌ها بر اساس روند 4h
+        if trend_4h == "Down":
+            score_long = -float('inf')  # سیگنال Long در روند نزولی 4h ممنوع
+            logging.info(f"سیگنال Long برای {symbol} رد شد: روند 4h نزولی است")
+        elif trend_4h == "Up":
+            score_short = -float('inf')  # سیگنال Short در روند صعودی 4h ممنوع
+            logging.info(f"سیگنال Short برای {symbol} رد شد: روند 4h صعودی است")
+
         logging.debug(f"شروع فیلتر Decision Tree برای {symbol} @ {tf}")
         signal_filter = SignalFilter()
         X_train = np.array([
@@ -659,9 +794,14 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
         THRESHOLD = 90
         if score_long >= THRESHOLD:
-            entry = float(last["close"])
-            sl = min(entry - 2 * df["ATR"].rolling(5).mean().iloc[-1], support)
-            tp = max(entry + 3 * df["ATR"].rolling(5).mean().iloc[-1], resistance)
+            # پیدا کردن نقطه ورود دقیق در 15m
+            entry = await find_entry_point(exchange, symbol, "Long", support_4h, resistance_4h)
+            if entry is None:
+                logging.info(f"نقطه ورود Long برای {symbol} در 15m پیدا نشد")
+                return None
+
+            sl = min(entry - 2 * df["ATR"].rolling(5).mean().iloc[-1], support_4h)
+            tp = max(entry + 3 * df["ATR"].rolling(5).mean().iloc[-1], resistance_4h)
             rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
             position_size = calculate_position_size(10000, 1, entry, sl)
             signal_strength = "قوی" if score_long > 90 else "متوسط"
@@ -680,14 +820,21 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
                 "روانشناسی": psych_long,
                 "روند بازار": "صعودی",
-                "فاندامنتال": f"امتیاز: {fundamental_score}"
+                "فاندامنتال": f"امتیاز: {fundamental_score}",
+                "شاخص ترس و طمع": fng_index,
+                "روند 4h": trend_4h
             }
             logging.info(f"سیگنال Long تولید شد: {result}")
             return result
         elif score_short >= THRESHOLD:
-            entry = float(last["close"])
-            sl = max(entry + 2 * df["ATR"].rolling(5).mean().iloc[-1], resistance)
-            tp = min(entry - 3 * df["ATR"].rolling(5).mean().iloc[-1], support)
+            # پیدا کردن نقطه ورود دقیق در 15m
+            entry = await find_entry_point(exchange, symbol, "Short", support_4h, resistance_4h)
+            if entry is None:
+                logging.info(f"نقطه ورود Short برای {symbol} در 15m پیدا نشد")
+                return None
+
+            sl = max(entry + 2 * df["ATR"].rolling(5).mean().iloc[-1], resistance_4h)
+            tp = min(entry - 3 * df["ATR"].rolling(5).mean().iloc[-1], support_4h)
             rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
             position_size = calculate_position_size(10000, 1, entry, sl)
             signal_strength = "قوی" if score_short > 90 else "متوسط"
@@ -706,7 +853,9 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
                 "روانشناسی": psych_short,
                 "روند بازار": "نزولی",
-                "فاندامنتال": f"امتیاز: {fundamental_score}"
+                "فاندامنتال": f"امتیاز: {fundamental_score}",
+                "شاخص ترس و طمع": fng_index,
+                "روند 4h": trend_4h
             }
             logging.info(f"سیگنال Short تولید شد: {result}")
             return result
@@ -739,8 +888,7 @@ async def scan_all_crypto_symbols(on_signal=None) -> None:
             logging.info(f"شروع اسکن دسته {idx+1}/{total_chunks}: {chunk}")
             tasks = []
             for sym in chunk:
-                for tf in TIMEFRAMES:
-                    tasks.append(asyncio.create_task(analyze_symbol(exchange, sym, tf)))
+                tasks.append(asyncio.create_task(analyze_symbol(exchange, sym, "1h")))
             async with semaphore:
                 for task in asyncio.as_completed(tasks):
                     try:
