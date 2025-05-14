@@ -202,7 +202,7 @@ class PatternDetector:
             recent_support = df['close'].iloc[-20:].mean() * 0.98
             logging.warning(f"حمایت پیش‌فرض برای {len(df)} کندل تنظیم شد: {recent_support}")
         volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
-        vol_threshold = volume_profile.quantile(0.75)
+        vol_threshold = volume_profile.quantile(0.5)
         high_vol_levels = volume_profile[volume_profile > vol_threshold].index.tolist()
         return recent_support, recent_resistance, high_vol_levels
 
@@ -284,7 +284,7 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
         spread_mean = np.mean(spread_history) if spread_history else 0.02
         spread_std = np.std(spread_history) if spread_history else 0.005
         spread_threshold = spread_mean + spread_std
-        if spread > 0.01:
+        if spread > 0.002:
             logging.warning(f"اسپرد برای {symbol} بیش از حد بالاست: spread={spread:.4f}")
             LIQUIDITY_REJECTS += 1
             return spread, -10
