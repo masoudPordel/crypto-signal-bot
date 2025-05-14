@@ -489,7 +489,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
 
         # محاسبه شرایط حجم و الگوهای قیمتی
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
-        volume_condition = last_15m["volume"] > volume_mean * 1.2
+        volume_condition = last_15m["volume"] > volume_mean * 1.0
         price_action = last_15m["PinBar"] or last_15m["Engulfing"]
         logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']:.6f}, resistance={resistance:.6f}, support={support:.6f}")
         logging.info(f"حجم: current={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}")
@@ -499,7 +499,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             # شرط اول: شکست مقاومت با حجم بالا
             breakout_resistance = last_15m["close"] > resistance and volume_condition
             # شرط دوم: نزدیک حمایت با الگوی قیمتی و حجم بالا
-            near_support = abs(last_15m["close"] - support) / last_15m["close"] < 0.01 and price_action and volume_condition
+            near_support = abs(last_15m["close"] - support) / last_15m["close"] < 0.02 and price_action and volume_condition
             entry_condition = breakout_resistance or near_support
             logging.debug(f"شرایط Long برای {symbol}: breakout_resistance={breakout_resistance}, near_support={near_support}, final_condition={entry_condition}")
             if entry_condition:
@@ -651,7 +651,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         vol_mean = df["volume"].rolling(20).mean().iloc[-1]
         vol_std = df["volume"].rolling(20).std().iloc[-1]
         logging.info(f"داده‌های حجم خام برای {symbol} @ {tf}: {df['volume'].tail(5).to_dict()}")
-        vol_threshold = vol_mean * 0.6
+        vol_threshold = vol_mean * 0.5
         vol_score = 10 if current_vol >= vol_threshold else -2
         score_long += vol_score
         score_short += vol_score
@@ -847,7 +847,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 75
+        THRESHOLD = 65
         if score_long >= THRESHOLD:
             entry = await find_entry_point(exchange, symbol, "Long", support_4h, resistance_4h)
             if entry is None:
