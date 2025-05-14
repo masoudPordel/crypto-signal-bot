@@ -487,29 +487,42 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             logging.warning(f"اختلاف قیمت برای {symbol} بیش از حد است: live_price={live_price:.6f}, candle_price={last_15m['close']:.6f}, اختلاف={price_diff:.4f}")
             return None
 
-        volume_condition = last_15m["volume"] > df_15m["volume"].rolling(20).mean().iloc[-1] * 1.2
+        # محاسبه شرایط حجم و الگوهای قیمتی
+        volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
+        volume_condition = last_15m["volume"] > volume_mean * 1.2
         price_action = last_15m["PinBar"] or last_15m["Engulfing"]
+        logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']:.6f}, resistance={resistance:.6f}, support={support:.6f}")
+        logging.info(f"حجم: current={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}")
+        logging.info(f"الگوهای قیمتی: PinBar={last_15m['PinBar']}, Engulfing={last_15m['Engulfing']}, price_action={price_action}")
 
         if signal_type == "Long":
-            entry_condition = (last_15m["close"] > resistance and volume_condition) or \
-                            (abs(last_15m["close"] - support) / last_15m["close"] < 0.01 and price_action and volume_condition)
+            # شرط اول: شکست مقاومت با حجم بالا
+            breakout_resistance = last_15m["close"] > resistance and volume_condition
+            # شرط دوم: نزدیک حمایت با الگوی قیمتی و حجم بالا
+            near_support = abs(last_15m["close"] - support) / last_15m["close"] < 0.01 and price_action and volume_condition
+            entry_condition = breakout_resistance or near_support
+            logging.debug(f"شرایط Long برای {symbol}: breakout_resistance={breakout_resistance}, near_support={near_support}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
                 logging.info(f"نقطه ورود Long برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.6f}")
                 return entry_price
             else:
-                logging.info(f"شرایط ورود Long برای {symbol} @ 15m برقرار نشد")
+                logging.info(f"شرایط ورود Long برای {symbol} @ 15m برقرار نشد: breakout_resistance={breakout_resistance}, near_support={near_support}")
                 return None
 
         elif signal_type == "Short":
-            entry_condition = (last_15m["close"] < support and volume_condition) or \
-                            (abs(last_15m["close"] - resistance) / last_15m["close"] < 0.01 and price_action and volume_condition)
+            # شرط اول: شکست حمایت با حجم بالا
+            breakout_support = last_15m["close"] < support and volume_condition
+            # شرط دوم: نزدیک مقاومت با الگوی قیمتی و حجم بالا
+            near_resistance = abs(last_15m["close"] - resistance) / last_15m["close"] < 0.01 and price_action and volume_condition
+            entry_condition = breakout_support or near_resistance
+            logging.debug(f"شرایط Short برای {symbol}: breakout_support={breakout_support}, near_resistance={near_resistance}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
                 logging.info(f"نقطه ورود Short برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.6f}")
                 return entry_price
             else:
-                logging.info(f"شرایط ورود Short برای {symbol} @ 15m برقرار نشد")
+                logging.info(f"شرایط ورود Short برای {symbol} @ 15m برقرار نشد: breakout_support={breakout_support}, near_resistance={near_resistance}")
                 return None
 
         return None
