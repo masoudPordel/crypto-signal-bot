@@ -489,7 +489,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
 
         # محاسبه شرایط حجم و الگوهای قیمتی
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
-        volume_condition = last_15m["volume"] > volume_mean * 1.0
+        volume_condition = last_15m["volume"] > volume_mean * 0.8  # تغییر از 1.2 به 0.8
         price_action = last_15m["PinBar"] or last_15m["Engulfing"]
         logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']:.6f}, resistance={resistance:.6f}, support={support:.6f}")
         logging.info(f"حجم: current={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}")
@@ -498,38 +498,48 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
         if signal_type == "Long":
             # شرط اول: شکست مقاومت با حجم بالا
             breakout_resistance = last_15m["close"] > resistance and volume_condition
-            # شرط دوم: نزدیک حمایت با الگوی قیمتی و حجم بالا
-            near_support = abs(last_15m["close"] - support) / last_15m["close"] < 0.02 and price_action and volume_condition
-            entry_condition = breakout_resistance or near_support
-            logging.debug(f"شرایط Long برای {symbol}: breakout_resistance={breakout_resistance}, near_support={near_support}, final_condition={entry_condition}")
+            # شرط دوم: نزدیک حمایت با حجم بالا
+            near_support = abs(last_15m["close"] - support) / last_15m["close"] < 0.03 and volume_condition  # تغییر از 0.01 به 0.03
+            # شرط سوم: قیمت بین حمایت و مقاومت با حجم بالا
+            within_range = support < last_15m["close"] < resistance and volume_condition
+            # بررسی وجود الگوی قیمتی برای امتیاز اضافی
+            if price_action:
+                logging.info(f"الگوی قیمتی پیدا شد، امتیاز اضافی برای {symbol}")
+            entry_condition = breakout_resistance or near_support or within_range
+            logging.debug(f"شرایط Long برای {symbol}: breakout_resistance={breakout_resistance}, near_support={near_support}, within_range={within_range}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
                 logging.info(f"نقطه ورود Long برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.6f}")
                 return entry_price
             else:
-                logging.info(f"شرایط ورود Long برای {symbol} @ 15m برقرار نشد: breakout_resistance={breakout_resistance}, near_support={near_support}")
+                logging.info(f"شرایط ورود Long برای {symbol} @ 15m برقرار نشد: breakout_resistance={breakout_resistance}, near_support={near_support}, within_range={within_range}")
                 return None
 
         elif signal_type == "Short":
             # شرط اول: شکست حمایت با حجم بالا
             breakout_support = last_15m["close"] < support and volume_condition
-            # شرط دوم: نزدیک مقاومت با الگوی قیمتی و حجم بالا
-            near_resistance = abs(last_15m["close"] - resistance) / last_15m["close"] < 0.01 and price_action and volume_condition
-            entry_condition = breakout_support or near_resistance
-            logging.debug(f"شرایط Short برای {symbol}: breakout_support={breakout_support}, near_resistance={near_resistance}, final_condition={entry_condition}")
+            # شرط دوم: نزدیک مقاومت با حجم بالا
+            near_resistance = abs(last_15m["close"] - resistance) / last_15m["close"] < 0.03 and volume_condition  # تغییر از 0.01 به 0.03
+            # شرط سوم: قیمت بین حمایت و مقاومت با حجم بالا
+            within_range = support < last_15m["close"] < resistance and volume_condition
+            # بررسی وجود الگوی قیمتی برای امتیاز اضافی
+            if price_action:
+                logging.info(f"الگوی قیمتی پیدا شد، امتیاز اضافی برای {symbol}")
+            entry_condition = breakout_support or near_resistance or within_range
+            logging.debug(f"شرایط Short برای {symbol}: breakout_support={breakout_support}, near_resistance={near_resistance}, within_range={within_range}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
                 logging.info(f"نقطه ورود Short برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.6f}")
                 return entry_price
             else:
-                logging.info(f"شرایط ورود Short برای {symbol} @ 15m برقرار نشد: breakout_support={breakout_support}, near_resistance={near_resistance}")
+                logging.info(f"شرایط ورود Short برای {symbol} @ 15m برقرار نشد: breakout_support={breakout_support}, near_resistance={near_resistance}, within_range={within_range}")
                 return None
 
         return None
     except Exception as e:
         logging.error(f"خطا در پیدا کردن نقطه ورود برای {symbol} @ 15m: {str(e)}")
         return None
-
+        
 # تابع تأیید مولتی تایم‌فریم
 async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, base_tf: str) -> float:
     weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "15m": 0.1}
