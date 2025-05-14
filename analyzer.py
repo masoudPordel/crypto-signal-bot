@@ -569,40 +569,48 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 # تابع دریافت داده کندل‌ها با کش
-async def get_ohlcv_cached(exchange: ccxt.Exchange, symbol: str, tf: str, limit: int = 50) -> Optional[pd.DataFrame]:
-    async with semaphore:
-        await asyncio.sleep(WAIT_BETWEEN_REQUESTS)
-        key = f"{symbol}_{tf}_{limit}"
-        if tf == "1d":
-            limit = 100
-        now = time.time()
-        logging.debug(f"شروع دریافت داده برای {symbol} @ {tf}, key={key}")
-        if key in CACHE and now - CACHE[key]["time"] < CACHE_TTL:
-            logging.debug(f"داده از کش استفاده شد برای {symbol} @ {tf}")
-            return CACHE[key]["data"]
-        try:
-            logging.debug(f"ارسال درخواست به API برای {symbol} @ {tf}")
-            data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
-            logging.debug(f"داده خام دریافت شد برای {symbol} @ {tf}, تعداد داده‌ها={len(data)}")
-            if not data or len(data) == 0:
-                logging.warning(f"داده خالی از API برای {symbol} @ {tf}")
-                return None
-            else:
-                logging.info(f"تعداد کندل‌های دریافت‌شده برای {symbol} @ {tf}: {len(data)}")
-            df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume"])
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-            df.set_index("timestamp", inplace=True)
-            current_time = pd.Timestamp.now(tz='UTC')
-            if len(df) > 0 and (current_time - df.index[-1]).total_seconds() < 60:
-                df = df.iloc[:-1].copy()
-                logging.debug(f"حذف آخرین داده به دلیل تاخیر برای {symbol} @ {tf}")
-            CACHE[key] = {"data": df.copy(), "time": now}
-            logging.debug(f"داده کش شد برای {symbol} @ {tf}, اندازه دیتافریم={len(df)}")
-            return df
-        except Exception as e:
-            logging.error(f"خطا در دریافت داده برای {symbol} @ {tf}: {str(e)}")
+from datetime import datetime, timedelta
+import pandas as pd
+
+# فرض بر اینکه CACHE یه دیکشنری به این شکل هست: { key: (dataframe, timestamp) }
+CACHE = {}
+CACHE_TTL = timedelta(minutes=5)  # زمان انقضا کش
+
+async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFrame]:
+    try:
+        key = f"{exchange.id}_{symbol}_{tf}"
+        now = datetime.utcnow()
+
+        # بررسی کش
+        if key in CACHE:
+            cached_df, cached_time = CACHE[key]
+            if now - cached_time < CACHE_TTL:
+                return cached_df  # از کش استفاده کن
+
+        # گرفتن دیتا از صرافی
+        raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+
+        if not raw_data:
             return None
 
+        df = pd.DataFrame(raw_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+        # اطمینان از دقت بالا
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df.set_index("timestamp", inplace=True)
+
+        # ذخیره در کش
+        CACHE[key] = (df, now)
+
+        return df
+
+    except Exception as e:
+        logging.error(f"❌ خطا در گرفتن OHLCV برای {symbol} / {tf}: {e}")
+        return None
+        
 # تابع محاسبه حجم پوزیشن
 def calculate_position_size(account_balance: float, risk_percentage: float, entry: float, stop_loss: float) -> float:
     if entry is None or stop_loss is None or entry == 0 or stop_loss == 0:
