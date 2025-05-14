@@ -491,7 +491,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
         volume_condition = last_15m["volume"] > volume_mean * 0.8  # تغییر از 1.2 به 0.8
         price_action = last_15m["PinBar"] or last_15m["Engulfing"]
-        logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']}, resistance={resistance, support={support}")
+        logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']}, resistance={resistance}, support={support}")
         logging.info(f"حجم: current={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}")
         logging.info(f"الگوهای قیمتی: PinBar={last_15m['PinBar']}, Engulfing={last_15m['Engulfing']}, price_action={price_action}")
 
