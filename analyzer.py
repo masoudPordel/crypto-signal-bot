@@ -447,7 +447,7 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
                 continue
             live_price = (bid + ask) / 2 if bid and ask else last
             last_ticker = live_price
-            logging.info(f"قیمت واقعی بازار برای {symbol}: live_price={live_price:.6f}, bid={bid}, ask={ask}, last={last}")
+            logging.info(f"قیمت واقعی بازار برای {symbol}: live_price={live_price}, bid={bid}, ask={ask}, last={last}")
             return live_price
         except Exception as e:
             logging.error(f"خطا در دریافت قیمت واقعی برای {symbol} در تلاش {attempt + 1}: {e}")
@@ -457,7 +457,7 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
         df_1m = await get_ohlcv_cached(exchange, symbol, "1m")
         if df_1m is not None and len(df_1m) > 0:
             fallback_price = df_1m["close"].iloc[-1]
-            logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، از قیمت کندل 1m استفاده شد: {fallback_price:.6f}")
+            logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، از قیمت کندل 1m استفاده شد: {fallback_price}")
             return fallback_price
     except Exception as e:
         logging.error(f"خطا در دریافت قیمت پیش‌فرض برای {symbol}: {e}")
@@ -482,16 +482,16 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             return None
 
         price_diff = abs(live_price - last_15m["close"]) / live_price if live_price != 0 else float('inf')
-        logging.debug(f"مقایسه قیمت برای {symbol}: live_price={live_price:.6f}, candle_price={last_15m['close']:.6f}, اختلاف={price_diff:.4f}")
+        logging.debug(f"مقایسه قیمت برای {symbol}: live_price={live_price}, candle_price={last_15m['close']}, اختلاف={price_diff}")
         if price_diff > 0.01:
-            logging.warning(f"اختلاف قیمت برای {symbol} بیش از حد است: live_price={live_price:.6f}, candle_price={last_15m['close']:.6f}, اختلاف={price_diff:.4f}")
+            logging.warning(f"اختلاف قیمت برای {symbol} بیش از حد است: live_price={live_price}, candle_price={last_15m['close']}, اختلاف={price_diff}")
             return None
 
         # محاسبه شرایط حجم و الگوهای قیمتی
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
         volume_condition = last_15m["volume"] > volume_mean * 0.8  # تغییر از 1.2 به 0.8
         price_action = last_15m["PinBar"] or last_15m["Engulfing"]
-        logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']:.6f}, resistance={resistance:.6f}, support={support:.6f}")
+        logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']}, resistance={resistance, support={support}")
         logging.info(f"حجم: current={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}")
         logging.info(f"الگوهای قیمتی: PinBar={last_15m['PinBar']}, Engulfing={last_15m['Engulfing']}, price_action={price_action}")
 
@@ -509,7 +509,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             logging.debug(f"شرایط Long برای {symbol}: breakout_resistance={breakout_resistance}, near_support={near_support}, within_range={within_range}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
-                logging.info(f"نقطه ورود Long برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.6f}")
+                logging.info(f"نقطه ورود Long برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price}")
                 return entry_price
             else:
                 logging.info(f"شرایط ورود Long برای {symbol} @ 15m برقرار نشد: breakout_resistance={breakout_resistance}, near_support={near_support}, within_range={within_range}")
@@ -529,7 +529,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             logging.debug(f"شرایط Short برای {symbol}: breakout_support={breakout_support}, near_resistance={near_resistance}, within_range={within_range}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
-                logging.info(f"نقطه ورود Short برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.6f}")
+                logging.info(f"نقطه ورود Short برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price}")
                 return entry_price
             else:
                 logging.info(f"شرایط ورود Short برای {symbol} @ 15m برقرار نشد: breakout_support={breakout_support}, near_resistance={near_resistance}, within_range={within_range}")
@@ -879,7 +879,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
             price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
             if price_diff > 0.01:
-                logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry:.6f}, live_price={live_price:.6f}, اختلاف={price_diff:.4f}")
+                logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry}, live_price={live_price}, اختلاف={price_diff}")
                 return None
 
             atr_1h = df["ATR"].iloc[-1]
@@ -887,26 +887,26 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             sl = entry - sl_distance
             if sl < support_4h * 0.95:
                 sl = support_4h * 0.98
-                logging.info(f"حد ضرر برای {symbol} تنظیم شد تا خیلی زیر حمایت نباشه: sl={sl:.6f}")
+                logging.info(f"حد ضرر برای {symbol} تنظیم شد تا خیلی زیر حمایت نباشه: sl={sl}")
 
             risk = entry - sl
             tp = entry + (2 * risk)
             if tp > resistance_4h * 1.05:
                 tp = resistance_4h * 1.02
-                logging.info(f"هدف سود برای {symbol} تنظیم شد تا خیلی بالای مقاومت نباشه: tp={tp:.6f}")
+                logging.info(f"هدف سود برای {symbol} تنظیم شد تا خیلی بالای مقاومت نباشه: tp={tp}")
 
             if sl >= entry or tp <= entry:
-                logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry:.6f}, sl={sl:.6f}, tp={tp:.6f}")
+                logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry}, sl={sl}, tp={tp}")
                 return None
 
             if abs(entry - live_price) / live_price > 0.01:
-                logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry:.6f}, live_price={live_price:.6f}")
+                logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry}, live_price={live_price}")
                 return None
             if abs(sl - live_price) / live_price > 0.1:
-                logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl:.6f}, live_price={live_price:.6f}")
+                logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl}, live_price={live_price}")
                 return None
             if abs(tp - live_price) / live_price > 0.3:
-                logging.warning(f"هدف سود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: tp={tp:.6f}, live_price={live_price:.6f}")
+                logging.warning(f"هدف سود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: tp={tp}, live_price={live_price}")
                 return None
 
             rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
@@ -948,7 +948,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
             price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
             if price_diff > 0.01:
-                logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry:.6f}, live_price={live_price:.6f}, اختلاف={price_diff:.4f}")
+                logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry}, live_price={live_price}, اختلاف={price_diff}")
                 return None
 
             atr_1h = df["ATR"].iloc[-1]
@@ -956,26 +956,26 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             sl = entry + sl_distance
             if sl > resistance_4h * 1.05:
                 sl = resistance_4h * 1.02
-                logging.info(f"حد ضرر برای {symbol} تنظیم شد تا خیلی بالای مقاومت نباشه: sl={sl:.6f}")
+                logging.info(f"حد ضرر برای {symbol} تنظیم شد تا خیلی بالای مقاومت نباشه: sl={sl}")
 
             risk = sl - entry
             tp = entry - (2 * risk)
             if tp < support_4h * 0.95:
                 tp = support_4h * 0.98
-                logging.info(f"هدف سود برای {symbol} تنظیم شد تا خیلی زیر حمایت نباشه: tp={tp:.6f}")
+                logging.info(f"هدف سود برای {symbol} تنظیم شد تا خیلی زیر حمایت نباشه: tp={tp}")
 
             if sl <= entry or tp >= entry:
-                logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry:.6f}, sl={sl:.6f}, tp={tp:.6f}")
+                logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry}, sl={sl}, tp={tp}")
                 return None
 
             if abs(entry - live_price) / live_price > 0.01:
-                logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry:.6f}, live_price={live_price:.6f}")
+                logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry}, live_price={live_price}")
                 return None
             if abs(sl - live_price) / live_price > 0.1:
-                logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl:.6f}, live_price={live_price:.6f}")
+                logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl}, live_price={live_price}")
                 return None
             if abs(tp - live_price) / live_price > 0.3:
-                logging.warning(f"هدف سود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: tp={tp:.6f}, live_price={live_price:.6f}")
+                logging.warning(f"هدف سود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: tp={tp}, live_price={live_price}")
                 return None
 
             rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
