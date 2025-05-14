@@ -930,7 +930,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "فاندامنتال": f"امتیاز: {fundamental_score}",
                 "شاخص ترس و طمع": fng_index,
                 "روند 4h": trend_4h,
-                "قیمت فعلی بازار": round(live_price, 6)
+"قیمت فعلی بازار": live_price
             }
             logging.info(f"سیگنال Long تولید شد: {result}")
             return result
