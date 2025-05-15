@@ -165,22 +165,22 @@ class PatternDetector:
 
     @staticmethod
     def detect_elliott_wave(df: pd.DataFrame) -> pd.DataFrame:
-    df["WavePoint"] = np.nan
-    highs = argrelextrema(df['close'].values, np.greater, order=5)[0]
-    lows = argrelextrema(df['close'].values, np.less, order=5)[0]
-    df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
-    df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
-    df["WaveTrend"] = np.nan
-    df["WaveTrend"] = df["WaveTrend"].astype("object") # ✅ رفع هشدار نوع داده
-    wave_points = df["WavePoint"].dropna().index
-    if len(wave_points) >= 5:
-        recent_points = df.loc[wave_points[-5:], "close"]
-        if recent_points.is_monotonic_increasing:
-            df.loc[wave_points[-1], "WaveTrend"] = "Up"
-        elif recent_points.is_monotonic_decreasing:
-            df.loc[wave_points[-1], "WaveTrend"] = "Down"
-            
-     return df
+        df["WavePoint"] = np.nan
+        highs = argrelextrema(df['close'].values, np.greater, order=5)[0]
+        lows = argrelextrema(df['close'].values, np.less, order=5)[0]
+        df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
+        df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
+        df["WaveTrend"] = np.nan
+        df["WaveTrend"] = df["WaveTrend"].astype("object")
+        wave_points = df["WavePoint"].dropna().index
+        if len(wave_points) >= 5:
+            recent_points = df.loc[wave_points[-5:], "close"]
+            if recent_points.is_monotonic_increasing:
+                df.loc[wave_points[-1], "WaveTrend"] = "Up"
+            elif recent_points.is_monotonic_decreasing:
+                df.loc[wave_points[-1], "WaveTrend"] = "Down"
+        return df
+
 
 
     @staticmethod
