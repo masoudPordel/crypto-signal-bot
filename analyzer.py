@@ -164,31 +164,24 @@ class PatternDetector:
         return engulfing
 
     @staticmethod
-    def detect_elliott_impulse(df: pd.DataFrame) -> pd.DataFrame:
+    def detect_elliott_wave(df: pd.DataFrame) -> pd.DataFrame:
     df["WavePoint"] = np.nan
-    df["ElliottWaveLabel"] = np.nan
-
     highs = argrelextrema(df['close'].values, np.greater, order=5)[0]
     lows = argrelextrema(df['close'].values, np.less, order=5)[0]
-
     df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
     df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
+    df["WaveTrend"] = np.nan
+    df["WaveTrend"] = df["WaveTrend"].astype("object") # ✅ رفع هشدار نوع داده
+    wave_points = df["WavePoint"].dropna().index
+    if len(wave_points) >= 5:
+        recent_points = df.loc[wave_points[-5:], "close"]
+        if recent_points.is_monotonic_increasing:
+            df.loc[wave_points[-1], "WaveTrend"] = "Up"
+        elif recent_points.is_monotonic_decreasing:
+            df.loc[wave_points[-1], "WaveTrend"] = "Down"
+            
+     return df
 
-    wave_indices = df["WavePoint"].dropna().index[-9:]
-
-    if len(wave_indices) >= 5:
-        wave_closes = df.loc[wave_indices, "close"]
-        trend = "up" if wave_closes.iloc[-1] > wave_closes.iloc[0] else "down"
-
-        if trend == "up":
-            selected = wave_closes.sort_values().index[-5:]
-            selected = sorted(selected)
-
-            labels = ["Wave1", "Wave2", "Wave3", "Wave4", "Wave5"]
-            for idx, label in zip(selected, labels):
-                df.loc[idx, "ElliottWaveLabel"] = label
-
-    return df
 
     @staticmethod
     def detect_support_resistance(df: pd.DataFrame, window: int = 10) -> tuple:
