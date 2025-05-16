@@ -267,35 +267,41 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
         ticker = await exchange.fetch_ticker(symbol)
         bid = ticker.get('bid')
         ask = ticker.get('ask')
+
         if bid is None or ask is None or bid == 0 or ask == 0:
             logging.warning(f"داده نقدینگی برای {symbol} نامعتبر است: bid={bid}, ask={ask}")
             return float('inf'), 0
+
         spread = (ask - bid) / ((bid + ask) / 2)
-        spread_history = []
+
+        # استفاده از df به‌جای fetch مجدد
+        recent_spreads = []
         for i in range(-5, 0):
             try:
-                past_ticker = await exchange.fetch_ticker(symbol)
-                past_bid = past_ticker.get('bid')
-                past_ask = past_ticker.get('ask')
-                if past_bid is None or past_ask is None or past_bid == 0 or past_ask == 0:
-                    continue
-                past_spread = (past_ask - past_bid) / ((past_bid + past_ask) / 2)
-                spread_history.append(past_spread)
-            except Exception as e:
-                logging.warning(f"خطا در دریافت داده گذشته برای {symbol}: {e}")
+                row = df.iloc[i]
+                if row['high'] != row['low']:
+                    est_spread = (row['high'] - row['low']) / ((row['high'] + row['low']) / 2)
+                    recent_spreads.append(est_spread)
+            except:
                 continue
-        spread_mean = np.mean(spread_history) if spread_history else 0.02
-        spread_std = np.std(spread_history) if spread_history else 0.005
-        spread_threshold = spread_mean + spread_std
-        if spread > 0.002:
+
+        spread_mean = np.mean(recent_spreads) if recent_spreads else 0.02
+        spread_std = np.std(recent_spreads) if recent_spreads else 0.005
+        spread_threshold = max(spread_mean + spread_std, 0.005)
+
+        if spread > 0.005:
             logging.warning(f"اسپرد برای {symbol} بیش از حد بالاست: spread={spread:.4f}")
             LIQUIDITY_REJECTS += 1
             return spread, -10
+
         score = 15 if spread < spread_threshold else -5
         logging.info(f"نقدینگی {symbol}: spread={spread:.4f}, threshold={spread_threshold:.4f}, score={score}")
+
         if spread >= spread_threshold:
             LIQUIDITY_REJECTS += 1
+
         return spread, score
+
     except Exception as e:
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return float('inf'), 0
