@@ -13,6 +13,9 @@ import logging
 import traceback
 from datetime import datetime, timedelta
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import KFold
+from imblearn.over_sampling import SMOTE
+import shap
 from typing import Optional, Dict, Any, List
 
 # تنظیم لاگ‌ها
@@ -236,14 +239,45 @@ class SignalFilter:
     def __init__(self):
         self.model = DecisionTreeClassifier(max_depth=3)
         self.trained = False
+        self.X_train = None
+        self.y_train = None
+
+    def analyze_training_data(self, X: np.ndarray, y: np.ndarray) -> Dict[str, Any]:
+        logging.info("شروع تحلیل داده‌های آموزشی")
+        # بررسی عدم تعادل
+        unique, counts = np.unique(y, return_counts=True)
+        imbalance = max(counts) / sum(counts) if sum(counts) > 0 else 0
+        logging.info(f"عدم تعادل کلاس‌ها: {dict(zip(unique, counts))}, نسبت={imbalance:.2f}")
+        # اعمال SMOTE
+        smote = SMOTE(random_state=42)
+        X_balanced, y_balanced = smote.fit_resample(X, y)
+        logging.info(f"تعداد نمونه‌ها بعد از SMOTE: {len(y_balanced)}, کلاس‌ها: {np.unique(y_balanced, return_counts=True)[1]}")
+        return {"imbalance": imbalance, "X_balanced": X_balanced, "y_balanced": y_balanced}
 
     def train(self, X: np.ndarray, y: np.ndarray) -> None:
-        if len(X) > 0 and len(y) > 0:
-            self.model.fit(X, y)
-            self.trained = True
-            logging.info("Decision Tree آموزش داده شد.")
-        else:
-            logging.warning("داده‌های آموزشی برای Decision Tree کافی نیست.")
+        analysis = self.analyze_training_data(X, y)
+        X_balanced = analysis["X_balanced"]
+        y_balanced = analysis["y_balanced"]
+        # Cross-validation
+        kf = KFold(n_splits=5, shuffle=True, random_state=42)
+        cv_scores = []
+        for train_idx, val_idx in kf.split(X_balanced):
+            X_train_fold, X_val_fold = X_balanced[train_idx], X_balanced[val_idx]
+            y_train_fold, y_val_fold = y_balanced[train_idx], y_balanced[val_idx]
+            self.model.fit(X_train_fold, y_train_fold)
+            score = self.model.score(X_val_fold, y_val_fold)
+            cv_scores.append(score)
+        avg_cv_score = np.mean(cv_scores)
+        logging.info(f"میانگین امتیاز Cross-validation: {avg_cv_score:.2f}")
+        self.model.fit(X_balanced, y_balanced)
+        self.trained = True
+        self.X_train = X_balanced
+        self.y_train = y_balanced
+        # تحلیل اهمیت ویژگی‌ها با SHAP
+        explainer = shap.TreeExplainer(self.model)
+        shap_values = explainer.shap_values(X_balanced)
+        shap.summary_plot(shap_values, X_balanced, feature_names=["RSI", "ADX", "Vol_Ratio", "Volatility", "Dist_Res", "Dist_Sup", "Spread", "Psych_Long", "Psych_Short"])
+        logging.info("تحلیل SHAP تکمیل شد.")
 
     def predict(self, features: list) -> float:
         if not self.trained:
@@ -255,8 +289,15 @@ class SignalFilter:
             logging.debug(f"پیش‌بینی Decision Tree: features={features}, score={score:.2f}")
             return score
         except Exception as e:
-            logging.error(f"خطا در پیش‌بینی Decision Tree: {e}, traceback={str(traceback.format_exc())}")
+            logging.error(f"خطا در پیش‌بینی Decision Tree: {e}")
             return 0
+
+    def retrain_model(self, new_X: np.ndarray, new_y: np.ndarray) -> None:
+        if self.X_train is not None and self.y_train is not None:
+            X_combined = np.vstack((self.X_train, new_X))
+            y_combined = np.hstack((self.y_train, new_y))
+            self.train(X_combined, y_combined)
+            logging.info("مدل با داده‌های جدید بازآموزی شد.")
 
 # تابع بررسی نقدینگی
 async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame) -> tuple:
@@ -284,7 +325,7 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
                 continue
         spread_mean = np.mean(spread_history) if spread_history else 0.02
         spread_std = np.std(spread_history) if spread_history else 0.005
-        spread_threshold = spread_mean + 1.5 * spread_std  # تغییر از spread_mean + spread_std
+        spread_threshold = spread_mean + spread_std
         if spread > 0.002:
             logging.warning(f"اسپرد برای {symbol} بیش از حد بالاست: spread={spread:.4f}")
             LIQUIDITY_REJECTS += 1
@@ -393,7 +434,7 @@ async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict
         df_4h = await get_ohlcv_cached(exchange, symbol, "4h", limit=50)
         if df_4h is None or len(df_4h) < 50:
             logging.warning(f"داده ناکافی برای تحلیل ساختار بازار {symbol} @ 4h: تعداد کندل‌ها={len(df_4h) if df_4h is not None else 0}")
-            return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50}
+            return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50, "market_regime": "Neutral"}
 
         df_4h = compute_indicators(df_4h)
         last_4h = df_4h.iloc[-1]
@@ -418,18 +459,31 @@ async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict
             trend_score += -10
             logging.info(f"شاخص ترس و طمع در 4h برای {symbol}: {fng_index} (طمع شدید) - 10 امتیاز به روند نزولی اضافه شد")
 
+        # تشخیص رژیم بازار
+        adx = last_4h["ADX"]
+        rsi = last_4h["RSI"]
+        atr = last_4h["ATR"]
+        market_regime = "Neutral"
+        if adx > 25 and rsi > 60 and atr > df_4h["ATR"].mean():
+            market_regime = "Trending Up"
+        elif adx > 25 and rsi < 40 and atr > df_4h["ATR"].mean():
+            market_regime = "Trending Down"
+        elif adx < 20 and atr < df_4h["ATR"].mean():
+            market_regime = "Sideways"
+
         result = {
             "trend": trend_direction,
             "score": trend_score,
             "support": support,
             "resistance": resistance,
-            "fng_index": fng_index
+            "fng_index": fng_index,
+            "market_regime": market_regime
         }
         logging.info(f"تحلیل ساختار بازار برای {symbol} @ 4h تکمیل شد: {result}")
         return result
     except Exception as e:
         logging.error(f"خطا در تحلیل ساختار بازار برای {symbol} @ 4h: {str(e)}")
-        return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50}
+        return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50, "market_regime": "Neutral"}
 
 # تابع دریافت قیمت واقعی
 async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int = 3) -> Optional[float]:
@@ -483,16 +537,16 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             return None
 
         price_diff = abs(live_price - last_15m["close"]) / live_price if live_price != 0 else float('inf')
-        logging.debug(f"مقایسه قیمت برای {symbol}: live_price={live_price:.6f}, candle_price={last_15m['close']:.6f}, اختلاف={price_diff:.4f}")
-        if price_diff > 0.03:  # تغییر از 0.01 به 0.03
-            logging.warning(f"اختلاف قیمت برای {symbol} بیش از حد است: live_price={live_price:.6f}, candle_price={last_15m['close']:.6f}, اختلاف={price_diff:.4f}")
+        logging.debug(f"مقایسه قیمت برای {symbol}: live_price={live_price}, candle_price={last_15m['close']}, اختلاف={price_diff}")
+        if price_diff > 0.01:
+            logging.warning(f"اختلاف قیمت برای {symbol} بیش از حد است: live_price={live_price}, candle_price={last_15m['close']}, اختلاف={price_diff}")
             return None
 
         # محاسبه شرایط حجم و الگوهای قیمتی
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
-        volume_condition = last_15m["volume"] > volume_mean * 0.8  # تغییر از 1.2 به 0.8
+        volume_condition = last_15m["volume"] > volume_mean * 0.8
         price_action = last_15m["PinBar"] or last_15m["Engulfing"]
-        logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']:.6f}, resistance={resistance:.6f}, support={support:.6f}")
+        logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']}, resistance={resistance}, support={support}")
         logging.info(f"حجم: current={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}")
         logging.info(f"الگوهای قیمتی: PinBar={last_15m['PinBar']}, Engulfing={last_15m['Engulfing']}, price_action={price_action}")
 
@@ -500,7 +554,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             # شرط اول: شکست مقاومت با حجم بالا
             breakout_resistance = last_15m["close"] > resistance and volume_condition
             # شرط دوم: نزدیک حمایت با حجم بالا
-            near_support = abs(last_15m["close"] - support) / last_15m["close"] < 0.03 and volume_condition  # تغییر از 0.01 به 0.03
+            near_support = abs(last_15m["close"] - support) / last_15m["close"] < 0.03 and volume_condition
             # شرط سوم: قیمت بین حمایت و مقاومت با حجم بالا
             within_range = support < last_15m["close"] < resistance and volume_condition
             # بررسی وجود الگوی قیمتی برای امتیاز اضافی
@@ -510,7 +564,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             logging.debug(f"شرایط Long برای {symbol}: breakout_resistance={breakout_resistance}, near_support={near_support}, within_range={within_range}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
-                logging.info(f"نقطه ورود Long برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.6f}")
+                logging.info(f"نقطه ورود Long برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price}")
                 return entry_price
             else:
                 logging.info(f"شرایط ورود Long برای {symbol} @ 15m برقرار نشد: breakout_resistance={breakout_resistance}, near_support={near_support}, within_range={within_range}")
@@ -520,7 +574,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             # شرط اول: شکست حمایت با حجم بالا
             breakout_support = last_15m["close"] < support and volume_condition
             # شرط دوم: نزدیک مقاومت با حجم بالا
-            near_resistance = abs(last_15m["close"] - resistance) / last_15m["close"] < 0.03 and volume_condition  # تغییر از 0.01 به 0.03
+            near_resistance = abs(last_15m["close"] - resistance) / last_15m["close"] < 0.03 and volume_condition
             # شرط سوم: قیمت بین حمایت و مقاومت با حجم بالا
             within_range = support < last_15m["close"] < resistance and volume_condition
             # بررسی وجود الگوی قیمتی برای امتیاز اضافی
@@ -530,7 +584,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             logging.debug(f"شرایط Short برای {symbol}: breakout_support={breakout_support}, near_resistance={near_resistance}, within_range={within_range}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
-                logging.info(f"نقطه ورود Short برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.6f}")
+                logging.info(f"نقطه ورود Short برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price}")
                 return entry_price
             else:
                 logging.info(f"شرایط ورود Short برای {symbol} @ 15m برقرار نشد: breakout_support={breakout_support}, near_resistance={near_resistance}, within_range={within_range}")
@@ -566,29 +620,23 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
     logging.info(f"مولتی تایم‌فریم برای {symbol} تکمیل شد: score={final_score:.2f}, total_weight={total_weight}")
     return final_score
 
-# تنظیم سماфор برای کنترل درخواست‌ها
-semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-
 # تابع دریافت داده کندل‌ها با کش
 from datetime import datetime, timedelta
 import pandas as pd
 
-# فرض بر اینکه CACHE یه دیکشنری به این شکل هست: { key: (dataframe, timestamp) }
 CACHE = {}
-CACHE_TTL = timedelta(minutes=5)  # زمان انقضا کش
+CACHE_TTL = timedelta(minutes=5)
 
 async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFrame]:
     try:
         key = f"{exchange.id}_{symbol}_{tf}"
         now = datetime.utcnow()
 
-        # بررسی کش
         if key in CACHE:
             cached_df, cached_time = CACHE[key]
             if now - cached_time < CACHE_TTL:
-                return cached_df  # از کش استفاده کن
+                return cached_df
 
-        # گرفتن دیتا از صرافی
         raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
 
         if not raw_data:
@@ -596,14 +644,12 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
 
         df = pd.DataFrame(raw_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
 
-        # اطمینان از دقت بالا
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
         df.set_index("timestamp", inplace=True)
 
-        # ذخیره در کش
         CACHE[key] = (df, now)
 
         return df
@@ -628,6 +674,20 @@ def ablation_test(symbol_results: list, filter_name: str) -> int:
     logging.info(f"Ablation Test برای فیلتر {filter_name}: تعداد سیگنال‌های اولیه={total_signals}")
     return total_signals
 
+# تابع محاسبه سطوح فیبوناچی
+def calculate_fibonacci_levels(df, high_col="high", low_col="low"):
+    max_price = df[high_col].max()
+    min_price = df[low_col].min()
+    diff = max_price - min_price
+    levels = {
+        "0.236": max_price - 0.236 * diff,
+        "0.382": max_price - 0.382 * diff,
+        "0.5": max_price - 0.5 * diff,
+        "0.618": max_price - 0.618 * diff,
+        "0.786": max_price - 0.786 * diff,
+    }
+    return levels
+
 # تابع تحلیل نماد
 async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optional[dict]:
     global VOLUME_REJECTS, SR_REJECTS
@@ -641,6 +701,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         support_4h = market_structure["support"]
         resistance_4h = market_structure["resistance"]
         fng_index = market_structure.get("fng_index", 50)
+        market_regime = market_structure["market_regime"]
 
         if tf != "1h":
             logging.info(f"تحلیل برای {symbol} فقط در تایم‌فریم 1h انجام می‌شود. تایم‌فریم فعلی: {tf}")
@@ -670,7 +731,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         vol_mean = df["volume"].rolling(20).mean().iloc[-1]
         vol_std = df["volume"].rolling(20).std().iloc[-1]
         logging.info(f"داده‌های حجم خام برای {symbol} @ {tf}: {df['volume'].tail(5).to_dict()}")
-        vol_threshold = vol_mean * 0.5  # تغییر از 0.6 به 0.5
+        vol_threshold = vol_mean * 0.5
         vol_score = 10 if current_vol >= vol_threshold else -2
         score_long += vol_score
         score_short += vol_score
@@ -766,6 +827,15 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["long"]["rsi_divergence"] = div_score_long
         score_log["short"]["rsi_divergence"] = div_score_short
 
+        # اضافه کردن امتیاز فیبوناچی
+        fib_levels = calculate_fibonacci_levels(df)
+        fib_score_long = 5 if last["close"] > fib_levels["0.618"] else 0
+        fib_score_short = 5 if last["close"] < fib_levels["0.382"] else 0
+        score_long += fib_score_long
+        score_short += fib_score_short
+        score_log["long"]["fibonacci"] = fib_score_long
+        score_log["short"]["fibonacci"] = fib_score_short
+
         support_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
         resistance_buffer = (df["ATR"].iloc[-1] / last["close"] * 1.5)
         min_conditions = 2
@@ -835,15 +905,23 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["short"]["market_structure_4h"] = -trend_score_4h
         logging.info(f"امتیاز ساختار بازار 4h برای {symbol}: Long={trend_score_4h}, Short={-trend_score_4h}")
 
-        # جلوگیری از سیگنال خرید تو سقف قیمتی تو روند صعودی
+        # محاسبه شرایط حجم برای استفاده در شرط شکست روند نزولی
+        volume_condition = current_vol > vol_mean * 0.8
+
+        # جلوگیری از سیگنال خرید در سقف قیمتی در روند صعودی
         if trend_4h == "Up" and distance_to_resistance < 0.01 and (last["RSI"] > 70 or last["Stochastic"] > 80):
             logging.info(f"سیگنال Long برای {symbol} به دلیل نزدیکی به سقف و اشباع خرید رد شد: distance_to_resistance={distance_to_resistance}, RSI={last['RSI']}, Stochastic={last['Stochastic']}")
-            score_long = -100  # رد صریح سیگنال
+            score_long = -100
 
         # سیگنال برای شکست روند نزولی
         if trend_4h == "Down" and last["close"] > support_4h and volume_condition and (last["PinBar"] or last["Engulfing"]):
             logging.info(f"سیگنال Long برای {symbol} به دلیل شکست روند نزولی و حجم بالا تولید شد: close={last['close']}, support_4h={support_4h}")
-            score_long += 20  # امتیاز اضافی برای شکست روند
+            score_long += 20
+
+        # تنظیم حد ضرر و حد سود با ATR
+        atr_1h = df["ATR"].iloc[-1]
+        sl_distance = max(2 * atr_1h, entry * 0.01) if "entry" in locals() else 2 * atr_1h
+        tp_distance = 2 * sl_distance
 
         logging.debug(f"شروع فیلتر Decision Tree برای {symbol} @ {tf}")
         signal_filter = SignalFilter()
@@ -876,7 +954,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 65  # تغییر از 90 به 65
+        THRESHOLD = 120
         if score_long >= THRESHOLD:
             entry = await find_entry_point(exchange, symbol, "Long", support_4h, resistance_4h)
             if entry is None:
@@ -893,31 +971,18 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry}, live_price={live_price}, اختلاف={price_diff}")
                 return None
 
-            atr_1h = df["ATR"].iloc[-1]
-            sl_distance = max(entry * 0.015, 3 * atr_1h)  # تغییر از 0.01 و 2xATR به 0.015 و 3xATR
             sl = entry - sl_distance
             if sl < support_4h * 0.95:
                 sl = support_4h * 0.98
                 logging.info(f"حد ضرر برای {symbol} تنظیم شد تا خیلی زیر حمایت نباشه: sl={sl}")
 
-            risk = entry - sl
-            tp = entry + (2 * risk)
+            tp = entry + tp_distance
             if tp > resistance_4h * 1.05:
                 tp = resistance_4h * 1.02
                 logging.info(f"هدف سود برای {symbol} تنظیم شد تا خیلی بالای مقاومت نباشه: tp={tp}")
 
             if sl >= entry or tp <= entry:
                 logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry}, sl={sl}, tp={tp}")
-                return None
-
-            if abs(entry - live_price) / live_price > 0.01:
-                logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry}, live_price={live_price}")
-                return None
-            if abs(sl - live_price) / live_price > 0.15:  # تغییر از 0.1 به 0.15
-                logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl}, live_price={live_price}")
-                return None
-            if abs(tp - live_price) / live_price > 0.3:
-                logging.warning(f"هدف سود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: tp={tp}, live_price={live_price}")
                 return None
 
             rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
@@ -941,6 +1006,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "فاندامنتال": f"امتیاز: {fundamental_score}",
                 "شاخص ترس و طمع": fng_index,
                 "روند 4h": trend_4h,
+                "رژیم بازار": market_regime,
                 "قیمت فعلی بازار": live_price
             }
             logging.info(f"سیگنال Long تولید شد: {result}")
@@ -962,31 +1028,18 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry}, live_price={live_price}, اختلاف={price_diff}")
                 return None
 
-            atr_1h = df["ATR"].iloc[-1]
-            sl_distance = max(entry * 0.015, 3 * atr_1h)  # تغییر از 0.01 و 2xATR به 0.015 و 3xATR
             sl = entry + sl_distance
             if sl > resistance_4h * 1.05:
                 sl = resistance_4h * 1.02
                 logging.info(f"حد ضرر برای {symbol} تنظیم شد تا خیلی بالای مقاومت نباشه: sl={sl}")
 
-            risk = sl - entry
-            tp = entry - (2 * risk)
+            tp = entry - tp_distance
             if tp < support_4h * 0.95:
                 tp = support_4h * 0.98
                 logging.info(f"هدف سود برای {symbol} تنظیم شد تا خیلی زیر حمایت نباشه: tp={tp}")
 
             if sl <= entry or tp >= entry:
                 logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry}, sl={sl}, tp={tp}")
-                return None
-
-            if abs(entry - live_price) / live_price > 0.01:
-                logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry}, live_price={live_price}")
-                return None
-            if abs(sl - live_price) / live_price > 0.15:  # تغییر از 0.1 به 0.15
-                logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl}, live_price={live_price}")
-                return None
-            if abs(tp - live_price) / live_price > 0.3:
-                logging.warning(f"هدف سود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: tp={tp}, live_price={live_price}")
                 return None
 
             rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
@@ -1010,6 +1063,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "فاندامنتال": f"امتیاز: {fundamental_score}",
                 "شاخص ترس و طمع": fng_index,
                 "روند 4h": trend_4h,
+                "رژیم بازار": market_regime,
                 "قیمت فعلی بازار": live_price
             }
             logging.info(f"سیگنال Short تولید شد: {result}")
@@ -1096,7 +1150,6 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
-
 # === Custom Additions for Enhanced Scoring ===
 
 def calculate_fibonacci_levels(df, high_col="high", low_col="low"):
@@ -1112,7 +1165,6 @@ def calculate_fibonacci_levels(df, high_col="high", low_col="low"):
     }
     return levels
 
-
 def get_usdt_dominance_score(usdt_dominance_series):
     recent = usdt_dominance_series[-1]
     previous = usdt_dominance_series[-5] if len(usdt_dominance_series) >= 5 else usdt_dominance_series[0]
@@ -1121,7 +1173,6 @@ def get_usdt_dominance_score(usdt_dominance_series):
     elif recent > previous:
         return -5  # Bearish for crypto
     return 0
-
 
 def get_moving_average_score(df, price_col="close"):
     ma50 = df[price_col].rolling(window=50).mean()
@@ -1135,7 +1186,6 @@ def get_moving_average_score(df, price_col="close"):
     if ma50.iloc[-1] > ma100.iloc[-1] and ma100.iloc[-1] > ma200.iloc[-1]:
         score += 3  # Uptrend alignment
     return score
-
 
 # === Pattern Detection Additions ===
 
