@@ -1130,20 +1130,6 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
-# === Custom Additions for Enhanced Scoring ===
-
-def calculate_fibonacci_levels(df, high_col="high", low_col="low"):
-    max_price = df[high_col].max()
-    min_price = df[low_col].min()
-    diff = max_price - min_price
-    levels = {
-        "0.236": max_price - 0.236 * diff,
-        "0.382": max_price - 0.382 * diff,
-        "0.5": max_price - 0.5 * diff,
-        "0.618": max_price - 0.618 * diff,
-        "0.786": max_price - 0.786 * diff,
-    }
-    return levels
 
 def get_usdt_dominance_score(usdt_dominance_series):
     recent = usdt_dominance_series[-1]
