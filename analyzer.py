@@ -181,8 +181,6 @@ class PatternDetector:
                 df.loc[wave_points[-1], "WaveTrend"] = "Down"
         return df
 
-
-
     @staticmethod
     def detect_support_resistance(df: pd.DataFrame, window: int = 10) -> tuple:
         if len(df) < window:
@@ -267,41 +265,35 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
         ticker = await exchange.fetch_ticker(symbol)
         bid = ticker.get('bid')
         ask = ticker.get('ask')
-
         if bid is None or ask is None or bid == 0 or ask == 0:
             logging.warning(f"داده نقدینگی برای {symbol} نامعتبر است: bid={bid}, ask={ask}")
             return float('inf'), 0
-
         spread = (ask - bid) / ((bid + ask) / 2)
-
-        # استفاده از df به‌جای fetch مجدد
-        recent_spreads = []
+        spread_history = []
         for i in range(-5, 0):
             try:
-                row = df.iloc[i]
-                if row['high'] != row['low']:
-                    est_spread = (row['high'] - row['low']) / ((row['high'] + row['low']) / 2)
-                    recent_spreads.append(est_spread)
-            except:
+                past_ticker = await exchange.fetch_ticker(symbol)
+                past_bid = past_ticker.get('bid')
+                past_ask = past_ticker.get('ask')
+                if past_bid is None or past_ask is None or past_bid == 0 or past_ask == 0:
+                    continue
+                past_spread = (past_ask - past_bid) / ((past_bid + past_ask) / 2)
+                spread_history.append(past_spread)
+            except Exception as e:
+                logging.warning(f"خطا در دریافت داده گذشته برای {symbol}: {e}")
                 continue
-
-        spread_mean = np.mean(recent_spreads) if recent_spreads else 0.02
-        spread_std = np.std(recent_spreads) if recent_spreads else 0.005
-        spread_threshold = max(spread_mean + spread_std, 0.005)
-
-        if spread > 0.005:
+        spread_mean = np.mean(spread_history) if spread_history else 0.02
+        spread_std = np.std(spread_history) if spread_history else 0.005
+        spread_threshold = spread_mean + 1.5 * spread_std  # تغییر از spread_mean + spread_std
+        if spread > 0.002:
             logging.warning(f"اسپرد برای {symbol} بیش از حد بالاست: spread={spread:.4f}")
             LIQUIDITY_REJECTS += 1
             return spread, -10
-
         score = 15 if spread < spread_threshold else -5
         logging.info(f"نقدینگی {symbol}: spread={spread:.4f}, threshold={spread_threshold:.4f}, score={score}")
-
         if spread >= spread_threshold:
             LIQUIDITY_REJECTS += 1
-
         return spread, score
-
     except Exception as e:
         logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
         return float('inf'), 0
@@ -491,16 +483,16 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             return None
 
         price_diff = abs(live_price - last_15m["close"]) / live_price if live_price != 0 else float('inf')
-        logging.debug(f"مقایسه قیمت برای {symbol}: live_price={live_price}, candle_price={last_15m['close']}, اختلاف={price_diff}")
-        if price_diff > 0.01:
-            logging.warning(f"اختلاف قیمت برای {symbol} بیش از حد است: live_price={live_price}, candle_price={last_15m['close']}, اختلاف={price_diff}")
+        logging.debug(f"مقایسه قیمت برای {symbol}: live_price={live_price:.6f}, candle_price={last_15m['close']:.6f}, اختلاف={price_diff:.4f}")
+        if price_diff > 0.03:  # تغییر از 0.01 به 0.03
+            logging.warning(f"اختلاف قیمت برای {symbol} بیش از حد است: live_price={live_price:.6f}, candle_price={last_15m['close']:.6f}, اختلاف={price_diff:.4f}")
             return None
 
         # محاسبه شرایط حجم و الگوهای قیمتی
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
         volume_condition = last_15m["volume"] > volume_mean * 0.8  # تغییر از 1.2 به 0.8
         price_action = last_15m["PinBar"] or last_15m["Engulfing"]
-        logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']}, resistance={resistance}, support={support}")
+        logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']:.6f}, resistance={resistance:.6f}, support={support:.6f}")
         logging.info(f"حجم: current={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}")
         logging.info(f"الگوهای قیمتی: PinBar={last_15m['PinBar']}, Engulfing={last_15m['Engulfing']}, price_action={price_action}")
 
@@ -518,7 +510,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             logging.debug(f"شرایط Long برای {symbol}: breakout_resistance={breakout_resistance}, near_support={near_support}, within_range={within_range}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
-                logging.info(f"نقطه ورود Long برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price}")
+                logging.info(f"نقطه ورود Long برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.6f}")
                 return entry_price
             else:
                 logging.info(f"شرایط ورود Long برای {symbol} @ 15m برقرار نشد: breakout_resistance={breakout_resistance}, near_support={near_support}, within_range={within_range}")
@@ -538,7 +530,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             logging.debug(f"شرایط Short برای {symbol}: breakout_support={breakout_support}, near_resistance={near_resistance}, within_range={within_range}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
-                logging.info(f"نقطه ورود Short برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price}")
+                logging.info(f"نقطه ورود Short برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price:.6f}")
                 return entry_price
             else:
                 logging.info(f"شرایط ورود Short برای {symbol} @ 15m برقرار نشد: breakout_support={breakout_support}, near_resistance={near_resistance}, within_range={within_range}")
@@ -678,7 +670,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         vol_mean = df["volume"].rolling(20).mean().iloc[-1]
         vol_std = df["volume"].rolling(20).std().iloc[-1]
         logging.info(f"داده‌های حجم خام برای {symbol} @ {tf}: {df['volume'].tail(5).to_dict()}")
-        vol_threshold = vol_mean * 0.5
+        vol_threshold = vol_mean * 0.5  # تغییر از 0.6 به 0.5
         vol_score = 10 if current_vol >= vol_threshold else -2
         score_long += vol_score
         score_short += vol_score
@@ -843,6 +835,16 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["short"]["market_structure_4h"] = -trend_score_4h
         logging.info(f"امتیاز ساختار بازار 4h برای {symbol}: Long={trend_score_4h}, Short={-trend_score_4h}")
 
+        # جلوگیری از سیگنال خرید تو سقف قیمتی تو روند صعودی
+        if trend_4h == "Up" and distance_to_resistance < 0.01 and (last["RSI"] > 70 or last["Stochastic"] > 80):
+            logging.info(f"سیگنال Long برای {symbol} به دلیل نزدیکی به سقف و اشباع خرید رد شد: distance_to_resistance={distance_to_resistance}, RSI={last['RSI']}, Stochastic={last['Stochastic']}")
+            score_long = -100  # رد صریح سیگنال
+
+        # سیگنال برای شکست روند نزولی
+        if trend_4h == "Down" and last["close"] > support_4h and volume_condition and (last["PinBar"] or last["Engulfing"]):
+            logging.info(f"سیگنال Long برای {symbol} به دلیل شکست روند نزولی و حجم بالا تولید شد: close={last['close']}, support_4h={support_4h}")
+            score_long += 20  # امتیاز اضافی برای شکست روند
+
         logging.debug(f"شروع فیلتر Decision Tree برای {symbol} @ {tf}")
         signal_filter = SignalFilter()
         X_train = np.array([
@@ -874,7 +876,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 90
+        THRESHOLD = 65  # تغییر از 90 به 65
         if score_long >= THRESHOLD:
             entry = await find_entry_point(exchange, symbol, "Long", support_4h, resistance_4h)
             if entry is None:
@@ -892,7 +894,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 return None
 
             atr_1h = df["ATR"].iloc[-1]
-            sl_distance = max(entry * 0.01, 2 * atr_1h)
+            sl_distance = max(entry * 0.015, 3 * atr_1h)  # تغییر از 0.01 و 2xATR به 0.015 و 3xATR
             sl = entry - sl_distance
             if sl < support_4h * 0.95:
                 sl = support_4h * 0.98
@@ -911,7 +913,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             if abs(entry - live_price) / live_price > 0.01:
                 logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry}, live_price={live_price}")
                 return None
-            if abs(sl - live_price) / live_price > 0.1:
+            if abs(sl - live_price) / live_price > 0.15:  # تغییر از 0.1 به 0.15
                 logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl}, live_price={live_price}")
                 return None
             if abs(tp - live_price) / live_price > 0.3:
@@ -939,7 +941,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "فاندامنتال": f"امتیاز: {fundamental_score}",
                 "شاخص ترس و طمع": fng_index,
                 "روند 4h": trend_4h,
-"قیمت فعلی بازار": live_price
+                "قیمت فعلی بازار": live_price
             }
             logging.info(f"سیگنال Long تولید شد: {result}")
             return result
@@ -961,7 +963,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 return None
 
             atr_1h = df["ATR"].iloc[-1]
-            sl_distance = max(entry * 0.01, 2 * atr_1h)
+            sl_distance = max(entry * 0.015, 3 * atr_1h)  # تغییر از 0.01 و 2xATR به 0.015 و 3xATR
             sl = entry + sl_distance
             if sl > resistance_4h * 1.05:
                 sl = resistance_4h * 1.02
@@ -980,7 +982,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             if abs(entry - live_price) / live_price > 0.01:
                 logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry}, live_price={live_price}")
                 return None
-            if abs(sl - live_price) / live_price > 0.1:
+            if abs(sl - live_price) / live_price > 0.15:  # تغییر از 0.1 به 0.15
                 logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl}, live_price={live_price}")
                 return None
             if abs(tp - live_price) / live_price > 0.3:
@@ -1008,7 +1010,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "فاندامنتال": f"امتیاز: {fundamental_score}",
                 "شاخص ترس و طمع": fng_index,
                 "روند 4h": trend_4h,
-"قیمت فعلی بازار": live_price
+                "قیمت فعلی بازار": live_price
             }
             logging.info(f"سیگنال Short تولید شد: {result}")
             return result
