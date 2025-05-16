@@ -246,7 +246,16 @@ class SignalFilter:
         unique, counts = np.unique(y, return_counts=True)
         imbalance = max(counts) / sum(counts) if sum(counts) > 0 else 0
         logging.info(f"عدم تعادل کلاس‌ها: {dict(zip(unique, counts))}, نسبت={imbalance:.2f}")
-        smote = SMOTE(random_state=42)
+        
+        # بررسی تعداد نمونه‌ها
+        if len(y) < 5 or min(counts) < 2:
+            logging.warning("تعداد نمونه‌ها یا نمونه‌های کلاس اقلیت برای SMOTE کافی نیست، از داده‌های اصلی استفاده می‌شود")
+            return {"imbalance": imbalance, "X_balanced": X, "y_balanced": y}
+        
+        # تنظیم k_neighbors بر اساس تعداد نمونه‌های کلاس اقلیت
+        minority_count = min(counts)
+        k_neighbors = min(2, minority_count - 1) if minority_count > 1 else 1
+        smote = SMOTE(random_state=42, k_neighbors=k_neighbors)
         X_balanced, y_balanced = smote.fit_resample(X, y)
         logging.info(f"تعداد نمونه‌ها بعد از SMOTE: {len(y_balanced)}, کلاس‌ها: {np.unique(y_balanced, return_counts=True)[1]}")
         return {"imbalance": imbalance, "X_balanced": X_balanced, "y_balanced": y_balanced}
@@ -894,8 +903,12 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             [30, 25, 2, 0.01, 0.05, 0.05, 0.01, 10, -10],
             [70, 20, 1, 0.02, 0.03, 0.03, 0.02, -10, 10],
             [50, 30, 1.5, 0.01, 0.04, 0.04, 0.01, 0, 0],
+            [40, 28, 1.8, 0.015, 0.06, 0.06, 0.015, 5, -5],
+            [60, 22, 1.2, 0.025, 0.02, 0.02, 0.025, -5, 5],
+            [45, 27, 1.7, 0.012, 0.05, 0.05, 0.012, 8, -8],
+            [65, 18, 0.9, 0.03, 0.03, 0.03, 0.03, -8, 8],
         ])
-        y_train = np.array([1, 0, 1])
+        y_train = np.array([1, 0, 1, 0, 1, 0, 1])
         signal_filter.train(X_train, y_train)
         features = [
             last["RSI"],
@@ -919,7 +932,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 120
+        THRESHOLD = 80
         if score_long >= THRESHOLD:
             entry = await find_entry_point(exchange, symbol, "Long", support_4h, resistance_4h)
             if entry is None:
