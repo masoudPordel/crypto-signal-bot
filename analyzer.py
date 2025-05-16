@@ -1087,3 +1087,95 @@ async def main():
 # اجرای برنامه
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+# === Custom Additions for Enhanced Scoring ===
+
+def calculate_fibonacci_levels(df, high_col="high", low_col="low"):
+    max_price = df[high_col].max()
+    min_price = df[low_col].min()
+    diff = max_price - min_price
+    levels = {
+        "0.236": max_price - 0.236 * diff,
+        "0.382": max_price - 0.382 * diff,
+        "0.5": max_price - 0.5 * diff,
+        "0.618": max_price - 0.618 * diff,
+        "0.786": max_price - 0.786 * diff,
+    }
+    return levels
+
+
+def get_usdt_dominance_score(usdt_dominance_series):
+    recent = usdt_dominance_series[-1]
+    previous = usdt_dominance_series[-5] if len(usdt_dominance_series) >= 5 else usdt_dominance_series[0]
+    if recent < previous:
+        return 5  # Bullish for crypto
+    elif recent > previous:
+        return -5  # Bearish for crypto
+    return 0
+
+
+def get_moving_average_score(df, price_col="close"):
+    ma50 = df[price_col].rolling(window=50).mean()
+    ma100 = df[price_col].rolling(window=100).mean()
+    ma200 = df[price_col].rolling(window=200).mean()
+    score = 0
+    if df[price_col].iloc[-1] > ma200.iloc[-1]:
+        score += 5
+    else:
+        score -= 5
+    if ma50.iloc[-1] > ma100.iloc[-1] and ma100.iloc[-1] > ma200.iloc[-1]:
+        score += 3  # Uptrend alignment
+    return score
+
+
+# === Pattern Detection Additions ===
+
+import numpy as np
+from scipy.signal import argrelextrema
+
+def detect_head_and_shoulders(df, price_col="close"):
+    data = df[price_col].values
+    max_idx = argrelextrema(np.array(data), np.greater)[0]
+
+    if len(max_idx) < 3:
+        return 0
+
+    for i in range(1, len(max_idx) - 1):
+        left = data[max_idx[i - 1]]
+        head = data[max_idx[i]]
+        right = data[max_idx[i + 1]]
+
+        if head > left and head > right and abs(left - right) < 0.02 * head:
+            return -5
+    return 0
+
+def detect_double_top(df, price_col="close"):
+    data = df[price_col].values
+    max_idx = argrelextrema(np.array(data), np.greater)[0]
+
+    if len(max_idx) < 2:
+        return 0
+
+    for i in range(len(max_idx) - 1):
+        first = data[max_idx[i]]
+        second = data[max_idx[i + 1]]
+
+        if abs(first - second) < 0.02 * first:
+            return -3
+    return 0
+
+def detect_double_bottom(df, price_col="close"):
+    data = df[price_col].values
+    min_idx = argrelextrema(np.array(data), np.less)[0]
+
+    if len(min_idx) < 2:
+        return 0
+
+    for i in range(len(min_idx) - 1):
+        first = data[min_idx[i]]
+        second = data[min_idx[i + 1]]
+
+        if abs(first - second) < 0.02 * first:
+            return 3
+    return 0
