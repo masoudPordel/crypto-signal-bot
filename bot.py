@@ -32,20 +32,30 @@ def check_already_running():
                 content = f.read().strip()
                 if not content:
                     logging.warning("فایل قفل خالی است، قفل نادیده گرفته می‌شود.")
+                    remove_lock()
                     return
                 pid, timestamp = content.split(":")
                 timestamp = datetime.fromisoformat(timestamp)
                 if datetime.now() - timestamp > timedelta(hours=1):
-                    logging.warning("فایل قفل قدیمی است، قفل نادیده گرفته می‌شود.")
+                    logging.warning("فایل قفل قدیمی است (بیش از 1 ساعت)، قفل نادیده گرفته می‌شود.")
                     remove_lock()
                     return
-            logging.error("ربات در حال اجراست.")
-            sys.exit(1)
+                # بررسی اینکه آیا PID هنوز فعال است
+                try:
+                    os.kill(int(pid), 0)
+                    logging.error(f"ربات با PID {pid} در حال اجراست.")
+                    sys.exit(1)
+                except (ProcessLookupError, OSError):
+                    logging.warning(f"PID {pid} دیگر فعال نیست، قفل نادیده گرفته می‌شود.")
+                    remove_lock()
+                    return
         except Exception as e:
             logging.error(f"خطا در بررسی فایل قفل: {e}")
-            sys.exit(1)
+            remove_lock()
+            return
     with open(LOCK_FILE, "w") as f:
         f.write(f"{os.getpid()}:{datetime.now().isoformat()}")
+    logging.info(f"فایل قفل با PID {os.getpid()} و زمان {datetime.now().isoformat()} ایجاد شد.")
 
 # حذف فایل قفل
 def remove_lock():
@@ -59,10 +69,10 @@ async def send_signals():
 
     # ارسال پیام اولیه برای اطمینان از فعال بودن ربات
     try:
-        await bot.send_message(chat_id=CHAT_ID, text="ربات فعال شد.")
+        await bot.send_message(chat_id=CHAT_ID, text="ربات فعال شد در ساعت 07:40 AM EEST, Saturday, May 17, 2025.")
     except Exception as e:
         logging.error(f"ارسال پیام تستی ناموفق: {e}")
-        # ادامه دادن به جای return
+        # ادامه دادن به جای توقف
 
     # تابع برای مدیریت سیگنال‌ها و ارسال به تلگرام
     async def on_signal(signal):
@@ -120,7 +130,7 @@ async def main():
 
 # اجرای ربات
 if __name__ == "__main__":
-    logging.info("شروع ربات...")
+    logging.info("شروع ربات در ساعت 07:40 AM EEST, Saturday, May 17, 2025...")
     check_already_running()
     try:
         asyncio.run(main())
