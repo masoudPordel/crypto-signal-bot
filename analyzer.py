@@ -339,7 +339,7 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
             logging.error(f"❌ خطا در گرفتن OHLCV برای {symbol} / {tf}: {e}")
             return None
 
-    return None
+    return None 
 
 # تابع بررسی نقدینگی
 async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame) -> tuple:
