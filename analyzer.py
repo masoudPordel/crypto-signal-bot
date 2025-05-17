@@ -317,6 +317,7 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
 
     try:
         await exchange.load_markets()
+        logging.info(f"📈 بررسی نماد {symbol} در لیست {exchange.id}: تعداد نمادها {len(exchange.symbols)}")
         if symbol not in exchange.symbols:
             logging.warning(f"❌ نماد {symbol} در لیست مارکت‌های صرافی {exchange.id} نیست.")
             return None
@@ -324,9 +325,9 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
         logging.error(f"❌ خطا در بارگذاری مارکت‌ها برای بررسی وجود {symbol}: {e}")
         return None
 
-    for attempt in range(3):  # Retry 3 times
+    for attempt in range(5):  # افزایش تلاش‌ها به 5
         try:
-            async with asyncio.timeout(20):
+            async with asyncio.timeout(30):  # افزایش تایم‌اوت
                 raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
 
             if not raw_data or len(raw_data) == 0:
@@ -343,7 +344,7 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
 
         except asyncio.TimeoutError:
             logging.error(f"❌ Timeout در گرفتن OHLCV برای {symbol} / {tf} - تلاش {attempt+1}")
-            await asyncio.sleep(2 * (attempt + 1))
+            await asyncio.sleep(3 * (attempt + 1))  # افزایش فاصله بین تلاش‌ها
         except Exception as e:
             logging.error(f"❌ خطا در گرفتن OHLCV برای {symbol} / {tf}: {e}")
             return None
