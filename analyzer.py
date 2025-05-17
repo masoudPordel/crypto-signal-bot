@@ -315,7 +315,16 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
         if now - cached_time < timedelta(minutes=5):
             return cached_df
 
-    for attempt in range(3):  # حداکثر ۳ بار تلاش
+    try:
+        await exchange.load_markets()
+        if symbol not in exchange.symbols:
+            logging.warning(f"❌ نماد {symbol} در لیست مارکت‌های صرافی {exchange.id} نیست.")
+            return None
+    except Exception as e:
+        logging.error(f"❌ خطا در بارگذاری مارکت‌ها برای بررسی وجود {symbol}: {e}")
+        return None
+
+    for attempt in range(3):  # Retry 3 times
         try:
             async with asyncio.timeout(20):
                 raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
@@ -334,12 +343,12 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
 
         except asyncio.TimeoutError:
             logging.error(f"❌ Timeout در گرفتن OHLCV برای {symbol} / {tf} - تلاش {attempt+1}")
-            await asyncio.sleep(2 * (attempt + 1))  # backoff
+            await asyncio.sleep(2 * (attempt + 1))
         except Exception as e:
             logging.error(f"❌ خطا در گرفتن OHLCV برای {symbol} / {tf}: {e}")
             return None
 
-    return None 
+    return None
 
 # تابع بررسی نقدینگی
 async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame) -> tuple:
