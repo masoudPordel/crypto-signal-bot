@@ -307,30 +307,39 @@ class SignalFilter:
 
 # تابع دریافت داده کندل‌ها با کش
 async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFrame]:
-    try:
-        key = f"{exchange.id}_{symbol}_{tf}"
-        now = datetime.utcnow()
-        if key in CACHE:
-            cached_df, cached_time = CACHE[key]
-            if now - cached_time < timedelta(minutes=5):
-                return cached_df
-        async with asyncio.timeout(10):
-            raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
-        if not raw_data:
+    key = f"{exchange.id}_{symbol}_{tf}"
+    now = datetime.utcnow()
+
+    if key in CACHE:
+        cached_df, cached_time = CACHE[key]
+        if now - cached_time < timedelta(minutes=5):
+            return cached_df
+
+    for attempt in range(3):  # حداکثر ۳ بار تلاش
+        try:
+            async with asyncio.timeout(20):
+                raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+
+            if not raw_data or len(raw_data) == 0:
+                logging.warning(f"داده ناکافی برای {symbol} @ {tf}: تعداد کندل‌ها=0")
+                return None
+
+            df = pd.DataFrame(raw_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
+            for col in ["open", "high", "low", "close", "volume"]:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+            df.set_index("timestamp", inplace=True)
+            CACHE[key] = (df, now)
+            return df
+
+        except asyncio.TimeoutError:
+            logging.error(f"❌ Timeout در گرفتن OHLCV برای {symbol} / {tf} - تلاش {attempt+1}")
+            await asyncio.sleep(2 * (attempt + 1))  # backoff
+        except Exception as e:
+            logging.error(f"❌ خطا در گرفتن OHLCV برای {symbol} / {tf}: {e}")
             return None
-        df = pd.DataFrame(raw_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
-        for col in ["open", "high", "low", "close", "volume"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-        df.set_index("timestamp", inplace=True)
-        CACHE[key] = (df, now)
-        return df
-    except asyncio.TimeoutError:
-        logging.error(f"❌ Timeout در گرفتن OHLCV برای {symbol} / {tf}")
-        return None
-    except Exception as e:
-        logging.error(f"❌ خطا در گرفتن OHLCV برای {symbol} / {tf}: {e}")
-        return None
+
+    return None
 
 # تابع بررسی نقدینگی
 async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame) -> tuple:
