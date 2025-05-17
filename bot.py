@@ -4,13 +4,17 @@ import telegram
 import logging
 import os
 import sys
+from datetime import datetime, timedelta
 from analyzer import scan_all_crypto_symbols
 
 # تنظیمات logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()],
+    handlers=[
+        logging.FileHandler("bot.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ],
     force=True
 )
 
@@ -20,18 +24,34 @@ CHAT_ID = 632886964
 LOCK_FILE = "bot.lock"
 bot = telegram.Bot(token=BOT_TOKEN)
 
-# بررسی اینکه آیا ربات در حال اجرا است
+# بررسی اینکه آیا ربات در حال اجرا است با زمان‌بندی
 def check_already_running():
     if os.path.exists(LOCK_FILE):
-        logging.error("ربات در حال اجراست.")
-        sys.exit()
+        try:
+            with open(LOCK_FILE, "r") as f:
+                content = f.read().strip()
+                if not content:
+                    logging.warning("فایل قفل خالی است، قفل نادیده گرفته می‌شود.")
+                    return
+                pid, timestamp = content.split(":")
+                timestamp = datetime.fromisoformat(timestamp)
+                if datetime.now() - timestamp > timedelta(hours=1):
+                    logging.warning("فایل قفل قدیمی است، قفل نادیده گرفته می‌شود.")
+                    remove_lock()
+                    return
+            logging.error("ربات در حال اجراست.")
+            sys.exit(1)
+        except Exception as e:
+            logging.error(f"خطا در بررسی فایل قفل: {e}")
+            sys.exit(1)
     with open(LOCK_FILE, "w") as f:
-        f.write(str(os.getpid()))
+        f.write(f"{os.getpid()}:{datetime.now().isoformat()}")
 
-# حذف فایل قفل در زمان اتمام
+# حذف فایل قفل
 def remove_lock():
     if os.path.exists(LOCK_FILE):
         os.remove(LOCK_FILE)
+        logging.info("فایل قفل حذف شد.")
 
 # تابع ارسال سیگنال‌ها
 async def send_signals():
@@ -42,17 +62,17 @@ async def send_signals():
         await bot.send_message(chat_id=CHAT_ID, text="ربات فعال شد.")
     except Exception as e:
         logging.error(f"ارسال پیام تستی ناموفق: {e}")
-        return
+        # ادامه دادن به جای return
 
     # تابع برای مدیریت سیگنال‌ها و ارسال به تلگرام
     async def on_signal(signal):
-        entry = float(signal["قیمت ورود"])
-        tp = float(signal["هدف سود"])
-        sl = float(signal["حد ضرر"])
-        trade_type = signal["نوع معامله"]  # مستقیماً نوع معامله رو از سیگنال می‌گیرم
+        try:
+            entry = float(signal["قیمت ورود"])
+            tp = float(signal["هدف سود"])
+            sl = float(signal["حد ضرر"])
+            trade_type = signal["نوع معامله"]
 
-        # پیام با فرمت جدید شامل نوع معامله (برای پشتیبانی از رگرسیون)
-        msg = f"""📢 سیگنال {trade_type.upper()}
+            msg = f"""📢 سیگنال {trade_type.upper()}
 
 نماد: {signal['نماد']}
 تایم‌فریم: {signal['تایم‌فریم']}
@@ -76,25 +96,38 @@ async def send_signals():
 تحلیل فاندامنتال:
 {signal['فاندامنتال']}
 """
-        try:
             await bot.send_message(chat_id=CHAT_ID, text=msg)
             logging.info(f"سیگنال برای {signal['نماد']} @ {signal['تایم‌فریم']} ارسال شد.")
         except Exception as e:
-            logging.error(f"ارسال سیگنال {signal['نماد']} ناموفق: {e}")
+            logging.error(f"ارسال سیگنال {signal.get('نماد', 'Unknown')} ناموفق: {e}")
 
     # اسکن بازار و ارسال سیگنال‌ها
-    await scan_all_crypto_symbols(on_signal=on_signal)
+    try:
+        await scan_all_crypto_symbols(on_signal=on_signal)
+    except Exception as e:
+        logging.error(f"خطا در اسکن بازار: {e}")
 
 # تابع اصلی برای اجرای ربات
 async def main():
     while True:
-        await send_signals()
-        await asyncio.sleep(max(0, 300 - (time.time() % 300)))
+        try:
+            await send_signals()
+            logging.info("اسکن بازار تکمیل شد، در انتظار اسکن بعدی (5 دقیقه)...")
+            await asyncio.sleep(300)  # انتظار 5 دقیقه
+        except Exception as e:
+            logging.error(f"خطا در حلقه اصلی: {e}")
+            await asyncio.sleep(60)  # در صورت خطا، 1 دقیقه صبر کنید و دوباره تلاش کنید
 
 # اجرای ربات
 if __name__ == "__main__":
+    logging.info("شروع ربات...")
     check_already_running()
     try:
         asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("ربات توسط کاربر متوقف شد.")
+    except Exception as e:
+        logging.error(f"خطای غیرمنتظره در اجرای ربات: {e}")
     finally:
         remove_lock()
+        logging.info("ربات متوقف شد.")
