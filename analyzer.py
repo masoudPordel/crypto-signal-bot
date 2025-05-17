@@ -314,7 +314,7 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
             cached_df, cached_time = CACHE[key]
             if now - cached_time < timedelta(minutes=5):
                 return cached_df
-        async with asyncio.timeout(10):
+        async with asyncio.timeout(30):
             raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
         if not raw_data:
             return None
