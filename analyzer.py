@@ -595,28 +595,38 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
 
         if key in CACHE:
             cached_df, cached_time = CACHE[key]
-            if now - cached_time < CACHE_TTL:
+            if (now - cached_time).total_seconds() < CACHE_TTL:  # استفاده از total_seconds برای مقایسه صحیح
                 return cached_df
 
+        # دریافت داده از صرافی
         raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
 
-        if not raw_data:
-            return None
+        if not raw_data or len(raw_data) == 0:
+            logging.warning(f"داده OHLCV برای {symbol} / {tf} خالی یا ناموجود است")
+            return None  # برگرداندن None به جای ادامه با داده نامعتبر
 
         df = pd.DataFrame(raw_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
 
-        for col in ["open", "high", "low", "close", "volume"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+        # تبدیل تایم‌استمپ به فرمت درست
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", errors="coerce")
+        if df["timestamp"].isnull().all():
+            logging.error(f"تمامی تایم‌استمپ‌ها برای {symbol} / {tf} نامعتبر هستند")
+            return None
 
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        # تبدیل ستون‌ها به نوع عددی با مدیریت خطاها
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+        # تنظیم ایندکس
         df.set_index("timestamp", inplace=True)
 
+        # ذخیره در کش
         CACHE[key] = (df, now)
-
+        logging.info(f"داده OHLCV برای {symbol} / {tf} با موفقیت دریافت و کش شد: تعداد کندل‌ها={len(df)}")
         return df
 
     except Exception as e:
-        logging.error(f"❌ خطا در گرفتن OHLCV برای {symbol} / {tf}: {e}")
+        logging.error(f"❌ خطا در گرفتن OHLCV برای {symbol} / {tf}: {str(e)}")
         return None
         
 # تابع محاسبه حجم پوزیشن
