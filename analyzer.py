@@ -284,7 +284,7 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
                 continue
         spread_mean = np.mean(spread_history) if spread_history else 0.02
         spread_std = np.std(spread_history) if spread_history else 0.005
-        spread_threshold = 0.0015  # آستانه سخت‌گیرانه‌تر برای نقدینگی
+        spread_threshold = 0.003  # آستانه سخت‌گیرانه‌تر برای نقدینگی
         if spread > spread_threshold:
             logging.warning(f"اسپرد برای {symbol} بیش از حد بالاست: spread={spread:.4f}")
             LIQUIDITY_REJECTS += 1
@@ -695,7 +695,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         current_vol = df["volume"].iloc[-1]
         vol_mean = df["volume"].rolling(20).mean().iloc[-1]
         vol_std = df["volume"].rolling(20).std().iloc[-1]
-        vol_threshold = vol_mean * 0.5
+        vol_threshold = vol_mean * 0.3
         vol_score = 10 if current_vol >= vol_threshold else -2
         score_long += vol_score
         score_short += vol_score
