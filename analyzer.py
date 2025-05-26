@@ -695,15 +695,11 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         if current_vol < vol_threshold:
             VOLUME_REJECTS += 1
 
-        # محاسبه RR داینامیک
+        # مقدار پیش‌فرض برای dynamic_rr
         atr_1h = df["ATR"].iloc[-1]
         risk_buffer = atr_1h * 2
-        dynamic_rr = 2.0
-        if signal_type == "Long" and support_4h > 0:
-            dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
-        elif signal_type == "Short" and resistance_4h > 0:
-            dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
-        logging.info(f"نسبت RR داینامیک برای {symbol}: RR={dynamic_rr}")
+        dynamic_rr = 2.0  # مقدار پیش‌فرض
+        logging.info(f"نسبت RR پیش‌فرض برای {symbol}: RR={dynamic_rr}")
 
         volatility = df["ATR"].iloc[-1] / last["close"]
         vola_mean = (df["ATR"] / df["close"]).rolling(20).mean().iloc[-1]
@@ -794,7 +790,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         resistance_buffer = (df["ATR"].iloc[-1] / last["close"] * 1.5)
         min_conditions = 2
         conds_long = {
-            "PinBar": last["PinBar"] and pin_bar_confirmed,
+            "PinBar": last["PinBar"],
             "Engulfing": last["Engulfing"] and last["close"] > last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
             "Elliott_Wave": df["WaveTrend"].iloc[-1] == "Up",
             "EMA_Cross": df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
@@ -807,7 +803,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             "Support_Confirmation": distance_to_support <= support_buffer and (last["PinBar"] or last["Engulfing"])
         }
         conds_short = {
-            "PinBar": last["PinBar"] and pin_bar_confirmed,
+            "PinBar": last["PinBar"],
             "Engulfing": last["Engulfing"] and last["close"] < last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
             "Elliott_Wave": df["WaveTrend"].iloc[-1] == "Down",
             "EMA_Cross": df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
@@ -892,7 +888,13 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
         THRESHOLD = 100
         if score_long >= THRESHOLD and trend_1d_score >= 0:  # شرط اجباری روند 1d
-            entry = await find_entry_point(exchange, symbol, "Long", support_4h, resistance_4h)
+            signal_type = "Long"  # تعریف signal_type اینجا
+            # محاسبه RR داینامیک بعد از تعیین نوع سیگنال
+            if support_4h > 0:
+                dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
+            logging.info(f"نسبت RR داینامیک برای {symbol} (Long): RR={dynamic_rr}")
+
+            entry = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
             if entry is None:
                 logging.info(f"نقطه ورود Long برای {symbol} در 15m پیدا نشد")
                 return None
@@ -961,7 +963,13 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             return result
 
         elif score_short >= THRESHOLD and trend_1d_score <= 0:  # شرط اجباری روند 1d
-            entry = await find_entry_point(exchange, symbol, "Short", support_4h, resistance_4h)
+            signal_type = "Short"  # تعریف signal_type اینجا
+            # محاسبه RR داینامیک بعد از تعیین نوع سیگنال
+            if resistance_4h > 0:
+                dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
+            logging.info(f"نسبت RR داینامیک برای {symbol} (Short): RR={dynamic_rr}")
+
+            entry = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
             if entry is None:
                 logging.info(f"نقطه ورود Short برای {symbol} در 15m پیدا نشد")
                 return None
