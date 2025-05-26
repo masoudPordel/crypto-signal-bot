@@ -366,6 +366,11 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df["Engulfing"] = PatternDetector.detect_engulfing(df)
         df = PatternDetector.detect_elliott_wave(df)
         df["MFI"] = IndicatorCalculator.compute_mfi(df)
+
+        # اضافه کردن Hammer و Doji
+        df["Hammer"] = ((df["close"] - df["low"]) / (df["high"] - df["low"]) > 0.66) & (df["close"] > df["open"])  # Hammer صعودی
+        df["Doji"] = abs(df["close"] - df["open"]) / (df["high"] - df["low"]) < 0.1  # Doji
+
         logging.debug(f"اندیکاتورها با موفقیت محاسبه شدند: {list(df.columns)}")
     except Exception as e:
         logging.error(f"خطا در محاسبات اندیکاتورها: {str(e)}")
@@ -383,6 +388,9 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df["Engulfing"] = False
         df["WavePoint"] = np.nan
         df["MFI"] = 50
+        # مقادیر پیش‌فرض برای Hammer و Doji
+        df["Hammer"] = False
+        df["Doji"] = False
         logging.warning(f"اندیکاتورها با مقادیر پیش‌فرض پر شدند")
     return df
 
@@ -475,7 +483,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             return None
 
         df_15m = compute_indicators(df_15m)
-        last_15m = df_15m.iloc[-1]  # فقط آخرین ردیف
+        last_15m = df_15m.iloc[-1]
         next_15m = df_15m.iloc[-2] if len(df_15m) > 1 else None
 
         live_price = await get_live_price(exchange, symbol)
@@ -488,12 +496,12 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             logging.warning(f"اختلاف قیمت برای {symbol} بیش از حد است: live_price={live_price}, candle_price={last_15m['close']}, اختلاف={price_diff}")
             return None
 
-        volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]  # فقط مقدار آخر
-        volume_increase = last_15m["volume"] > volume_mean * 1.0  # فقط مقدار آخر
+        volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
+        volume_increase = last_15m["volume"] > volume_mean * 1.0  # نرم‌تر شده از 1.3
         logging.info(f"بررسی حجم صعودی برای {symbol}: current_vol={last_15m['volume']:.2f}, mean={volume_mean:.2f}, increase={volume_increase}")
 
         pin_bar_confirmed = False
-        if last_15m["PinBar"]:  # فقط مقدار آخر
+        if last_15m["PinBar"]:
             if next_15m and ((signal_type == "Long" and last_15m["close"] < next_15m["close"] * 1.10) or 
                              (signal_type == "Short" and last_15m["close"] > next_15m["close"] * 0.90)):
                 pin_bar_confirmed = True
@@ -501,16 +509,16 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             else:
                 logging.info(f"الگوی PinBar برای {symbol} بدون تأیید کندل بعدی رد شد")
 
-        volume_condition = last_15m["volume"] > volume_mean * 0.8  # فقط مقدار آخر
-        price_action = (last_15m["PinBar"] and pin_bar_confirmed) or last_15m["Engulfing"] or last_15m["Hammer"] or last_15m["Doji"]  # فقط مقدار آخر
+        volume_condition = last_15m["volume"] > volume_mean * 0.8
+        price_action = (last_15m["PinBar"] and pin_bar_confirmed) or last_15m.get("Engulfing", False) or last_15m.get("Hammer", False) or last_15m.get("Doji", False)
         logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']}, resistance={resistance}, support={support}")
         logging.info(f"حجم: current={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}, increase={volume_increase}")
-        logging.info(f"مقادیر الگوها: PinBar={last_15m['PinBar']}, Confirmed={pin_bar_confirmed}, Engulfing={last_15m['Engulfing']}, Hammer={last_15m['Hammer']}, Doji={last_15m['Doji']}, price_action={price_action}")
+        logging.info(f"مقادیر الگوها: PinBar={last_15m['PinBar']}, Confirmed={pin_bar_confirmed}, Engulfing={last_15m.get('Engulfing', False)}, Hammer={last_15m.get('Hammer', False)}, Doji={last_15m.get('Doji', False)}, price_action={price_action}")
 
         if signal_type == "Long":
             df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
             if df_1h is not None and len(df_1h) > 0:
-                recent_low = df_1h["low"].iloc[-1]  # فقط مقدار آخر
+                recent_low = df_1h["low"].iloc[-1]
                 if recent_low < support * 0.95:
                     logging.warning(f"حمایت برای {symbol} شکسته شده است: recent_low={recent_low}, support={support}")
                     return None
@@ -531,7 +539,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
         elif signal_type == "Short":
             df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
             if df_1h is not None and len(df_1h) > 0:
-                recent_low = df_1h["low"].iloc[-1]  # فقط مقدار آخر
+                recent_low = df_1h["low"].iloc[-1]
                 if recent_low < support * 0.95:
                     logging.warning(f"حمایت برای {symbol} شکسته شده است: recent_low={recent_low}, support={support}")
                     return None
