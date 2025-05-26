@@ -490,7 +490,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
 
         # بررسی حجم صعودی
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]  # فقط مقدار آخر
-        volume_increase = last_15m["volume"] > volume_mean * 1.3  # افزایش 30% حجم
+        volume_increase = last_15m["volume"] > volume_mean * 0.5  # افزایش 30% حجم
         logging.info(f"بررسی حجم صعودی برای {symbol}: current_vol={last_15m['volume']:.2f}, mean={volume_mean:.2f}, increase={volume_increase}")
 
         # تأیید کندل بعدی برای PinBar با انعطاف‌پذیری
