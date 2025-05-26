@@ -181,8 +181,6 @@ class PatternDetector:
                 df.loc[wave_points[-1], "WaveTrend"] = "Down"
         return df
 
-
-
     @staticmethod
     def detect_support_resistance(df: pd.DataFrame, window: int = 10) -> tuple:
         if len(df) < window:
@@ -286,8 +284,8 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
                 continue
         spread_mean = np.mean(spread_history) if spread_history else 0.02
         spread_std = np.std(spread_history) if spread_history else 0.005
-        spread_threshold = spread_mean + spread_std
-        if spread > 0.002:
+        spread_threshold = 0.0015  # آستانه سخت‌گیرانه‌تر برای نقدینگی
+        if spread > spread_threshold:
             logging.warning(f"اسپرد برای {symbol} بیش از حد بالاست: spread={spread:.4f}")
             LIQUIDITY_REJECTS += 1
             return spread, -10
@@ -478,6 +476,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
 
         df_15m = compute_indicators(df_15m)
         last_15m = df_15m.iloc[-1]
+        next_15m = df_15m.iloc[-2] if len(df_15m) > 1 else None  # کندل بعدی برای تأیید
 
         live_price = await get_live_price(exchange, symbol)
         if live_price is None:
@@ -485,64 +484,81 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             return None
 
         price_diff = abs(live_price - last_15m["close"]) / live_price if live_price != 0 else float('inf')
-        logging.debug(f"مقایسه قیمت برای {symbol}: live_price={live_price}, candle_price={last_15m['close']}, اختلاف={price_diff}")
         if price_diff > 0.01:
             logging.warning(f"اختلاف قیمت برای {symbol} بیش از حد است: live_price={live_price}, candle_price={last_15m['close']}, اختلاف={price_diff}")
             return None
 
-        # محاسبه شرایط حجم و الگوهای قیمتی
+        # بررسی حجم صعودی
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
-        volume_condition = last_15m["volume"] > volume_mean * 0.8  # تغییر از 1.2 به 0.8
-        price_action = last_15m["PinBar"] or last_15m["Engulfing"]
+        volume_increase = last_15m["volume"] > volume_mean * 1.3  # افزایش 30% حجم
+        logging.info(f"بررسی حجم صعودی برای {symbol}: current_vol={last_15m['volume']:.2f}, mean={volume_mean:.2f}, increase={volume_increase}")
+
+        # تأیید کندل بعدی برای PinBar با انعطاف‌پذیری
+        pin_bar_confirmed = False
+        if last_15m["PinBar"]:
+            if next_15m and ((signal_type == "Long" and last_15m["close"] < next_15m["close"] * 1.05) or 
+                             (signal_type == "Short" and last_15m["close"] > next_15m["close"] * 0.95)):
+                pin_bar_confirmed = True
+                logging.info(f"الگوی PinBar برای {symbol} با کندل بعدی تأیید شد (با انعطاف 5%)")
+            else:
+                logging.info(f"الگوی PinBar برای {symbol} بدون تأیید کندل بعدی رد شد")
+
+        # محاسبه شرایط ورود
+        volume_condition = last_15m["volume"] > volume_mean * 0.8
+        price_action = (last_15m["PinBar"] and pin_bar_confirmed) or last_15m["Engulfing"]
         logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']}, resistance={resistance}, support={support}")
-        logging.info(f"حجم: current={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}")
-        logging.info(f"الگوهای قیمتی: PinBar={last_15m['PinBar']}, Engulfing={last_15m['Engulfing']}, price_action={price_action}")
+        logging.info(f"حجم: current={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}, increase={volume_increase}")
+        logging.info(f"الگوهای قیمتی: PinBar={last_15m['PinBar']}, Confirmed={pin_bar_confirmed}, Engulfing={last_15m['Engulfing']}, price_action={price_action}")
 
         if signal_type == "Long":
-            # شرط اول: شکست مقاومت با حجم بالا
-            breakout_resistance = last_15m["close"] > resistance and volume_condition
-            # شرط دوم: نزدیک حمایت با حجم بالا
-            near_support = abs(last_15m["close"] - support) / last_15m["close"] < 0.03 and volume_condition  # تغییر از 0.01 به 0.03
-            # شرط سوم: قیمت بین حمایت و مقاومت با حجم بالا
-            within_range = support < last_15m["close"] < resistance and volume_condition
-            # بررسی وجود الگوی قیمتی برای امتیاز اضافی
-            if price_action:
-                logging.info(f"الگوی قیمتی پیدا شد، امتیاز اضافی برای {symbol}")
-            entry_condition = breakout_resistance or near_support or within_range
+            # بررسی شکست حمایت
+            df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
+            if df_1h is not None and len(df_1h) > 0:
+                recent_low = df_1h["low"].iloc[-1]
+                if recent_low < support * 0.98:
+                    logging.warning(f"حمایت برای {symbol} شکسته شده است: recent_low={recent_low}, support={support}")
+                    return None
+
+            breakout_resistance = last_15m["close"] > resistance and volume_condition and volume_increase
+            near_support = abs(last_15m["close"] - support) / last_15m["close"] < 0.03 and volume_condition and volume_increase
+            within_range = support < last_15m["close"] < resistance and volume_condition and volume_increase
+            entry_condition = (breakout_resistance or near_support or within_range) and price_action
             logging.debug(f"شرایط Long برای {symbol}: breakout_resistance={breakout_resistance}, near_support={near_support}, within_range={within_range}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
                 logging.info(f"نقطه ورود Long برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price}")
                 return entry_price
             else:
-                logging.info(f"شرایط ورود Long برای {symbol} @ 15m برقرار نشد: breakout_resistance={breakout_resistance}, near_support={near_support}, within_range={within_range}")
+                logging.info(f"شرایط ورود Long برای {symbol} @ 15m برقرار نشد")
                 return None
 
         elif signal_type == "Short":
-            # شرط اول: شکست حمایت با حجم بالا
-            breakout_support = last_15m["close"] < support and volume_condition
-            # شرط دوم: نزدیک مقاومت با حجم بالا
-            near_resistance = abs(last_15m["close"] - resistance) / last_15m["close"] < 0.03 and volume_condition  # تغییر از 0.01 به 0.03
-            # شرط سوم: قیمت بین حمایت و مقاومت با حجم بالا
-            within_range = support < last_15m["close"] < resistance and volume_condition
-            # بررسی وجود الگوی قیمتی برای امتیاز اضافی
-            if price_action:
-                logging.info(f"الگوی قیمتی پیدا شد، امتیاز اضافی برای {symbol}")
-            entry_condition = breakout_support or near_resistance or within_range
+            # بررسی شکست حمایت
+            df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
+            if df_1h is not None and len(df_1h) > 0:
+                recent_low = df_1h["low"].iloc[-1]
+                if recent_low < support * 0.98:
+                    logging.warning(f"حمایت برای {symbol} شکسته شده است: recent_low={recent_low}, support={support}")
+                    return None
+
+            breakout_support = last_15m["close"] < support and volume_condition and volume_increase
+            near_resistance = abs(last_15m["close"] - resistance) / last_15m["close"] < 0.03 and volume_condition and volume_increase
+            within_range = support < last_15m["close"] < resistance and volume_condition and volume_increase
+            entry_condition = (breakout_support or near_resistance or within_range) and price_action
             logging.debug(f"شرایط Short برای {symbol}: breakout_support={breakout_support}, near_resistance={near_resistance}, within_range={within_range}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
                 logging.info(f"نقطه ورود Short برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price}")
                 return entry_price
             else:
-                logging.info(f"شرایط ورود Short برای {symbol} @ 15m برقرار نشد: breakout_support={breakout_support}, near_resistance={near_resistance}, within_range={within_range}")
+                logging.info(f"شرایط ورود Short برای {symbol} @ 15m برقرار نشد")
                 return None
 
         return None
     except Exception as e:
         logging.error(f"خطا در پیدا کردن نقطه ورود برای {symbol} @ 15m: {str(e)}")
         return None
-        
+
 # تابع تأیید مولتی تایم‌فریم
 async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, base_tf: str) -> float:
     weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "15m": 0.1}
@@ -568,29 +584,20 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
     logging.info(f"مولتی تایم‌فریم برای {symbol} تکمیل شد: score={final_score:.2f}, total_weight={total_weight}")
     return final_score
 
-# تنظیم سماфор برای کنترل درخواست‌ها
+# تنظیم سمافر برای کنترل درخواست‌ها
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 # تابع دریافت داده کندل‌ها با کش
-from datetime import datetime, timedelta
-import pandas as pd
-
-# فرض بر اینکه CACHE یه دیکشنری به این شکل هست: { key: (dataframe, timestamp) }
-CACHE = {}
-CACHE_TTL = timedelta(minutes=5)  # زمان انقضا کش
-
 async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFrame]:
     try:
         key = f"{exchange.id}_{symbol}_{tf}"
         now = datetime.utcnow()
 
-        # بررسی کش
         if key in CACHE:
             cached_df, cached_time = CACHE[key]
             if now - cached_time < CACHE_TTL:
-                return cached_df  # از کش استفاده کن
+                return cached_df
 
-        # گرفتن دیتا از صرافی
         raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
 
         if not raw_data:
@@ -598,14 +605,12 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
 
         df = pd.DataFrame(raw_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
 
-        # اطمینان از دقت بالا
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
         df.set_index("timestamp", inplace=True)
 
-        # ذخیره در کش
         CACHE[key] = (df, now)
 
         return df
@@ -667,11 +672,19 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_short = 0
         score_log = {"long": {}, "short": {}}
 
+        # تأیید روند با تایم‌فریم بالاتر (1d)
+        df_1d = await get_ohlcv_cached(exchange, symbol, "1d")
+        trend_1d_score = 0
+        if df_1d is not None and len(df_1d) > 0:
+            df_1d = compute_indicators(df_1d)
+            long_trend_1d = df_1d["EMA12"].iloc[-1] > df_1d["EMA26"].iloc[-1]
+            trend_1d_score = 10 if long_trend_1d else -10
+            logging.info(f"تأیید روند 1d برای {symbol}: trend_score={trend_1d_score}")
+
         vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
         current_vol = df["volume"].iloc[-1]
         vol_mean = df["volume"].rolling(20).mean().iloc[-1]
         vol_std = df["volume"].rolling(20).std().iloc[-1]
-        logging.info(f"داده‌های حجم خام برای {symbol} @ {tf}: {df['volume'].tail(5).to_dict()}")
         vol_threshold = vol_mean * 0.5
         vol_score = 10 if current_vol >= vol_threshold else -2
         score_long += vol_score
@@ -681,7 +694,16 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"حجم برای {symbol} @ {tf}: current_vol={current_vol:.2f}, threshold={vol_threshold:.2f}, score={vol_score}")
         if current_vol < vol_threshold:
             VOLUME_REJECTS += 1
-            logging.info(f"حجم کم برای {symbol} @ {tf}: score={vol_score}")
+
+        # محاسبه RR داینامیک
+        atr_1h = df["ATR"].iloc[-1]
+        risk_buffer = atr_1h * 2
+        dynamic_rr = 2.0
+        if signal_type == "Long" and support_4h > 0:
+            dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
+        elif signal_type == "Short" and resistance_4h > 0:
+            dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
+        logging.info(f"نسبت RR داینامیک برای {symbol}: RR={dynamic_rr}")
 
         volatility = df["ATR"].iloc[-1] / last["close"]
         vola_mean = (df["ATR"] / df["close"]).rolling(20).mean().iloc[-1]
@@ -772,7 +794,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         resistance_buffer = (df["ATR"].iloc[-1] / last["close"] * 1.5)
         min_conditions = 2
         conds_long = {
-            "PinBar": last["PinBar"] and last["lower"] > 3 * last["body"],
+            "PinBar": last["PinBar"] and pin_bar_confirmed,
             "Engulfing": last["Engulfing"] and last["close"] > last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
             "Elliott_Wave": df["WaveTrend"].iloc[-1] == "Up",
             "EMA_Cross": df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
@@ -785,7 +807,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             "Support_Confirmation": distance_to_support <= support_buffer and (last["PinBar"] or last["Engulfing"])
         }
         conds_short = {
-            "PinBar": last["PinBar"] and last["upper"] > 3 * last["body"],
+            "PinBar": last["PinBar"] and pin_bar_confirmed,
             "Engulfing": last["Engulfing"] and last["close"] < last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
             "Elliott_Wave": df["WaveTrend"].iloc[-1] == "Down",
             "EMA_Cross": df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
@@ -868,8 +890,8 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 100
-        if score_long >= THRESHOLD:
+        THRESHOLD = 120
+        if score_long >= THRESHOLD and trend_1d_score >= 0:  # شرط اجباری روند 1d
             entry = await find_entry_point(exchange, symbol, "Long", support_4h, resistance_4h)
             if entry is None:
                 logging.info(f"نقطه ورود Long برای {symbol} در 15m پیدا نشد")
@@ -886,14 +908,14 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 return None
 
             atr_1h = df["ATR"].iloc[-1]
-            sl_distance = max(entry * 0.01, 2 * atr_1h)
+            sl_distance = max(atr_1h * 1.5, entry * 0.005)  # حداقل 0.5% فاصله
             sl = entry - sl_distance
-            if sl < support_4h * 0.95:
+            if sl < support_4h * 0.98:
                 sl = support_4h * 0.98
                 logging.info(f"حد ضرر برای {symbol} تنظیم شد تا خیلی زیر حمایت نباشه: sl={sl}")
 
             risk = entry - sl
-            tp = entry + (2 * risk)
+            tp = entry + (dynamic_rr * risk)
             if tp > resistance_4h * 1.05:
                 tp = resistance_4h * 1.02
                 logging.info(f"هدف سود برای {symbol} تنظیم شد تا خیلی بالای مقاومت نباشه: tp={tp}")
@@ -933,12 +955,12 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "فاندامنتال": f"امتیاز: {fundamental_score}",
                 "شاخص ترس و طمع": fng_index,
                 "روند 4h": trend_4h,
-"قیمت فعلی بازار": live_price
+                "قیمت فعلی بازار": live_price
             }
             logging.info(f"سیگنال Long تولید شد: {result}")
             return result
 
-        elif score_short >= THRESHOLD:
+        elif score_short >= THRESHOLD and trend_1d_score <= 0:  # شرط اجباری روند 1d
             entry = await find_entry_point(exchange, symbol, "Short", support_4h, resistance_4h)
             if entry is None:
                 logging.info(f"نقطه ورود Short برای {symbol} در 15m پیدا نشد")
@@ -955,14 +977,14 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 return None
 
             atr_1h = df["ATR"].iloc[-1]
-            sl_distance = max(entry * 0.01, 2 * atr_1h)
+            sl_distance = max(atr_1h * 1.5, entry * 0.005)  # حداقل 0.5% فاصله
             sl = entry + sl_distance
             if sl > resistance_4h * 1.05:
                 sl = resistance_4h * 1.02
                 logging.info(f"حد ضرر برای {symbol} تنظیم شد تا خیلی بالای مقاومت نباشه: sl={sl}")
 
             risk = sl - entry
-            tp = entry - (2 * risk)
+            tp = entry - (dynamic_rr * risk)
             if tp < support_4h * 0.95:
                 tp = support_4h * 0.98
                 logging.info(f"هدف سود برای {symbol} تنظیم شد تا خیلی زیر حمایت نباشه: tp={tp}")
@@ -1002,7 +1024,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "فاندامنتال": f"امتیاز: {fundamental_score}",
                 "شاخص ترس و طمع": fng_index,
                 "روند 4h": trend_4h,
-"قیمت فعلی بازار": live_price
+                "قیمت فعلی بازار": live_price
             }
             logging.info(f"سیگنال Short تولید شد: {result}")
             return result
@@ -1088,7 +1110,6 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
-
 # === Custom Additions for Enhanced Scoring ===
 
 def calculate_fibonacci_levels(df, high_col="high", low_col="low"):
@@ -1104,7 +1125,6 @@ def calculate_fibonacci_levels(df, high_col="high", low_col="low"):
     }
     return levels
 
-
 def get_usdt_dominance_score(usdt_dominance_series):
     recent = usdt_dominance_series[-1]
     previous = usdt_dominance_series[-5] if len(usdt_dominance_series) >= 5 else usdt_dominance_series[0]
@@ -1113,7 +1133,6 @@ def get_usdt_dominance_score(usdt_dominance_series):
     elif recent > previous:
         return -5  # Bearish for crypto
     return 0
-
 
 def get_moving_average_score(df, price_col="close"):
     ma50 = df[price_col].rolling(window=50).mean()
@@ -1127,7 +1146,6 @@ def get_moving_average_score(df, price_col="close"):
     if ma50.iloc[-1] > ma100.iloc[-1] and ma100.iloc[-1] > ma200.iloc[-1]:
         score += 3  # Uptrend alignment
     return score
-
 
 # === Pattern Detection Additions ===
 
