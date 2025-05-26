@@ -890,7 +890,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 120
+        THRESHOLD = 100
         if score_long >= THRESHOLD and trend_1d_score >= 0:  # شرط اجباری روند 1d
             entry = await find_entry_point(exchange, symbol, "Long", support_4h, resistance_4h)
             if entry is None:
