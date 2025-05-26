@@ -515,7 +515,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
             if df_1h is not None and len(df_1h) > 0:
                 recent_low = df_1h["low"].iloc[-1]  # فقط مقدار آخر
-                if recent_low < support * 0.98:
+                if recent_low < support * 0.95:
                     logging.warning(f"حمایت برای {symbol} شکسته شده است: recent_low={recent_low}, support={support}")
                     return None
 
