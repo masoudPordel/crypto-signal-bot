@@ -475,8 +475,8 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             return None
 
         df_15m = compute_indicators(df_15m)
-        last_15m = df_15m.iloc[-1]  # فقط آخرین ردیف
-        next_15m = df_15m.iloc[-2] if len(df_15m) > 1 else None  # کندل قبلی برای تأیید
+        last_15m = df_15m.iloc[-1]
+        next_15m = df_15m.iloc[-2] if len(df_15m) > 1 else None
 
         live_price = await get_live_price(exchange, symbol)
         if live_price is None:
@@ -488,39 +488,35 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             logging.warning(f"اختلاف قیمت برای {symbol} بیش از حد است: live_price={live_price}, candle_price={last_15m['close']}, اختلاف={price_diff}")
             return None
 
-        # بررسی حجم صعودی
-        volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]  # فقط مقدار آخر
-        volume_increase = last_15m["volume"] > volume_mean * 0.5  # افزایش 30% حجم
+        volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
+        volume_increase = last_15m["volume"] > volume_mean * 1.3
         logging.info(f"بررسی حجم صعودی برای {symbol}: current_vol={last_15m['volume']:.2f}, mean={volume_mean:.2f}, increase={volume_increase}")
 
-        # تأیید کندل بعدی برای PinBar با انعطاف‌پذیری
         pin_bar_confirmed = False
         if last_15m["PinBar"]:
-            if next_15m and ((signal_type == "Long" and last_15m["close"] < next_15m["close"] * 1.05) or 
-                             (signal_type == "Short" and last_15m["close"] > next_15m["close"] * 0.95)):
+            if next_15m and ((signal_type == "Long" and last_15m["close"] < next_15m["close"] * 1.10) or 
+                             (signal_type == "Short" and last_15m["close"] > next_15m["close"] * 0.90)):
                 pin_bar_confirmed = True
-                logging.info(f"الگوی PinBar برای {symbol} با کندل بعدی تأیید شد (با انعطاف 5%)")
+                logging.info(f"الگوی PinBar برای {symbol} با کندل بعدی تأیید شد (با انعطاف 10%)")
             else:
                 logging.info(f"الگوی PinBar برای {symbol} بدون تأیید کندل بعدی رد شد")
 
-        # محاسبه شرایط ورود
-        volume_condition = last_15m["volume"] > volume_mean * 0.8  # فقط مقدار آخر
-        price_action = (last_15m["PinBar"] and pin_bar_confirmed) or last_15m["Engulfing"]  # فقط مقدار آخر
+        volume_condition = last_15m["volume"] > volume_mean * 0.8
+        price_action = (last_15m["PinBar"] and pin_bar_confirmed) or last_15m["Engulfing"] or last_15m["Hammer"] or last_15m["Doji"]
         logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']}, resistance={resistance}, support={support}")
         logging.info(f"حجم: current={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}, increase={volume_increase}")
-        logging.info(f"الگوهای قیمتی: PinBar={last_15m['PinBar']}, Confirmed={pin_bar_confirmed}, Engulfing={last_15m['Engulfing']}, price_action={price_action}")
+        logging.info(f"مقادیر الگوها: PinBar={last_15m['PinBar']}, Confirmed={pin_bar_confirmed}, Engulfing={last_15m['Engulfing']}, Hammer={last_15m['Hammer']}, Doji={last_15m['Doji']}, price_action={price_action}")
 
         if signal_type == "Long":
-            # بررسی شکست حمایت
             df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
             if df_1h is not None and len(df_1h) > 0:
-                recent_low = df_1h["low"].iloc[-1]  # فقط مقدار آخر
+                recent_low = df_1h["low"].iloc[-1]
                 if recent_low < support * 0.95:
                     logging.warning(f"حمایت برای {symbol} شکسته شده است: recent_low={recent_low}, support={support}")
                     return None
 
             breakout_resistance = last_15m["close"] > resistance and volume_condition and volume_increase
-            near_support = abs(last_15m["close"] - support) / last_15m["close"] < 0.03 and volume_condition and volume_increase
+            near_support = abs(last_15m["close"] - support) / last_15m["close"] < 0.05 and volume_condition and volume_increase
             within_range = support < last_15m["close"] < resistance and volume_condition and volume_increase
             entry_condition = (breakout_resistance or near_support or within_range) and price_action
             logging.debug(f"شرایط Long برای {symbol}: breakout_resistance={breakout_resistance}, near_support={near_support}, within_range={within_range}, final_condition={entry_condition}")
@@ -533,16 +529,15 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
                 return None
 
         elif signal_type == "Short":
-            # بررسی شکست حمایت
             df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
             if df_1h is not None and len(df_1h) > 0:
-                recent_low = df_1h["low"].iloc[-1]  # فقط مقدار آخر
-                if recent_low < support * 0.98:
+                recent_low = df_1h["low"].iloc[-1]
+                if recent_low < support * 0.95:
                     logging.warning(f"حمایت برای {symbol} شکسته شده است: recent_low={recent_low}, support={support}")
                     return None
 
             breakout_support = last_15m["close"] < support and volume_condition and volume_increase
-            near_resistance = abs(last_15m["close"] - resistance) / last_15m["close"] < 0.03 and volume_condition and volume_increase
+            near_resistance = abs(last_15m["close"] - resistance) / last_15m["close"] < 0.05 and volume_condition and volume_increase
             within_range = support < last_15m["close"] < resistance and volume_condition and volume_increase
             entry_condition = (breakout_support or near_resistance or within_range) and price_action
             logging.debug(f"شرایط Short برای {symbol}: breakout_support={breakout_support}, near_resistance={near_resistance}, within_range={within_range}, final_condition={entry_condition}")
