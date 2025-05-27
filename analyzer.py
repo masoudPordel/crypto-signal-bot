@@ -935,7 +935,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 100
+        THRESHOLD = 80
         if score_long >= THRESHOLD and trend_1d_score >= 0:  # شرط اجباری روند 1d
             signal_type = "Long"
             # محاسبه RR داینامیک بعد از تعیین نوع سیگنال
