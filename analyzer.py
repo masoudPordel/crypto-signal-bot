@@ -474,109 +474,157 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
     return None
 
 # تابع پیدا کردن نقطه ورود
-async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: str, support: float, resistance: float) -> Optional[dict]:
+
+async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: str, support: float, resistance: float) -> Optional[Dict]:
+    """
+    پیدا کردن نقطه ورود برای معامله Long یا Short در تایم‌فریم 15 دقیقه.
+    
+    Args:
+        exchange: شیء صرافی (مثل ccxt)
+        symbol: نماد معاملاتی (مثل 'CYBER/USDT')
+        signal_type: نوع سیگنال ('Long' یا 'Short')
+        support: سطح حمایت
+        resistance: سطح مقاومت
+    
+    Returns:
+        dict: {"entry_price": float, "sl": float, "tp": float} یا None اگر نقطه ورود پیدا نشه
+    """
     try:
         logging.info(f"شروع پیدا کردن نقطه ورود برای {symbol} در تایم‌فریم 15m - نوع سیگنال: {signal_type}")
+        
+        # دریافت داده‌های 15 دقیقه
         df_15m = await get_ohlcv_cached(exchange, symbol, "15m")
         if df_15m is None or len(df_15m) < 20:
-            logging.warning(f"داده ناکافی برای پیدا کردن نقطه ورود {symbol} @ 15m: تعداد کندل‌ها={len(df_15m) if df_15m is not None else 0}")
+            logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=داده ناکافی, تعداد کندل‌ها={len(df_15m) if df_15m is not None else 0}")
             return None
 
+        # محاسبه اندیکاتورها
         df_15m = compute_indicators(df_15m)
-        last_15m = df_15m.iloc[-1].to_dict()  # تبدیل به دیکشنری برای مقادیر اسکالر
+        last_15m = df_15m.iloc[-1].to_dict()  # کندل آخر
         next_15m = df_15m.iloc[-2].to_dict() if len(df_15m) > 1 else None
 
+        # دریافت قیمت واقعی
         live_price = await get_live_price(exchange, symbol)
         if live_price is None:
-            logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، سیگنال رد می‌شود")
+            logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم دریافت قیمت واقعی")
             return None
 
+        # چک اختلاف قیمت
         price_diff = abs(live_price - last_15m["close"]) / live_price if live_price != 0 else float('inf')
-        if price_diff > 0.01:
-            logging.warning(f"اختلاف قیمت برای {symbol} بیش از حد است: live_price={live_price}, candle_price={last_15m['close']}, اختلاف={price_diff}")
+        if price_diff > 0.02:  # شل‌تر کردن از 0.01 به 0.02
+            logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=اختلاف قیمت زیاد, live_price={live_price:.6f}, candle_price={last_15m['close']:.6f}, اختلاف={price_diff:.4f}")
             return None
 
+        # چک حجم
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
-        volume_increase = last_15m["volume"] > volume_mean * 0.8
-        volume_condition = last_15m["volume"] > volume_mean * 0.3
-        logging.info(f"بررسی حجم برای {symbol}: current_vol={last_15m['volume']:.2f}, mean={volume_mean:.2f}, increase={volume_increase}, condition={volume_condition}")
+        volume_condition = last_15m["volume"] > volume_mean * 0.3  # شرط ملایم
+        logging.info(f"بررسی حجم برای {symbol}: current_vol={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}")
+        if not volume_condition:
+            logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=حجم ناکافی, current_vol={last_15m['volume']:.2f}, threshold={volume_mean * 0.3:.2f}")
+            return None
 
+        # چک الگوی PinBar
         pin_bar_confirmed = False
         if last_15m.get("PinBar", False):
-            if next_15m and ((signal_type == "Long" and last_15m["close"] < next_15m["close"] * 1.10) or 
-                             (signal_type == "Short" and last_15m["close"] > next_15m["close"] * 0.90)):
+            if next_15m and (
+                (signal_type == "Long" and last_15m["close"] < next_15m["close"] * 1.10) or 
+                (signal_type == "Short" and last_15m["close"] > next_15m["close"] * 0.90)
+            ):
                 pin_bar_confirmed = True
                 logging.info(f"الگوی PinBar برای {symbol} با کندل بعدی تأیید شد (با انعطاف 10%)")
             else:
-                logging.info(f"الگوی PinBar برای {symbol} بدون تأیید کندل بعدی رد شد")
+                logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم تأیید PinBar")
 
-        price_action = (last_15m.get("PinBar", False) and pin_bar_confirmed) or last_15m.get("Engulfing", False) or last_15m.get("Hammer", False) or last_15m.get("Doji", False)
-        logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']}, resistance={resistance}, support={support}")
+        # چک پرایس اکشن
+        price_action = (
+            (last_15m.get("PinBar", False) and pin_bar_confirmed) or 
+            last_15m.get("Engulfing", False) or 
+            last_15m.get("Hammer", False) or 
+            last_15m.get("Doji", False)
+        )
+        logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']:.6f}, resistance={resistance:.6f}, support={support:.6f}")
         logging.info(f"مقادیر الگوها: PinBar={last_15m.get('PinBar', False)}, Confirmed={pin_bar_confirmed}, Engulfing={last_15m.get('Engulfing', False)}, Hammer={last_15m.get('Hammer', False)}, Doji={last_15m.get('Doji', False)}, price_action={price_action}")
 
-        if signal_type == "Long":
-            df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
-            if df_1h is not None and len(df_1h) > 0:
-                recent_low = df_1h["low"].iloc[-1]
-                if recent_low < support * 0.95:
-                    logging.warning(f"حمایت برای {symbol} شکسته شده است: recent_low={recent_low}, support={support}")
-                    return None
+        # دریافت داده‌های 1 ساعته و چک حمایت
+        df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
+        if df_1h is None or len(df_1h) == 0:
+            logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم دریافت داده 1h")
+            return None
 
-            close_price = last_15m["close"]
-            fib_levels = calculate_fibonacci_levels(df_15m)
-            breakout_resistance = close_price > resistance and volume_condition and volume_increase
-            near_support = abs(close_price - support) / close_price < 0.05 and volume_condition and volume_increase
-            within_range = support < close_price < resistance and volume_condition and volume_increase
+        recent_low = df_1h["low"].iloc[-1]
+        if recent_low < support * 0.98:  # شل‌تر کردن از 0.95 به 0.98
+            logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=شکست حمایت, recent_low={recent_low:.6f}, support={support:.6f}")
+            return None
+
+        close_price = last_15m["close"]
+        fib_levels = calculate_fibonacci_levels(df_15m)
+
+        # شرط‌های ورود
+        if signal_type == "Long":
+            breakout_resistance = close_price > resistance and volume_condition
+            near_support = abs(close_price - support) / close_price < 0.1 and volume_condition  # شل‌تر از 0.05 به 0.1
+            within_range = support < close_price < resistance and volume_condition
             entry_condition = (breakout_resistance or near_support or within_range) and price_action
+
             if entry_condition:
                 entry_price = live_price
-                # تنظیم حد ضرر با ATR و حمایت
-                atr_1h = df_15m["ATR"].iloc[-1]
-                sl_distance = max(atr_1h * 1.2, (entry_price - support) * 0.5)  # حداقل 50% فاصله تا حمایت
-                sl = entry_price - sl_distance
+                atr_15m = df_15m["ATR"].iloc[-1]
+                
+                # تنظیم SL و TP
+                sl = entry_price - (atr_15m * 0.75)  # نزدیک‌تر کردن SL
+                tp = entry_price + (atr_15m * 2.5)   # دورتر کردن TP
+                
+                # محدود کردن SL و TP با حمایت/مقاومت
                 if sl < support * 0.98:
                     sl = support * 0.98
-
-                # تنظیم حد سود با فیبوناچی 0.618 یا چند برابر ATR
-                tp = fib_levels["0.618"] if fib_levels["0.618"] > entry_price else entry_price + (atr_1h * 3)
                 if tp > resistance * 1.05:
                     tp = resistance * 1.02
 
-                logging.info(f"نقطه ورود Long برای {symbol} @ 15m: قیمت ورود={entry_price}, SL={sl}, TP={tp}")
+                # محاسبه RR
+                rr_ratio = (tp - entry_price) / (entry_price - sl)
+                logging.info(f"محاسبه TP و SL برای {symbol}: Entry={entry_price:.6f}, TP={tp:.6f}, SL={sl:.6f}, ATR={atr_15m:.6f}, RR={rr_ratio:.2f}")
+
+                # فیلتر RR
+                if rr_ratio < 2:
+                    logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=RR کمتر از 2, RR={rr_ratio:.2f}")
+                    return None
+
                 return {"entry_price": entry_price, "sl": sl, "tp": tp}
 
         elif signal_type == "Short":
-            df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
-            if df_1h is not None and len(df_1h) > 0:
-                recent_low = df_1h["low"].iloc[-1]
-                if recent_low < support * 0.95:
-                    logging.warning(f"حمایت برای {symbol} شکسته شده است: recent_low={recent_low}, support={support}")
-                    return None
-
-            close_price = last_15m["close"]
-            fib_levels = calculate_fibonacci_levels(df_15m)
-            breakout_support = close_price < support and volume_condition and volume_increase
-            near_resistance = abs(close_price - resistance) / close_price < 0.05 and volume_condition and volume_increase
-            within_range = support < close_price < resistance and volume_condition and volume_increase
+            breakout_support = close_price < support and volume_condition
+            near_resistance = abs(close_price - resistance) / close_price < 0.1 and volume_condition  # شل‌تر از 0.05 به 0.1
+            within_range = support < close_price < resistance and volume_condition
             entry_condition = (breakout_support or near_resistance or within_range) and price_action
+
             if entry_condition:
                 entry_price = live_price
-                # تنظیم حد ضرر با ATR و مقاومت
-                atr_1h = df_15m["ATR"].iloc[-1]
-                sl_distance = max(atr_1h * 1.2, (resistance - entry_price) * 0.5)  # حداقل 50% فاصله تا مقاومت
-                sl = entry_price + sl_distance
+                atr_15m = df_15m["ATR"].iloc[-1]
+                
+                # تنظیم SL و TP
+                sl = entry_price + (atr_15m * 0.75)  # نزدیک‌تر کردن SL
+                tp = entry_price - (atr_15m * 2.5)   # دورتر کردن TP
+                
+                # محدود کردن SL و TP با حمایت/مقاومت
                 if sl > resistance * 1.05:
                     sl = resistance * 1.02
-
-                # تنظیم حد سود با فیبوناچی 0.618 یا چند برابر ATR
-                tp = fib_levels["0.618"] if fib_levels["0.618"] < entry_price else entry_price - (atr_1h * 3)
-                if tp < support * 0.95:
+                if tp < support * 0.98:
                     tp = support * 0.98
 
-                logging.info(f"نقطه ورود Short برای {symbol} @ 15m: قیمت ورود={entry_price}, SL={sl}, TP={tp}")
+                # محاسبه RR
+                rr_ratio = (entry_price - tp) / (sl - entry_price)
+                logging.info(f"محاسبه TP و SL برای {symbol}: Entry={entry_price:.6f}, TP={tp:.6f}, SL={sl:.6f}, ATR={atr_15m:.6f}, RR={rr_ratio:.2f}")
+
+                # فیلتر RR
+                if rr_ratio < 2:
+                    logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=RR کمتر از 2, RR={rr_ratio:.2f}")
+                    return None
+
                 return {"entry_price": entry_price, "sl": sl, "tp": tp}
 
+        logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم تحقق شرایط ورود")
         return None
+
     except Exception as e:
         logging.error(f"خطا در پیدا کردن نقطه ورود برای {symbol} @ 15m: {str(e)}")
         return None
