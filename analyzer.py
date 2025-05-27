@@ -309,8 +309,8 @@ def check_market_events(symbol: str) -> int:
         "Accept": "application/json",
         "Accept-Encoding": "deflate, gzip"
     }
-    start_date = (datetime.utcnow() - timedelta(days=7)).replace(hour=20, minute=50, second=0, microsecond=0).strftime("%Y-%m-%d")
-    end_date = (datetime.utcnow() + timedelta(days=7)).replace(hour=20, minute=50, second=0, microsecond=0).strftime("%Y-%m-%d")
+    start_date = (datetime.utcnow() - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d")
+    end_date = (datetime.utcnow() + timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d")
     params = {
         "coinId": str(coin_id),
         "max": 5,
@@ -320,14 +320,14 @@ def check_market_events(symbol: str) -> int:
     try:
         logging.debug(f"شروع دریافت رویدادها برای {symbol}, coin_id={coin_id}")
         time.sleep(0.5)
-        resp = requests.get(url, headers=headers, params)
+        resp = requests.get(url, headers=headers, params=params)  # اصلاح خطا
         events = resp.json()
         event_score = 0
         if not events or "body" not in events or not events["body"]:
             return 0
         for event in events["body"]:
             title = event.get("title", "")
-            description = event.get('description', '')
+            description = event.get("description", "")
             if isinstance(title, dict):
                 title = title.get("en", "")
             if isinstance(description, dict):
@@ -346,9 +346,9 @@ def check_market_events(symbol: str) -> int:
                 event_score -= 15
         return event_score
     except Exception as e:
-        logging.error(f"Error fetching events for {symbol}: {e}")
+        logging.error(f"خطا در دریافت رویدادها برای {symbol}: {e}")
         return 0
-
+```
 # تابع محاسبه شاخص‌ها
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     try:
