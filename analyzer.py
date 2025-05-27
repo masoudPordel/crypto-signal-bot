@@ -474,7 +474,7 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
     return None
 
 # تابع پیدا کردن نقطه ورود
-async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: str, support: float, resistance: float) -> Optional[float]:
+async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: str, support: float, resistance: float) -> Optional[dict]:
     try:
         logging.info(f"شروع پیدا کردن نقطه ورود برای {symbol} در تایم‌فریم 15m - نوع سیگنال: {signal_type}")
         df_15m = await get_ohlcv_cached(exchange, symbol, "15m")
@@ -522,20 +522,28 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
                     logging.warning(f"حمایت برای {symbol} شکسته شده است: recent_low={recent_low}, support={support}")
                     return None
 
-            # استفاده از مقادیر اسکالر
             close_price = last_15m["close"]
+            fib_levels = calculate_fibonacci_levels(df_15m)
             breakout_resistance = close_price > resistance and volume_condition and volume_increase
             near_support = abs(close_price - support) / close_price < 0.05 and volume_condition and volume_increase
             within_range = support < close_price < resistance and volume_condition and volume_increase
             entry_condition = (breakout_resistance or near_support or within_range) and price_action
-            logging.debug(f"شرایط Long برای {symbol}: breakout_resistance={breakout_resistance}, near_support={near_support}, within_range={within_range}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
-                logging.info(f"نقطه ورود Long برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price}")
-                return entry_price
-            else:
-                logging.info(f"شرایط ورود Long برای {symbol} @ 15m برقرار نشد")
-                return None
+                # تنظیم حد ضرر با ATR و حمایت
+                atr_1h = df_15m["ATR"].iloc[-1]
+                sl_distance = max(atr_1h * 1.2, (entry_price - support) * 0.5)  # حداقل 50% فاصله تا حمایت
+                sl = entry_price - sl_distance
+                if sl < support * 0.98:
+                    sl = support * 0.98
+
+                # تنظیم حد سود با فیبوناچی 0.618 یا چند برابر ATR
+                tp = fib_levels["0.618"] if fib_levels["0.618"] > entry_price else entry_price + (atr_1h * 3)
+                if tp > resistance * 1.05:
+                    tp = resistance * 1.02
+
+                logging.info(f"نقطه ورود Long برای {symbol} @ 15m: قیمت ورود={entry_price}, SL={sl}, TP={tp}")
+                return {"entry_price": entry_price, "sl": sl, "tp": tp}
 
         elif signal_type == "Short":
             df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
@@ -545,25 +553,51 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
                     logging.warning(f"حمایت برای {symbol} شکسته شده است: recent_low={recent_low}, support={support}")
                     return None
 
-            # استفاده از مقادیر اسکالر
             close_price = last_15m["close"]
+            fib_levels = calculate_fibonacci_levels(df_15m)
             breakout_support = close_price < support and volume_condition and volume_increase
             near_resistance = abs(close_price - resistance) / close_price < 0.05 and volume_condition and volume_increase
             within_range = support < close_price < resistance and volume_condition and volume_increase
             entry_condition = (breakout_support or near_resistance or within_range) and price_action
-            logging.debug(f"شرایط Short برای {symbol}: breakout_support={breakout_support}, near_resistance={near_resistance}, within_range={within_range}, final_condition={entry_condition}")
             if entry_condition:
                 entry_price = live_price
-                logging.info(f"نقطه ورود Short برای {symbol} @ 15m پیدا شد: قیمت ورود={entry_price}")
-                return entry_price
-            else:
-                logging.info(f"شرایط ورود Short برای {symbol} @ 15m برقرار نشد")
-                return None
+                # تنظیم حد ضرر با ATR و مقاومت
+                atr_1h = df_15m["ATR"].iloc[-1]
+                sl_distance = max(atr_1h * 1.2, (resistance - entry_price) * 0.5)  # حداقل 50% فاصله تا مقاومت
+                sl = entry_price + sl_distance
+                if sl > resistance * 1.05:
+                    sl = resistance * 1.02
+
+                # تنظیم حد سود با فیبوناچی 0.618 یا چند برابر ATR
+                tp = fib_levels["0.618"] if fib_levels["0.618"] < entry_price else entry_price - (atr_1h * 3)
+                if tp < support * 0.95:
+                    tp = support * 0.98
+
+                logging.info(f"نقطه ورود Short برای {symbol} @ 15m: قیمت ورود={entry_price}, SL={sl}, TP={tp}")
+                return {"entry_price": entry_price, "sl": sl, "tp": tp}
 
         return None
     except Exception as e:
         logging.error(f"خطا در پیدا کردن نقطه ورود برای {symbol} @ 15m: {str(e)}")
         return None
+
+# تابع مدیریت trailing stop
+async def manage_trailing_stop(exchange: ccxt.Exchange, symbol: str, entry_price: float, sl: float, signal_type: str, trail_percentage: float = 0.5):
+    try:
+        while True:
+            live_price = await get_live_price(exchange, symbol)
+            if live_price is None:
+                await asyncio.sleep(60)  # صبر 1 دقیقه اگه قیمت دریافت نشد
+                continue
+            if (live_price > entry_price and signal_type == "Long") or (live_price < entry_price and signal_type == "Short"):
+                trail_amount = live_price * (trail_percentage / 100)
+                new_sl = live_price - trail_amount if signal_type == "Long" else live_price + trail_amount
+                if (signal_type == "Long" and new_sl > sl) or (signal_type == "Short" and new_sl < sl):
+                    sl = new_sl
+                    logging.info(f"Trailing Stop برای {symbol} به‌روزرسانی شد: SL={sl}, Live Price={live_price}")
+            await asyncio.sleep(300)  # چک هر 5 دقیقه
+    except Exception as e:
+        logging.error(f"خطا در مدیریت Trailing Stop برای {symbol}: {str(e)}")
 
 # تابع تأیید مولتی تایم‌فریم
 async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, base_tf: str) -> float:
@@ -904,16 +938,20 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
         THRESHOLD = 100
         if score_long >= THRESHOLD and trend_1d_score >= 0:  # شرط اجباری روند 1d
-            signal_type = "Long"  # تعریف signal_type اینجا
+            signal_type = "Long"
             # محاسبه RR داینامیک بعد از تعیین نوع سیگنال
             if support_4h > 0:
                 dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
             logging.info(f"نسبت RR داینامیک برای {symbol} (Long): RR={dynamic_rr}")
 
-            entry = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
-            if entry is None:
+            entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
+            if entry_data is None:
                 logging.info(f"نقطه ورود Long برای {symbol} در 15m پیدا نشد")
                 return None
+
+            entry = entry_data["entry_price"]
+            sl = entry_data["sl"]
+            tp = entry_data["tp"]
 
             live_price = await get_live_price(exchange, symbol)
             if live_price is None:
@@ -924,19 +962,6 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             if price_diff > 0.01:
                 logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry}, live_price={live_price}, اختلاف={price_diff}")
                 return None
-
-            atr_1h = df["ATR"].iloc[-1]
-            sl_distance = max(atr_1h * 1.5, entry * 0.005)  # حداقل 0.5% فاصله
-            sl = entry - sl_distance
-            if sl < support_4h * 0.98:
-                sl = support_4h * 0.98
-                logging.info(f"حد ضرر برای {symbol} تنظیم شد تا خیلی زیر حمایت نباشه: sl={sl}")
-
-            risk = entry - sl
-            tp = entry + (dynamic_rr * risk)
-            if tp > resistance_4h * 1.05:
-                tp = resistance_4h * 1.02
-                logging.info(f"هدف سود برای {symbol} تنظیم شد تا خیلی بالای مقاومت نباشه: tp={tp}")
 
             if sl >= entry or tp <= entry:
                 logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry}, sl={sl}, tp={tp}")
@@ -975,20 +1000,26 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "روند 4h": trend_4h,
                 "قیمت فعلی بازار": live_price
             }
+            # اضافه کردن تسک trailing stop
+            asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
             logging.info(f"سیگنال Long تولید شد: {result}")
             return result
 
         elif score_short >= THRESHOLD and trend_1d_score <= 0:  # شرط اجباری روند 1d
-            signal_type = "Short"  # تعریف signal_type اینجا
+            signal_type = "Short"
             # محاسبه RR داینامیک بعد از تعیین نوع سیگنال
             if resistance_4h > 0:
                 dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
             logging.info(f"نسبت RR داینامیک برای {symbol} (Short): RR={dynamic_rr}")
 
-            entry = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
-            if entry is None:
+            entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
+            if entry_data is None:
                 logging.info(f"نقطه ورود Short برای {symbol} در 15m پیدا نشد")
                 return None
+
+            entry = entry_data["entry_price"]
+            sl = entry_data["sl"]
+            tp = entry_data["tp"]
 
             live_price = await get_live_price(exchange, symbol)
             if live_price is None:
@@ -999,19 +1030,6 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             if price_diff > 0.01:
                 logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry}, live_price={live_price}, اختلاف={price_diff}")
                 return None
-
-            atr_1h = df["ATR"].iloc[-1]
-            sl_distance = max(atr_1h * 1.5, entry * 0.005)  # حداقل 0.5% فاصله
-            sl = entry + sl_distance
-            if sl > resistance_4h * 1.05:
-                sl = resistance_4h * 1.02
-                logging.info(f"حد ضرر برای {symbol} تنظیم شد تا خیلی بالای مقاومت نباشه: sl={sl}")
-
-            risk = sl - entry
-            tp = entry - (dynamic_rr * risk)
-            if tp < support_4h * 0.95:
-                tp = support_4h * 0.98
-                logging.info(f"هدف سود برای {symbol} تنظیم شد تا خیلی زیر حمایت نباشه: tp={tp}")
 
             if sl <= entry or tp >= entry:
                 logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry}, sl={sl}, tp={tp}")
@@ -1050,6 +1068,8 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "روند 4h": trend_4h,
                 "قیمت فعلی بازار": live_price
             }
+            # اضافه کردن تسک trailing stop
+            asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
             logging.info(f"سیگنال Short تولید شد: {result}")
             return result
 
@@ -1172,9 +1192,6 @@ def get_moving_average_score(df, price_col="close"):
     return score
 
 # === Pattern Detection Additions ===
-
-import numpy as np
-from scipy.signal import argrelextrema
 
 def detect_head_and_shoulders(df, price_col="close"):
     data = df[price_col].values
