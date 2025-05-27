@@ -524,7 +524,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
 
         # Check PinBar pattern
         pin_bar_confirmed = False
-        if last_15m.get("PinBar", ""): False):
+        if last_15m.get("PinBar", False):
             if next_15m and (
                 (signal_type == "Long" and last_15m["close"] < next_15m["close"] * 1.10) or 
                 (signal_type == "Short" and last_15m["close"] > next_15m["close"] * 0.90)
