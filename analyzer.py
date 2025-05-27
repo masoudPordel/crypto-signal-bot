@@ -498,7 +498,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
 
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
         volume_increase = last_15m["volume"] > volume_mean * 0.8
-        volume_condition = last_15m["volume"] > volume_mean * 0.5
+        volume_condition = last_15m["volume"] > volume_mean * 0.3
         logging.info(f"بررسی حجم برای {symbol}: current_vol={last_15m['volume']:.2f}, mean={volume_mean:.2f}, increase={volume_increase}, condition={volume_condition}")
 
         pin_bar_confirmed = False
