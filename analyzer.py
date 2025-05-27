@@ -284,7 +284,7 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
                 continue
         spread_mean = np.mean(spread_history) if spread_history else 0.02
         spread_std = np.std(spread_history) if spread_history else 0.005
-        spread_threshold = 0.003  # آستانه سخت‌گیرانه‌تر برای نقدینگی
+        spread_threshold = 0.005  # آستانه سخت‌گیرانه‌تر برای نقدینگی
         if spread > spread_threshold:
             logging.warning(f"اسپرد برای {symbol} بیش از حد بالاست: spread={spread:.4f}")
             LIQUIDITY_REJECTS += 1
@@ -420,10 +420,10 @@ async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict
 
         fng_index = get_fear_and_greed_index()
         if fng_index < 25:
-            trend_score += 10
+            trend_score += 5
             logging.info(f"شاخص ترس و طمع در 4h برای {symbol}: {fng_index} (ترس شدید) - 10 امتیاز به روند صعودی اضافه شد")
         elif fng_index > 75:
-            trend_score += -10
+            trend_score += -5
             logging.info(f"شاخص ترس و طمع در 4h برای {symbol}: {fng_index} (طمع شدید) - 10 امتیاز به روند نزولی اضافه شد")
 
         result = {
@@ -498,7 +498,7 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
 
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
         volume_increase = last_15m["volume"] > volume_mean * 0.8
-        volume_condition = last_15m["volume"] > volume_mean * 0.6
+        volume_condition = last_15m["volume"] > volume_mean * 0.5
         logging.info(f"بررسی حجم برای {symbol}: current_vol={last_15m['volume']:.2f}, mean={volume_mean:.2f}, increase={volume_increase}, condition={volume_condition}")
 
         pin_bar_confirmed = False
@@ -583,21 +583,20 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
 
 # تابع مدیریت trailing stop
 async def manage_trailing_stop(exchange: ccxt.Exchange, symbol: str, entry_price: float, sl: float, signal_type: str, trail_percentage: float = 0.5):
-    try:
-        while True:
-            live_price = await get_live_price(exchange, symbol)
-            if live_price is None:
-                await asyncio.sleep(60)  # صبر 1 دقیقه اگه قیمت دریافت نشد
-                continue
-            if (live_price > entry_price and signal_type == "Long") or (live_price < entry_price and signal_type == "Short"):
-                trail_amount = live_price * (trail_percentage / 100)
-                new_sl = live_price - trail_amount if signal_type == "Long" else live_price + trail_amount
-                if (signal_type == "Long" and new_sl > sl) or (signal_type == "Short" and new_sl < sl):
-                    sl = new_sl
-                    logging.info(f"Trailing Stop برای {symbol} به‌روزرسانی شد: SL={sl}, Live Price={live_price}")
-            await asyncio.sleep(300)  # چک هر 5 دقیقه
-    except Exception as e:
-        logging.error(f"خطا در مدیریت Trailing Stop برای {symbol}: {str(e)}")
+    logging.info(f"شروع Trailing Stop برای {symbol} با نوع سیگنال {signal_type}, ورود={entry_price}, SL اولیه={sl}")
+    while True:
+        live_price = await get_live_price(exchange, symbol)
+        if live_price is None:
+            logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، 60 ثانیه صبر می‌کنم")
+            await asyncio.sleep(60)
+            continue
+        if (live_price > entry_price and signal_type == "Long") or (live_price < entry_price and signal_type == "Short"):
+            trail_amount = live_price * (trail_percentage / 100)
+            new_sl = live_price - trail_amount if signal_type == "Long" else live_price + trail_amount
+            if (signal_type == "Long" and new_sl > sl) or (signal_type == "Short" and new_sl < sl):
+                sl = new_sl
+                logging.info(f"Trailing Stop برای {symbol} به‌روزرسانی شد: SL={sl}, Live Price={live_price}")
+        await asyncio.sleep(300)  # چک هر 5 دقیقه
 
 # تابع تأیید مولتی تایم‌فریم
 async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, base_tf: str) -> float:
