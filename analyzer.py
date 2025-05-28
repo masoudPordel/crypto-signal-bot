@@ -556,11 +556,10 @@ async def find_entry_point(
             })
             return None
 
-                df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
+        df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
         if df_1h is None or len(df_1h) == 0:
             log_rejection("missing_data_1h")
             return None
-
         # 🔒 بررسی اعتبار حمایت و مقاومت
         if support is None or resistance is None or support <= 0 or resistance <= 0:
             log_rejection("invalid_support_resistance", {
