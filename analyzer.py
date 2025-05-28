@@ -41,17 +41,8 @@ SR_REJECTS = 0
 # سمافر برای کنترل درخواست‌ها
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
-# تابع دریافت آیدی کوین از CMC (بدون تغییر)
+# تابع دریافت آیدی کوین از CMC
 def get_coin_id(symbol: str) -> Optional[int]:
-    """
-    دریافت آیدی کوین از CoinMarketCap.
-
-    Args:
-        symbol (str): نماد کوین (مثل BTC).
-
-    Returns:
-        Optional[int]: آیدی کوین یا None در صورت خطا.
-    """
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/map"
     headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
     params = {'symbol': symbol}
@@ -70,14 +61,8 @@ def get_coin_id(symbol: str) -> Optional[int]:
         logging.error(f"خطا در دریافت آیدی برای {symbol}: {e}")
         return None
 
-# تابع دریافت 500 نماد برتر از CMC (بدون تغییر)
+# تابع دریافت 500 نماد برتر از CMC
 def get_top_500_symbols_from_cmc() -> List[str]:
-    """
-    دریافت 500 نماد برتر از CoinMarketCap.
-
-    Returns:
-        List[str]: لیست نمادهای برتر.
-    """
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
     headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
     params = {'start': '1', 'limit': '500', 'convert': 'USD'}
@@ -85,23 +70,14 @@ def get_top_500_symbols_from_cmc() -> List[str]:
         logging.debug(f"شروع دریافت ۵۰۰ نماد برتر از CMC")
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         data = resp.json()
-        logging.info(f"دریافت ۵۰۰ نماد برتر از CMC: تعداد نمادها={len(data['data'])}")
+        logging.info(f"دریافت ۵۰۰ نماد برتر از CMC: تعداد={len(data['data'])}")
         return [entry['symbol'] for entry in data['data']]
     except Exception as e:
         logging.error(f"خطا در دریافت از CMC: {e}")
         return []
 
-# تابع بررسی رویدادهای بازار (بدون تغییر)
+# تابع بررسی رویدادهای بازار
 def check_market_events(symbol: str) -> int:
-    """
-    بررسی رویدادهای بازار برای نماد مشخص از CoinMarketCal.
-
-    Args:
-        symbol (str): نماد معاملاتی (مثل 'BTC/USDT').
-
-    Returns:
-        int: امتیاز فاندامنتال بر اساس رویدادها.
-    """
     coin_id = get_coin_id(symbol.split('/')[0])
     if not coin_id:
         return 0
@@ -151,15 +127,9 @@ def check_market_events(symbol: str) -> int:
         logging.error(f"خطا در دریافت رویدادها برای {symbol}: {e}")
         return 0
 
-# تابع دریافت شاخص ترس و طمع (بهبود با aiohttp)
+# تابع دریافت شاخص ترس و طمع
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def get_fear_and_greed_index() -> int:
-    """
-    دریافت شاخص ترس و طمع.
-
-    Returns:
-        int: مقدار شاخص یا 50 در صورت خطا.
-    """
     url = "https://api.alternative.me/fng/?limit=1"
     async with aiohttp.ClientSession() as session:
         async with session.get(url, timeout=10) as resp:
@@ -171,18 +141,12 @@ async def get_fear_and_greed_index() -> int:
 
 # تابع دریافت دامیننس تتر
 async def get_usdt_dominance_data() -> List[float]:
-    """
-    دریافت داده‌های دامیننس تتر (فرضی، از CoinGecko).
-
-    Returns:
-        List[float]: سری داده‌های دامیننس تتر.
-    """
     try:
         url = "https://api.coingecko.com/api/v3/coins/tether/market_chart?vs_currency=usd&days=7"
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=10) as resp:
                 data = await resp.json()
-                dominance = [d[1] / 1e9 for d in data.get("market_caps", [])]  # تبدیل به میلیارد
+                dominance = [d[1] / 1e9 for d in data.get("market_caps", [])]
                 logging.info(f"داده‌های دامیننس تتر دریافت شد: تعداد داده‌ها={len(dominance)}")
                 return dominance
     except Exception as e:
@@ -191,9 +155,6 @@ async def get_usdt_dominance_data() -> List[float]:
 
 # کلاس‌های محاسبات اندیکاتورها و تشخیص الگوها
 class IndicatorCalculator:
-    """
-    کلاس برای محاسبه اندیکاتورهای تکنیکال.
-    """
     @staticmethod
     def compute_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
         delta = df["close"].diff()
@@ -246,9 +207,6 @@ class IndicatorCalculator:
         return mfi
 
 class PatternDetector:
-    """
-    کلاس برای تشخیص الگوهای قیمتی.
-    """
     @staticmethod
     def detect_pin_bar(df: pd.DataFrame) -> pd.Series:
         df["body"] = abs(df["close"] - df["open"])
@@ -336,12 +294,6 @@ class PatternDetector:
 
     @staticmethod
     def detect_head_and_shoulders(df: pd.DataFrame, price_col: str = "close") -> int:
-        """
-        تشخیص الگوی سر و شانه (نزولی یا صعودی).
-
-        Returns:
-            int: -5 برای سر و شانه نزولی، +5 برای معکوس، 0 در غیر این صورت.
-        """
         data = df[price_col].values
         max_idx = argrelextrema(np.array(data), np.greater)[0]
         min_idx = argrelextrema(np.array(data), np.less)[0]
@@ -365,12 +317,6 @@ class PatternDetector:
 
     @staticmethod
     def detect_double_top(df: pd.DataFrame, price_col: str = "close") -> int:
-        """
-        تشخیص الگوی دابل تاپ (نزولی).
-
-        Returns:
-            int: -3 برای دابل تاپ، 0 در غیر این صورت.
-        """
         data = df[price_col].values
         max_idx = argrelextrema(np.array(data), np.greater)[0]
         if len(max_idx) < 2:
@@ -385,12 +331,6 @@ class PatternDetector:
 
     @staticmethod
     def detect_double_bottom(df: pd.DataFrame, price_col: str = "close") -> int:
-        """
-        تشخیص الگوی دابل باتم (صعودی).
-
-        Returns:
-            int: +3 برای دابل باتم، 0 در غیر این صورت.
-        """
         data = df[price_col].values
         min_idx = argrelextrema(np.array(data), np.less)[0]
         if len(min_idx) < 2:
@@ -404,9 +344,6 @@ class PatternDetector:
         return 0
 
 class SignalFilter:
-    """
-    کلاس برای فیلتر سیگنال‌ها با Decision Tree.
-    """
     def __init__(self):
         self.model = DecisionTreeClassifier(max_depth=3)
         self.trained = False
@@ -434,18 +371,6 @@ class SignalFilter:
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFrame]:
-    """
-    دریافت داده‌های OHLCV با کش.
-
-    Args:
-        exchange: شیء صرافی.
-        symbol: نماد معاملاتی.
-        tf: تایم‌فریم.
-        limit: تعداد کندل‌ها.
-
-    Returns:
-        Optional[pd.DataFrame]: دیتافریم داده‌ها یا None در صورت خطا.
-    """
     try:
         key = f"{exchange.id}_{symbol}_{tf}"
         now = datetime.utcnow()
@@ -453,18 +378,15 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
             cached_df, cached_time = CACHE[key]
             if (now - cached_time).total_seconds() < CACHE_TTL:
                 return cached_df
-
         raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
         if not raw_data or len(raw_data) == 0:
             logging.warning(f"داده OHLCV برای {symbol} / {tf} خالی یا ناموجود است")
             return None
-
         df = pd.DataFrame(raw_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", errors="coerce")
         if df["timestamp"].isnull().all():
             logging.error(f"تمامی تایم‌استمپ‌ها برای {symbol} / {tf} نامعتبر هستند")
             return None
-
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
         df.set_index("timestamp", inplace=True)
@@ -476,17 +398,6 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
         return None
 
 async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int = 3) -> Optional[float]:
-    """
-    دریافت قیمت واقعی بازار.
-
-    Args:
-        exchange: شیء صرافی.
-        symbol: نماد معاملاتی.
-        max_attempts: حداکثر تعداد تلاش‌ها.
-
-    Returns:
-        Optional[float]: قیمت واقعی یا None در صورت خطا.
-    """
     attempt = 0
     while attempt < max_attempts:
         try:
@@ -518,17 +429,6 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
     return None
 
 async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame) -> tuple:
-    """
-    بررسی نقدینگی نماد.
-
-    Args:
-        exchange: شیء صرافی.
-        symbol: نماد معاملاتی.
-        df: دیتافریم داده‌ها.
-
-    Returns:
-        tuple: (اسپرد, امتیاز نقدینگی).
-    """
     global LIQUIDITY_REJECTS
     try:
         ticker = await exchange.fetch_ticker(symbol)
@@ -566,15 +466,6 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
         return float('inf'), 0
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    محاسبه اندیکاتورهای تکنیکال.
-
-    Args:
-        df: دیتافریم ورودی.
-
-    Returns:
-        pd.DataFrame: دیتافریم با اندیکاتورهای محاسبه‌شده.
-    """
     try:
         df = df.ffill().bfill().fillna(0)
         df["EMA12"] = df["close"].ewm(span=12).mean()
@@ -614,18 +505,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         logging.warning(f"اندیکاتورها با مقادیر پیش‌فرض پر شدند")
     return df
 
-def calculate_fibonacci_levels(df: pd.DataFrame, high_col: str = "high", low_col: str = "low") -> Dict[str, pd.Series]:
-    """
-    محاسبه سطوح فیبوناچی.
-
-    Args:
-        df: دیتافریم.
-        high_col: ستون قیمت بالا.
-        low_col: ستون قیمت پایین.
-
-    Returns:
-        Dict[str, float]: سطوح فیبوناچی.
-    """
+def calculate_fibonacci_levels(df: pd.DataFrame, high_col: str = "high", low_col: str = "low") -> Dict[str, float]:
     max_price = df[high_col].max()
     min_price = df[low_col].min()
     diff = max_price - min_price
@@ -638,16 +518,6 @@ def calculate_fibonacci_levels(df: pd.DataFrame, high_col: str = "high", low_col
     }
 
 def get_moving_average_score(df: pd.DataFrame, price_col: str = "close") -> int:
-    """
-    محاسبه امتیاز میانگین‌های متحرک.
-
-    Args:
-        df: دیتافریم.
-        price_col: ستون قیمت.
-
-    Returns:
-        int: امتیاز میانگین‌های متحرک.
-    """
     try:
         ma50 = df[price_col].rolling(window=50).mean()
         ma100 = df[price_col].rolling(window=100).mean()
@@ -666,44 +536,15 @@ def get_moving_average_score(df: pd.DataFrame, price_col: str = "close") -> int:
         return score
     except Exception as e:
         logging.error(f"خطا در محاسبه امتیاز میانگین‌ها: {e}")
-        return 0 
-        ma200 = df[price_col].rolling(window=200).mean()
-        
-        score = 0
-        if df[price_col].iloc[-1] > ma200.iloc[-1]:
-            score += 5
-        else:
-            score -= 5
-
-        if ma50.iloc[-1] > ma100.iloc[-1] and ma100.iloc[-1] > ma200.iloc[-1]:
-            score += 3
-
-        logging.info(f"امتیاز میانگین‌های متحرک: score={score}")
-        return score
-
-    except Exception as e:
-        logging.error(f"خطا در محاسبه امتیاز میانگین‌ها: {e}")
         return 0
-except Exception as e:
-    logging.error(f"خطا در اجرای بلوک بیرونی: {e}")
-    return 0
 
-def get_usdt_dominance_score(df: pd.DataFrame) -> int:
-    """
-    محاسبه امتیاز دامیننس تتر.
-
-    Args:
-        df: دیتافریم داده‌های دامیننس.
-
-    Returns:
-        int: امتیاز دامیننس تتر.
-    """
+def get_usdt_dominance_score(dominance_data: List[float]) -> int:
     try:
-        usdt_dominance_series = await get_usdt_dominance_data()
-        if len(usdt_dominance_series) < 5:
+        if len(dominance_data) < 5:
+            logging.warning("داده ناکافی برای محاسبه امتیاز دامیننس تتر")
             return 0
-        recent = usdt_dominance_series[-1]
-        previous = usdt_dominance_series[-5]
+        recent = dominance_data[-1]
+        previous = dominance_data[-5]
         if recent < previous:
             return 5
         elif recent > previous:
@@ -714,70 +555,46 @@ def get_usdt_dominance_score(df: pd.DataFrame) -> int:
         return 0
 
 async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: str, support: float, resistance: float) -> Optional[Dict]:
-    """
-    پیدا کردن نقطه ورود برای معامله Long یا Short با محاسبه پویای SL، TP و RR.
-
-    Args:
-        exchange: شیء صرافی.
-        symbol: نماد معاملاتی.
-        signal_type: نوع سیگنال ('Long' یا 'Short').
-        support: سطح حمایت.
-        resistance: سطح مقاومت.
-
-    Returns:
-        Optional[Dict]: {"entry_price": float, "sl": float, "tp": float, "rr": float} یا None.
-    """
     try:
-        logging.info(f"شروع پیدا کردن نقطه ورود برای {symbol} در 15m - نوع سیگنال: {signal_type} - {datetime.now().strftime('%H:%M:%S %d/%m/%Y')})
-
+        logging.info(f"شروع پیدا کردن نقطه ورود برای {symbol} در 15m - نوع سیگنال: {signal_type} - {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}")
         df_15m = await get_ohlcv_cached(exchange, symbol, "15m", limit=50)
         df_1h = await get_ohlcv_cached(exchange, symbol, "1h", limit=50)
         if df_15m is None or len(df_15m) < 20 or df_1h is None or len(df_1h) < 20:
-            logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=داده ناکافی شد")
+            logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=داده ناکافی")
             return None
-
         df_15m = compute_indicators(df_15m)
         df_1h = compute_indicators(df_1h)
         last_15m = df_15m.iloc[-1]
         last_1h = df_1h.iloc[-1]
-
         live_price = await get_live_price(exchange, symbol)
         if live_price is None:
             logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم دریافت قیمت واقعی")
             return None
-
         price_diff = abs(live_price - last_15m["close"]) / live_price if live_price != 0 else float('inf')
         if price_diff > 0.03:
             logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=اختلاف قیمت زیاد, live_price={live_price:.6f}, candle_price={last_15m['close']:.6f}")
             return None
-
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
         volume_condition = last_15m["volume"] > volume_mean * 0.5
         if not volume_condition:
             logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=حجم ناکافی")
             return None
-            return
-
         price_action = last_15m.get("PinBar", False) or last_15m.get("Engulfing", False) or last_15m.get("Hammer", False) or last_15m.get("Doji", False)
         if not price_action:
             logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم وجود الگوی قیمتی")
             return None
-
         fib_levels = calculate_fibonacci_levels(df_1h)
         volatility = last_15m["ATR"] / last_15m["close"]
         adx_strength = last_1h["ADX"]
         fng_index = await get_fear_and_greed_index()
-
         atr_multiplier_sl = 0.6 if volatility > 0.02 or adx_strength > 30 else 0.75
         atr_multiplier_tp = 2.0 if volatility > 0.02 or adx_strength > 30 else 2.5
         if fng_index < 25:
             atr_multiplier_tp += 0.5
         elif fng_index > 75:
             atr_multiplier_sl += 0.25
-
         entry_price = live_price
         atr_15m = last_15m["ATR"]
-
         if signal_type == "Long":
             sl = entry_price - (atr_15m * atr_multiplier_sl)
             if support > 0 and sl < support * 0.98:
@@ -799,20 +616,17 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
         else:
             logging.warning(f"نوع سیگنال نامعتبر برای {symbol}: {signal_type}")
             return None
-
         rr_ratio = (tp - entry_price) / (entry_price - sl) if signal_type == "Long" else (entry_price - tp) / (sl - entry_price)
         min_rr = 1.5 if adx_strength < 25 else 1.2
         if rr_ratio < min_rr:
             logging.warning(f"نقطه ورود برای {symbol} رد شد: دلیل=RR کمتر از {min_rr}, RR={rr_ratio:.2f}")
             return None
-
         order_book = await exchange.fetch_order_book(symbol, limit=10)
         bid_volume = sum([x[1] for x in order_book["bids"]])
         ask_volume = sum([x[1] for x in order_book["asks"]])
         if bid_volume + ask_volume < 1000:
             logging.warning(f"نقطه ورود برای {symbol} رد شد: دلیل=نقدینگی پایین")
             return None
-
         logging.info(f"نقطه ورود برای {symbol}: Entry={entry_price:.6f}, SL={sl:.6f}, TP={tp:.6f}, RR={rr_ratio:.2f}")
         return {
             "entry_price": entry_price,
@@ -820,24 +634,11 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
             "tp": tp,
             "rr": rr_ratio
         }
-
     except Exception as e:
         logging.error(f"خطا در پیدا کردن نقطه ورود برای {symbol}: {str(e)}")
         return None
 
 async def manage_trailing_stop(exchange: ccxt.Exchange, symbol: str, entry_price: float, sl: float, tp: float, signal_type: str, trail_percentage: float = 0.5):
-    """
-    مدیریت Trailing Stop برای معامله.
-
-    Args:
-        exchange: شیء صرافی.
-        symbol: نماد معاملاتی.
-        entry_price: قیمت ورود.
-        sl: استاپ لاس اولیه.
-        tp: تیک پروفیت.
-        signal_type: نوع سیگنال ('Long' یا 'Short').
-        trail_percentage: درصد برای trailing stop.
-    """
     logging.info(f"شروع Trailing Stop برای {symbol} ({signal_type}): ورود={entry_price}, SL اولیه={sl}, TP={tp}")
     while True:
         try:
@@ -847,7 +648,7 @@ async def manage_trailing_stop(exchange: ccxt.Exchange, symbol: str, entry_price
                 await asyncio.sleep(60)
                 continue
             if (signal_type == "Long" and (live_price <= sl or live_price >= tp)) or \
-                   (signal_type == "Short" and (live_price >= sl or live_price <= tp)):
+               (signal_type == "Short" and (live_price >= sl or live_price <= tp)):
                 logging.info(f"Trailing Stop برای {symbol} متوقف شد: live_price={live_price}, SL={sl}, TP={tp}")
                 break
             if (live_price > entry_price and signal_type == "Long") or (live_price < entry_price and signal_type == "Short"):
@@ -862,17 +663,6 @@ async def manage_trailing_stop(exchange: ccxt.Exchange, symbol: str, entry_price
             await asyncio.sleep(30)
 
 async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, base_tf: str) -> float:
-    """
-    تأیید مولتی تایم‌فریم.
-
-    Args:
-        exchange: شیء صرافی.
-        symbol: نماد معاملاتی.
-        base_tf: تایم‌فریم پایه.
-
-    Returns:
-        float: امتیاز مولتی تایم‌فریم.
-    """
     weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "15m": 0.1}
     total_weight = 0
     score = 0
@@ -885,7 +675,7 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
                 logging.warning(f"داده برای {symbol} @ {tf} در تأیید مولتی تایم‌فریم ناکافی است")
                 continue
             df_tf = compute_indicators(df_tf)
-            long_trend = df_tf["EMA12"].iloc[-1] > df["EMA26"].iloc[-1]
+            long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]  # اصلاح: استفاده از df_tf
             score += (weight * 10) if long_trend else (-weight * 5)
             total_weight += weight
         except Exception as e:
@@ -896,18 +686,6 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
     return final_score
 
 def calculate_position_size(account_balance: float, risk_percentage: float, entry: float, stop_loss: float) -> float:
-    """
-    محاسبه حجم پوزیشن بر اساس مدیریت ریسک.
-
-    Args:
-        account_balance: موجودی حساب.
-        risk_percentage: درصد ریسک.
-        entry: قیمت ورود.
-        stop_loss: حد ضرر.
-
-    Returns:
-        float: حجم پوزیشن.
-    """
     if entry is None or stop_loss is None or entry == 0 or stop_loss == 0:
         logging.warning(f"مقادیر نامعتبر برای محاسبه حجم پوزیشن: entry={entry}, stop_loss={stop_loss}")
         return 0
@@ -921,33 +699,34 @@ def calculate_position_size(account_balance: float, risk_percentage: float, entr
         return 0
 
 def ablation_test(symbol_results: List[Optional[Dict]], filter_name: str) -> int:
-    """
-    تست Ablation برای ارزیابی فیلترها.
-
-    Args:
-        symbol_results: نتایج سیگنال‌ها.
-        filter_name: نام فیلتر.
-
-    Returns:
-        int: تعداد سیگنال‌های معتبر.
-    """
     total_signals = len([r for r in symbol_results if r is not None])
     logging.info(f"Ablation Test برای فیلتر {filter_name}: تعداد سیگنال‌های اولیه={total_signals}")
     return total_signals
 
+async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict:
+    try:
+        df_4h = await get_ohlcv_cached(exchange, symbol, "4h", limit=50)
+        if df_4h is None or len(df_4h) < 20:
+            logging.warning(f"داده ناکافی برای تحلیل ساختار بازار {symbol}")
+            return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50}
+        df_4h = compute_indicators(df_4h)
+        trend = "Up" if df_4h["EMA12"].iloc[-1] > df_4h["EMA26"].iloc[-1] else "Down"
+        score = 10 if trend == "Up" else -10
+        support, resistance, _ = PatternDetector.detect_support_resistance(df_4h)
+        fng_index = await get_fear_and_greed_index()
+        return {
+            "trend": trend,
+            "score": score,
+            "support": support,
+            "resistance": resistance,
+            "fng_index": fng_index
+        }
+    except Exception as e:
+        logging.error(f"خطا در تحلیل ساختار بازار برای {symbol}: {e}")
+        return {"trend": "Neutral", "score": 0, "support": 0, "resistance": 0, "fng_index": 50}
+
 async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optional[Dict]:
-    """
-    تحلیل نماد برای تولید سیگنال خرید یا فروش.
-
-    Args:
-        exchange: شیء صرافی.
-        symbol: نماد معاملاتی.
-        tf: تایم‌فریم.
-
-    Returns:
-        Optional[Dict]: دیکشنری سیگنال یا None در صورت عدم تولید سیگنال.
-    """
-    global VOLUME_RELIABLE, LIQUIDITY_REJECTS, SR_REJECTS
+    global LIQUIDITY_REJECTS, VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
     logging.info(f"شروع تحلیل {symbol} @ {tf}, زمان شروع={datetime.now()}")
 
@@ -963,7 +742,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             logging.info(f"تحلیل برای {symbol} در تایم فقط 1h انجام می‌شود. تایم‌فریم فعلی: {tf}")
             return None
 
-        df = await get_ohlcv(exchange, symbol, tf, limit=50)
+        df = await get_ohlcv_cached(exchange, symbol, tf, limit=50)
         if df is None or len(df) < 30:
             logging.warning(f"داده ناکافی برای {symbol} @ {tf}: تعداد کندل‌ها={len(df) if df is not None else 0}")
             return None
@@ -977,21 +756,20 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         last = df.iloc[-1]
 
         score_long = 0
-        score_short = float0
+        score_short = 0.0
         score_log = {"long": {}, "short": {}}
 
-        df_1d = pd.DataFrame(await get_ohlcv_cached(exchange, symbol, "1d"))
+        df_1d = await get_ohlcv_cached(exchange, symbol, "1d", limit=50)
         trend_score_1d = 0
         if df_1d is not None and len(df_1d) > 0:
             df_1d = compute_indicators(df_1d)
-            long_trend_1d = df_1d["EMA12"].iloc[-1]] > -10
-            trend_score_1d = 10 if long_trend else -10
-            logging.info(f"تأمید روندید 趋势: {trend_score_4h}")
+            long_trend_1d = df_1d["EMA12"].iloc[-1] > df_1d["EMA26"].iloc[-1]
+            trend_score_1d = 10 if long_trend_1d else -10
+            logging.info(f"تأیید روند 1d برای {symbol}: score={trend_score_1d}")
 
-        vol_score = df["volume"].rolling(VOLUME_WINDOW).mean().iloc()[-1]
+        vol_mean = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
         current_vol = df["volume"].iloc[-1]
-        vol_mean = df["volume"].mean()[-1]
-        vol_std = df["volume"].rolling(20).std().mean().iloc[-1]
+        vol_std = df["volume"].rolling(20).std().iloc[-1]
         vol_threshold = vol_mean * 0.5
         vol_score = 10 if current_vol >= vol_threshold else -2
         score_long += vol_score
@@ -999,7 +777,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["long"]["volume"] = vol_score
         score_log["short"]["volume"] = vol_score
         if current_vol < vol_threshold:
-            VOLUME_RELIABLE += 1
+            VOLUME_REJECTS += 1
 
         atr_1h = df["ATR"].iloc[-1]
         risk_buffer = atr_1h * 2
@@ -1008,19 +786,18 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
         logging.info(f"نسبت RR پویا برای {symbol}: RR={dynamic_rr}")
 
-        volatility = df["ATR"].iloc[-1] / / last["close"]
+        volatility = df["ATR"].iloc[-1] / last["close"]
         vola_mean = (df["ATR"] / df["close"]).rolling(20).mean().iloc[-1]
         vola_std = (df["ATR"] / df["close"]).rolling(20).std().iloc[-1]
         vola_threshold = vola_mean + vola_std
-        vola_score = 10 if volatility > vola_threshold else  -5
+        vola_score = 10 if volatility > vola_threshold else -5
         score_long += vola_score
         score_short += vola_score
-        vol_score["score"] = volatility
-        logging["score"]["volatility"] = vola_score
+        score_log["long"]["volatility"] = vola_score
+        score_log["short"]["volatility"] = vola_score
 
         adx_mean = df["ADX"].rolling(20).mean().iloc[-1]
-        adx_std = df["ADX"].mean().rolling().iloc[-1]
-        adx_std = df["ADX"].rolling(20).std().mean()[-1]
+        adx_std = df["ADX"].rolling(20).std().iloc[-1]
         adx_threshold = adx_mean + adx_std
         adx_score = 15 if last["ADX"] >= adx_threshold else -5
         trend_score = adx_score if adx_mean >= adx_threshold * 1.5 else 0
@@ -1031,12 +808,12 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["long"]["trend"] = trend_score
         score_log["short"]["trend"] = trend_score
 
-        long_trend = trend_score["trend"] > adx_score["trend"]
-        trend_score += 10 if long_trend else -5
-        score_long += trend_score
-        score_short += -trend_score
-        score_log["long"]["trend"] += trend_score
-        score += -trend_score["trend"]
+        long_trend = trend_score > 0
+        trend_score_adjustment = 10 if long_trend else -5
+        score_long += trend_score_adjustment
+        score_short += -trend_score_adjustment
+        score_log["long"]["trend"] = trend_score_adjustment
+        score_log["short"]["trend"] = -trend_score_adjustment
 
         mtf_score = await multi_timeframe_confirmation(exchange, symbol, tf)
         score_long += mtf_score
@@ -1045,8 +822,8 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["short"]["multi_timeframe"] = -mtf_score
 
         support, resistance, vol_levels = PatternDetector.detect_support_resistance(df)
-        s_r_buffer = (df["ATR"].iloc[-1]] / last["close"]) * 2
-        distance_to_resistance = ((last["close"] - resistance) / last["close"]
+        s_r_buffer = (df["ATR"].iloc[-1] / last["close"]) * 2
+        distance_to_resistance = abs(last["close"] - resistance) / last["close"]
         distance_to_support = abs(last["close"] - support) / last["close"]
         sr_score_long = 10 if distance_to_resistance > s_r_buffer else -5
         sr_score_short = 10 if distance_to_support > s_r_buffer else -5
@@ -1085,7 +862,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
         bullish_rsi_div, bearish_rsi_div = PatternDetector.detect_rsi_divergence(df)
         div_score_long = 10 if bullish_rsi_div else 0
-        div_score_short = 10 if bearish_rsi_div else 0
+        div_score_short = 10 if bearish_rsi_div else -0
         score_long += div_score_long
         score_short += div_score_short
         score_log["long"]["rsi_divergence"] = div_score_long
@@ -1115,38 +892,38 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["long"]["moving_average"] = ma_score
         score_log["short"]["moving_average"] = -ma_score
 
-        usdt_dominance = await get_usdt_dominance_data()
-        usdt_score = get_usdt_dominance_score(usdt_dominance)
+        usdt_dominance_data = await get_usdt_dominance_data()
+        usdt_score = get_usdt_dominance_score(usdt_dominance_data)
         score_long += usdt_score
         score_short += -usdt_score
         score_log["long"]["usdt_dominance"] = usdt_score
-        score_log["short"]["usdt_dominance"] = -usdt_score
+        score_log["short"]["usdt_score"] = -usdt_score
 
         support_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
-        resistance_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
+        resistance_buffer = (df["ATR'].iloc[-1] / last["close"]) * 1.5
         min_conditions = 2
         conds_long = {
-            "PinBar": last["PinBar"],
-            "Engulfing": last["Engulfing"] and last["close"] > last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
-            "Elliott_Wave": df["WaveTrend"].iloc[-1] == "Up",
-            "EMA_Cross": df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].mean().iloc[-2] * 1.2),
-            "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-2] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1] and (df["MACD"].iloc[-1] > 0),
-            "RSI_Oversold": last["RSI"] < 25,
+            "PinBar": last.get("PinBar", False),
+            "Engulfing": last.get("Engulfing", False) and last["close"] > last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
+            "Elliott_Wave": last["WaveTrend"].astype(str).iloc[-1] == "Up",
+            "EMA_Cross": df["EMA12"].iloc[-1] > df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
+            "MACD_Cross": df["MACD"].iloc[-2] < df["Signal"].iloc[-1] and df["MACD"].iloc[-1] > df["Signal"].iloc[-1] and (df["MACD"].iloc[-1] > 0),
+            "RSI_Oversold": last["RSI"] < 30,
             "Stochastic_Oversold": last["Stochastic"] < 15,
-            "BB_Breakout": last["close"] > last["BB_upper"] and (df["volume"].iloc[-1] > df["volume"].mean().iloc[-2] * 1.5),
+            "BB_Breakout": last["close"] > last["BB_upper"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-2] * 1.5),
             "MFI_Oversold": last["MFI"] < 15,
             "ADX_Strong": last["ADX"] > 25,
             "Support_Confirmation": abs(last["close"] - support) <= support_buffer and (last["PinBar"] or last["Engulfing"])
         }
         conds_short = {
             "PinBar": last["PinBar"],
-            "Engulfing": last["Engulfing"] and last["close"] < last["open"] and (df["volume"].iloc[-1] > df["volume"].mean().iloc[-2] * 1.5),
-            "Elliott_Wave": df["WaveTrend"].iloc[-1] == "Down",
-            "EMA_Cross": df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].mean().iloc[-2] * 1.2),
-            "MACD_Cross": df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1] and (df["MACD"].iloc[-1] < 0),
+            "Engulfing": last["Engulfing"] and last["close"] < last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
+            "Elliott_Wave": df["WaveTrend"].astype(str).iloc[-1] == "Down",
+            "EMA_Cross": df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-2] * 1.2),
+            "MACD_Cross": (df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1]) and (df["MACD"].iloc[-1] < 0),
             "RSI_Overbought": last["RSI"] > 75,
             "Stochastic_Overbought": last["Stochastic"] > 85,
-            "BB_Breakout": last["close"] < last["BB_lower"] and (df["score"].iloc[-1] > df["volume"].mean().iloc[-2] * 1.5),
+            "BB_Breakout": last["close"] < last["BB_lower"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc-2] * 1.5),
             "MFI_Overbought": last["MFI"] > 85,
             "ADX_Strong": last["ADX"] > 25,
             "Resistance_Confirmation": abs(last["close"] - resistance) <= resistance_buffer and (last["PinBar"] or last["Engulfing"])
@@ -1181,7 +958,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
         if sum(1 for v in conds_long.values() if v) < min_conditions:
             indicator_score_long = 0
-        if sum(1 for v in conds_short.values() if v) < min_conditions:
+        if sum(1 for v in conds_short.values()) < min_conditions:
             indicator_score_short = 0
 
         score_long += indicator_score_long
@@ -1191,21 +968,22 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
         score_long += trend_score_4h
         score_short += -trend_score_4h
-        score_log["long"]["market_structure_4h"] = trend_score_4h
-        score_log["short"]["market_structure_4h"] = -trend_score_4h
+        score_log["long"]["market_structure"] = trend_score_4h
+        score_log["short"]["market_structure"] = -trend_score_4h
 
         signal_filter = SignalFilter()
         X_train = np.array([
-            [30, 25, 2, 0.01, 0.05, 0.05, 0.01, 10, -10],
-            [70, 20, 1, 0.02, 0.03, 0.03, 0.02, -10, 10],
+            [30, 25, 2, 0.01, 0.05, 0.05, 0.005, 10, -5],
+            [70, 20, 1, 0.02, 0.03, 0.03, 0.02, -10, 5],
             [50, 30, 1.5, 0.01, 0.04, 0.04, 0.01, 0, 0],
         ])
         y_train = np.array([1, 0, 1])
         signal_filter.train(X_train, y_train)
+        vol_avg = vol_mean  # تعریف vol_avg
         features = [
             last["RSI"],
             last["ADX"],
-            current_vol / vol_avg if vol_avg != 0 else 0,
+            current_vol / vol_avg if vol_avg != 0 else 1,
             volatility,
             distance_to_resistance,
             distance_to_support,
@@ -1223,7 +1001,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 80
+        THRESHOLD = 50
         if score_long >= THRESHOLD and trend_score_1d >= 0:
             signal_type = "Long"
             entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
@@ -1254,8 +1032,8 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "تایم‌فریم": tf,
                 "قیمت ورود": entry,
                 "حد ضرر": sl,
-                "هدف سود": row,
-                "ریسک به ریوارد": row_ratio,
+                "هدف سود": tp,
+                "ریسک به ریوارد": rr_ratio,
                 "حجم پوزیشن": position_size,
                 "سطح اطمینان": min(score_long, 100),
                 "امتیاز": score_long,
@@ -1291,7 +1069,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
             price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
             if price_diff > 0.01 or sl <= entry or tp >= entry:
-                logging.warning(f"سیگنال برای {symbol} رد شد: اختلاف یا قیمت یا SL/TP نامعتبر")
+                logging.warning(f"سیگنال برای {symbol} رد شد: اختلاف قیمت یا SL/TP نامعتبر")
                 return None
 
             position_size = calculate_position_size(10000, 1, entry, sl)
@@ -1328,12 +1106,6 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         return None
 
 async def scan_all_crypto_symbols(on_signal=None) -> None:
-    """
-    اسکن تمام نمادهای کریپتو برای یافتن سیگنال‌ها.
-
-    Args:
-        on_signal: تابع callback برای پردازش سیگنال‌ها (اختیاری).
-    """
     exchange = ccxt.async_support.mexc({
         'enableRateLimit': True,
         'rateLimit': 2000
@@ -1344,7 +1116,7 @@ async def scan_all_crypto_symbols(on_signal=None) -> None:
         logging.info(f"بازارها بارگذاری شدند: تعداد نمادها={len(exchange.symbols)}")
         top_coins = get_top_500_symbols_from_cmc()
         usdt_symbols = [s for s in exchange.symbols if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)]
-        logging.info(f"نمادهای USDT فیلتر شدند: تعداد={len(usdt_symbols)}")
+        logging.info(f"نمادهای USDT: تعداد={len(usdt_symbols)}")
         chunk_size = 10
         total_chunks = (len(usdt_symbols) + chunk_size - 1) // chunk_size
         symbol_results = []
