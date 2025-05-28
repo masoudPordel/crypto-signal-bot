@@ -1088,10 +1088,10 @@ async def manage_trailing_stop(exchange: AsyncExchange, symbol: str, entry_price
                 logging.warning(f"Failed to get live price for {symbol}, waiting 60 seconds")
                 await asyncio.sleep(60)
                 continue
-            if live_price > entry_price and signal_type == "Long'") or (live_price < entry_price and signal_type == "Short"):
+            if (live_price > entry_price and signal_type == "Long") or (live_price < entry_price and signal_type == "Short"):
                 trail_amount = live_price * (trail_percentage / 100)
-                new_sl = live_price - trail_amount if signal_type == "Long' else live_price + trail_amount
-                if (signal_type == 'Long' and new_sl > sl) or (signal_type == 'Short' and new_sl < sl):
+                new_sl = live_price - trail_amount if signal_type == "Long" else live_price + trail_amount
+                if (signal_type == "Long" and new_sl > sl) or (signal_type == "Short" and new_sl < sl):
                     sl = new_sl
                     logging.info(f"Trailing Stop updated for {symbol}: SL={sl}, Live_price={live_price}")
             await asyncio.sleep(300)
