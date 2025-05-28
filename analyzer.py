@@ -849,9 +849,9 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             return None
 
         df = await get_ohlcv_cached(exchange, symbol, tf, limit=50)
-        if df is None or len(df) < 30:
-logging.warning(f"داده ناکافی برای {symbol} @{tf}: تعداد کندل‌ها={len(df) if df is not None else 0}")  # خط 853 اصلاح‌شده
-return None
+if df is None or len(df) < 30:
+    logging.warning(f"داده ناکافی برای {symbol} @{tf}: تعداد کندل‌ها={len(df) if df is not None else 0}")
+    return None
 logging.info(f"داده دریافت شد برای {symbol} @{tf} در {time.time() - start_time:.2f} ثانیه, تعداد ردیف‌ها={len(df)}")
 
 required_columns = ['open', 'high', 'low', 'close', 'volume']
