@@ -666,7 +666,7 @@ def get_moving_average_score(df: pd.DataFrame, price_col: str = "close") -> int:
         return score
     except Exception as e:
         logging.error(f"خطا در محاسبه امتیاز میانگین‌ها: {e}")
-        return 0    
+        return 0 
         ma200 = df[price_col].rolling(window=200).mean()
         
         score = 0
