@@ -29,14 +29,12 @@ logging.basicConfig(
 CMC_API_KEY = os.getenv("CMC_API_KEY", "c1b589e6-5f67-46bd-9cfe-a34f925bc4cb")
 COINMARKETCAL_API_KEY = os.getenv("COINMARKETCAL_API_KEY", "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa")
 TIMEFRAMES = ["15m", "1h", "4h", "1d"]
-
 VOLUME_WINDOW = 20
 CACHE = {}
 CACHE_TTL = 600
 MAX_CONCURRENT_REQUESTS = 10
 WAIT_BETWEEN_REQUESTS = 0.5
 WAIT_BETWEEN_CHUNKS = 3
-
 LIQUIDITY_REJECTS = 0
 VOLUME_REJECTS = 0
 SR_REJECTS = 0
@@ -309,7 +307,8 @@ class PatternDetector:
             if abs(first - second) < 0.02 * first:
                 return 3  # Bullish signal
         return 0
-        # کلاس فیلتر سیگنال
+
+# کلاس فیلتر سیگنال
 class SignalFilter:
     def __init__(self):
         self.model = DecisionTreeClassifier(max_depth=3)
@@ -363,7 +362,6 @@ async def check_liquidity(exchange: ccxt.Exchange, symbol: str, df: pd.DataFrame
         spread_mean = np.mean(spread_history) if spread_history else 0.02
         spread_std = np.std(spread_history) if spread_history else 0.005
         spread_threshold = 0.005
-        # بررسی دفتر سفارشات برای نقدینگی
         order_book = await exchange.fetch_order_book(symbol, limit=10)
         bid_volume = sum([bid[1] for bid in order_book['bids']]) if 'bids' in order_book else 0
         ask_volume = sum([ask[1] for ask in order_book['asks']]) if 'asks' in order_book else 0
@@ -518,7 +516,6 @@ async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict
 # تابع دریافت قیمت واقعی
 async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int = 3) -> Optional[float]:
     attempt = 0
-    last_ticker = None
     while attempt < max_attempts:
         try:
             ticker = await exchange.fetch_ticker(symbol)
@@ -531,7 +528,6 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
                 await asyncio.sleep(0.3)
                 continue
             live_price = (bid + ask) / 2 if bid and ask else last
-            last_ticker = live_price
             logging.info(f"قیمت واقعی بازار برای {symbol}: live_price={live_price}, bid={bid}, ask={ask}, last={last}")
             return live_price
         except Exception as e:
@@ -548,7 +544,8 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
         logging.error(f"خطا در دریافت قیمت پیش‌فرض برای {symbol}: {e}")
     logging.error(f"ناتوانی در دریافت قیمت برای {symbol} پس از {max_attempts} تلاش")
     return None
-    # تنظیم سمافر برای کنترل درخواست‌ها
+
+# تنظیم سمافر برای کنترل درخواست‌ها
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 # تابع دریافت داده کندل‌ها با کش
@@ -560,7 +557,8 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
             cached_df, cached_time = CACHE[key]
             if (now - cached_time).total_seconds() < CACHE_TTL:
                 return cached_df
-        raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+        async with semaphore:
+            raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
         if not raw_data or len(raw_data) == 0:
             logging.warning(f"داده OHLCV برای {symbol} / {tf} خالی یا ناموجود است")
             return None
@@ -576,7 +574,7 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
         logging.info(f"داده OHLCV برای {symbol} / {tf} با موفقیت دریافت و کش شد: تعداد کندل‌ها={len(df)}")
         return df
     except Exception as e:
-        logging.error(f"❌ خطا در گرفتن OHLCV برای {symbol} / {tf}: {str(e)}")
+        logging.error(f"خطا در گرفتن OHLCV برای {symbol} / {tf}: {str(e)}")
         return None
 
 # تابع محاسبه حجم پوزیشن
@@ -668,11 +666,9 @@ async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: st
         atr_15m = df_15m["ATR"].iloc[-1]
         fng_index = get_fear_and_greed_index()
 
-        # تنظیم پویای ضرایب ATR بر اساس شاخص ترس و طمع
         atr_sl_factor = 0.5 if fng_index > 75 else 0.75 if fng_index > 25 else 1.0
         atr_tp_factor = 3.0 if fng_index < 25 else 2.5 if fng_index < 75 else 2.0
 
-        # بررسی نقدینگی دفتر سفارشات
         order_book = await exchange.fetch_order_book(symbol, limit=10)
         bid_volume = sum([bid[1] for bid in order_book['bids']]) if 'bids' in order_book else 0
         ask_volume = sum([ask[1] for ask in order_book['asks']]) if 'asks' in order_book else 0
@@ -810,7 +806,7 @@ async def manage_trailing_stop(exchange: ccxt.Exchange, symbol: str, entry_price
 
 # تابع تأیید مولتی تایم‌فریم
 async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, base_tf: str) -> float:
-    weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "15m": 0.1}
+    weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "15m": 0.0}
     total_weight = 0
     score = 0
     for tf, weight in weights.items():
@@ -818,24 +814,25 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
             continue
         try:
             df_tf = await get_ohlcv_cached(exchange, symbol, tf)
-            if df_tf is None or (len(df_tf) < 50 and tf != "1d") or (len(df_tf) < 30 and tf == "1d"):
-                logging.warning(f"داده ناکافی برای {symbol} @ {tf} در تأیید مولتی تایم‌فریم: تعداد کندل‌ها={len(df_tf) if df_tf is not None else 0}")
+            if df_tf is None or len(df_tf) < 50:
                 continue
-            df_tf["EMA12"] = df_tf["close"].ewm(span=12).mean()
-            df_tf["EMA26"] = df_tf["close"].ewm(span=26).mean()
-            long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]
-            score += (weight * 10) if long_trend else (-weight * 5)
+            df_tf = compute_indicators(df_tf
+            long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]]
+            score += weight * (10 if long_trend else -5)
             total_weight += weight
         except Exception as e:
             logging.error(f"خطا در پردازش تایم‌فریم {tf} برای {symbol}: {str(e)}")
             continue
-    final_score = score if total_weight > 0 else 0
-    logging.info(f"مولتی تایم‌فریم برای {symbol} تکمیل شد: score={final_score:.2f}, total_weight={total_weight}")
+    if total_weight > 0:
+        final_score = score / total_weight
+    else:
+        final_score = 0
+    logging.info(f"مولتی تایم‌فریم برای {symbol} تکمیل شد: score={final_score:.2f}, total_weight={total_weight:.1f}")
     return final_score
 
 # تابع تحلیل نماد
 async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optional[dict]:
-    global VOLUME_REJECTS, SR_REJECTS
+    global LIQUIDITY_REJECTS, VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
     logging.info(f"شروع تحلیل {symbol} @ {tf}, زمان شروع={datetime.now()}")
 
@@ -853,13 +850,13 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
 
         df = await get_ohlcv_cached(exchange, symbol, tf, limit=50)
         if df is None or len(df) < 30:
-            logging.warning(f"داده ناکافی برای {symbol} @ {tf}: تعداد کندل‌ها={len(df) if df is not None else 0}")
+            logging.warning(f"داده ناکافی برای {symbol} @{tf}: تعداد کندل‌ها={len(df) if df is not None else 0'}")
             return None
-        logging.info(f"داده دریافت شد برای {symbol} @ {tf} در {time.time() - start_time:.2f} ثانیه, تعداد ردیف‌ها={len(df)}")
+        logging.info(f"داده دریافت شد برای {symbol} @{tf} در {time.time() - start_time:.2f} ثانیه, تعداد ردیف‌ها={len(df)}")
 
         required_columns = ['open', 'high', 'low', 'close', 'volume']
         if not all(col in df.columns for col in required_columns):
-            logging.error(f"ستون‌های مورد نیاز در دیتافریم {symbol} @ {tf} وجود ندارند")
+            logging.error(f"ستون‌های مورد نیاز در دیتافریم {symbol} @{tf} وجود ندارند")
             return None
         df = df.ffill().bfill().fillna(0)
 
@@ -1010,7 +1007,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["short"]["rsi_divergence"] = div_score_short
 
         support_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
-        resistance_buffer = (df["ATR"].iloc[-1] / last["close"] * 1.5)
+        resistance_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
         min_conditions = 2
         conds_long = {
             "PinBar": last["PinBar"],
@@ -1103,7 +1100,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["long"]["decision_tree"] = dt_score
         score_log["short"]["decision_tree"] = dt_score
 
-        logging.info(f"امتیاز نهایی برای {symbol} @ {tf}: score_long={score_long:.2f}, score_short={score_short:.2f}")
+        logging.info(f"امتیاز نهایی برای {symbol} @{tf}: score_long={score_long:.2f}, score_short={score_short:.2f}")
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
@@ -1121,34 +1118,33 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             if live_price is None:
                 logging.warning(f"قیمت واقعی برای {symbol} پیدا نشد")
                 return None
-
-        result = {
-            "نوع معامله": "Long",
-            "نماد": symbol,
-            "تایم‌فریم": tf,
-            "قیمت ورود": entry_data["entry_price"],
-            "حد ضرر": entry_data["sl"],
-            "هدف سود": entry_data["tp"],
-            "ریسک به ریوارد": (entry_data["tp"] - entry_price["entry_price"]) / (entry_data["entry_price"] - entry_data["sl"]) if (entry_data["entry_price"] - sl) != 0 else 0,
-            "حجم پوزیشن": calculate_position_size(10000, 1, entry_data["entry_price"], entry_data["sl"]),
-            "سطح اطمینان": min(score_long, 100),
-            "امتیاز": score_long,
-            "قدرت سیگنال": "قوی" if score_long > 90 else "متوسط",
-            "تحلیل": f"الگوها: HS={hs_score}, DT={dt_score}, DB={db_score}",
-            "روانشناسی": "اشباع فروش" if last["RSI"] < 40 else "اشباع خرید" if last["RSI"] > 60 else "متعادل",
-            "روند بازار": "صعودی",
-            "فاندامنتال": f"امتیاز: {check_market_events(symbol)}",
-            "شاخص ترس و طمع": fng_index,
-            "روند 4h": trend_4h,
-            "قیمت فعلی بازار": await get_live_price(exchange, symbol)
-        }
-        asyncio.create_task_task(slug_trailing_stop(exchange, symbol, entry_data["entry_price"], entry_data["sl"], signal_type, tp=entry_data["tp"]))
+            result = {
+                "نوع معامله": "Long",
+                "نماد": symbol,
+                "تایم‌فریم": tf,
+                "قیمت ورود": entry,
+                "حد ضرر": sl,
+                "هدف سود": tp,
+                "ریسک به ریوارد": (tp - entry) / (entry - sl) if (entry - sl) != 0 else 0,
+                "حجم پوزیشن": calculate_position_size(10000, 1, entry, sl),
+                "سطح اطمینان": min(score_long, 100),
+                "امتیاز": score_long,
+                "قدرت سیگنال": "قوی" if score_long > 90 else "متوسط",
+                "تحلیل": f"الگوها: HS={hs_score}, DT={dt_score}, DB={db_score}",
+                "روانشناسی": "اشباع فروش" if last["RSI"] < 40 else "اشباع خرید" if last["RSI"] > 60 else "متعادل",
+                "روند بازار": "صعودی",
+                "فاندامنتال": f"امتیاز: {check_market_events(symbol)}",
+                "شاخص ترس و طمع": fng_index,
+                "روند 4h": trend_4h,
+                "قیمت فعلی بازار": live_price
+            }
+            asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type, tp=tp))
             logging.info(f"سیگنال Long برای {symbol} تولید شد: {result}")
-        return result
-    elif score_short >= THRESHOLD and trend_1d_score <= 0:
-        signal_type = "Short"
-        entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
-        if entry_data is None:
+            return result
+        elif score_short >= THRESHOLD and trend_1d_score <= 0:
+            signal_type = "Short"
+            entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
+            if entry_data is None:
             logging.info(f"نقطه ورود Short برای {symbol} در 15m پیدا نشد")
             return None
         entry = entry_data["entry_price"]
