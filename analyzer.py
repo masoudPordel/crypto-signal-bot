@@ -181,31 +181,38 @@ class PatternDetector:
                 df.loc[wave_points[-1], "WaveTrend"] = "Down"
         return df
 
-    @staticmethod
-    def detect_support_resistance(df: pd.DataFrame, window: int = 10) -> tuple:
-        if len(df) < window:
-            logging.warning(f"داده ناکافی برای تشخیص حمایت/مقاومت: {len(df)} کندل")
-            return 0.01, 0.01, []
-        high = df['high'].rolling(window).max()
-        low = df['low'].rolling(window).min()
-        close = df['close'].rolling(window).mean()
-        pivot = (high + low + close) / 3
-        resistance = pivot + (high - low) * 0.382
-        support = pivot - (high - low) * 0.382
-        recent_highs = df['high'][(df['high'].shift(1) < df['high']) & (df['high'].shift(-1) < df['high'])].iloc[-window:]
-        recent_lows = df['low'][(df['low'].shift(1) > df['low']) & (df['low'].shift(-1) > df['low'])].iloc[-window:]
-        recent_resistance = recent_highs.max() if not recent_highs.empty else resistance.iloc[-1]
-        recent_support = recent_lows.min() if not recent_lows.empty else support.iloc[-1]
-        if recent_resistance == 0 or pd.isna(recent_resistance):
-            recent_resistance = df['close'].iloc[-20:].mean() * 1.02
-            logging.warning(f"مقاومت پیش‌فرض برای {len(df)} کندل تنظیم شد: {recent_resistance}")
-        if recent_support == 0 or pd.isna(recent_support):
-            recent_support = df['close'].iloc[-20:].mean() * 0.98
-            logging.warning(f"حمایت پیش‌فرض برای {len(df)} کندل تنظیم شد: {recent_support}")
-        volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
-        vol_threshold = volume_profile.quantile(0.5)
-        high_vol_levels = volume_profile[volume_profile > vol_threshold].index.tolist()
-        return recent_support, recent_resistance, high_vol_levels
+  @staticmethod
+def detect_support_resistance(df: pd.DataFrame, window: int = 10) -> tuple:
+    if len(df) < window:
+        logging.warning(f"داده ناکافی برای تشخیص حمایت/مقاومت: {len(df)} کندل")
+        return None, None, []
+
+    high = df['high'].rolling(window).max()
+    low = df['low'].rolling(window).min()
+    close = df['close'].rolling(window).mean()
+    pivot = (high + low + close) / 3
+    resistance = pivot + (high - low) * 0.382
+    support = pivot - (high - low) * 0.382
+
+    recent_highs = df['high'][(df['high'].shift(1) < df['high']) & (df['high'].shift(-1) < df['high'])].iloc[-window:]
+    recent_lows = df['low'][(df['low'].shift(1) > df['low']) & (df['low'].shift(-1) > df['low'])].iloc[-window:]
+
+    recent_resistance = recent_highs.max() if not recent_highs.empty else resistance.iloc[-1]
+    recent_support = recent_lows.min() if not recent_lows.empty else support.iloc[-1]
+
+    if pd.isna(recent_resistance) or recent_resistance == 0:
+        recent_resistance = df['close'].iloc[-20:].mean() * 1.02
+        logging.warning(f"مقاومت پیش‌فرض برای {len(df)} کندل تنظیم شد: {recent_resistance}")
+
+    if pd.isna(recent_support) or recent_support == 0:
+        recent_support = df['close'].iloc[-20:].mean() * 0.98
+        logging.warning(f"حمایت پیش‌فرض برای {len(df)} کندل تنظیم شد: {recent_support}")
+
+    volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
+    vol_threshold = volume_profile.quantile(0.5)
+    high_vol_levels = volume_profile[volume_profile > vol_threshold].index.tolist()
+
+    return recent_support, recent_resistance, high_vol_levels
 
     @staticmethod
     def detect_rsi_divergence(df: pd.DataFrame, lookback: int = 10) -> tuple:
@@ -548,9 +555,17 @@ async def find_entry_point(
             })
             return None
 
-        df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
+                df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
         if df_1h is None or len(df_1h) == 0:
             log_rejection("missing_data_1h")
+            return None
+
+        # 🔒 بررسی اعتبار حمایت و مقاومت
+        if support is None or resistance is None or support <= 0 or resistance <= 0:
+            log_rejection("invalid_support_resistance", {
+                "support": support,
+                "resistance": resistance
+            })
             return None
 
         recent_close_1h = df_1h["close"].iloc[-1]
