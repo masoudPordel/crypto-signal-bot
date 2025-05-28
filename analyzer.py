@@ -482,29 +482,54 @@ async def find_entry_point(
     confirm_next_candle: bool = False,
     debug_mode: bool = False
 ) -> Optional[Dict]:
+    def log_debug(message):
+        if debug_mode:
+            logging.info(message)
+
+    def log_rejection(reason: str, details: dict = None):
+        if debug_mode:
+            logging.info(f"[REJECTED] {symbol} | reason={reason} | details={details or {}}")
+
     try:
+        log_debug(f"🔍 شروع بررسی سیگنال برای {symbol} ({signal_type})")
+
         df_15m = await get_ohlcv_cached(exchange, symbol, "15m")
         if df_15m is None or len(df_15m) < 20:
+            log_rejection("insufficient_data_15m", {"length": len(df_15m) if df_15m is not None else 0})
             return None
 
         df_15m = compute_indicators(df_15m)
         last = df_15m.iloc[-1].to_dict()
         prev = df_15m.iloc[-2].to_dict() if len(df_15m) > 1 else None
+
         live_price = await get_live_price(exchange, symbol)
         if live_price is None:
+            log_rejection("live_price_missing")
             return None
 
         atr = df_15m["ATR"].iloc[-1]
         price_diff = abs(live_price - last["close"])
         if price_diff > atr * 0.5:
+            log_rejection("price_mismatch", {
+                "live_price": live_price,
+                "candle_price": last["close"],
+                "ATR": atr,
+                "diff": price_diff
+            })
             return None
 
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
-        volume_ok = last["volume"] > volume_mean * 0.2 or atr > df_15m["ATR"].rolling(20).mean().iloc[-1] * 1.2
+        atr_mean = df_15m["ATR"].rolling(20).mean().iloc[-1]
+        volume_ok = last["volume"] > volume_mean * 0.2 or atr > atr_mean * 1.2
         if not volume_ok:
+            log_rejection("low_volume_or_atr", {
+                "current_volume": last["volume"],
+                "volume_threshold": volume_mean * 0.2,
+                "atr": atr,
+                "atr_threshold": atr_mean * 1.2
+            })
             return None
 
-        # بررسی الگوها با امتیازدهی
         pattern_score = 0
         if last.get("Engulfing"): pattern_score += 1
         if last.get("Hammer"): pattern_score += 1
@@ -515,52 +540,84 @@ async def find_entry_point(
             if signal_type == "Long" and prev["close"] > prev["open"]: pattern_score += 0.5
             if signal_type == "Short" and prev["close"] < prev["open"]: pattern_score += 0.5
 
+        log_debug(f"📊 امتیاز الگوها برای {symbol}: {pattern_score:.1f}")
         if pattern_score < 1.5:
+            log_rejection("weak_pattern", {
+                "pattern_score": pattern_score,
+                "min_required": 1.5
+            })
             return None
 
-        # بررسی داده 1h
         df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
         if df_1h is None or len(df_1h) == 0:
+            log_rejection("missing_data_1h")
             return None
 
-        recent_close = df_1h["close"].iloc[-1]
-        if signal_type == "Long" and recent_close < support * 0.95:
+        recent_close_1h = df_1h["close"].iloc[-1]
+        if signal_type == "Long" and recent_close_1h < support * 0.95:
+            log_rejection("support_broken", {
+                "recent_close": recent_close_1h,
+                "support": support
+            })
             return None
-        if signal_type == "Short" and recent_close > resistance * 1.05:
+        if signal_type == "Short" and recent_close_1h > resistance * 1.05:
+            log_rejection("resistance_broken", {
+                "recent_close": recent_close_1h,
+                "resistance": resistance
+            })
             return None
 
         close = last["close"]
-
-        entry_condition = (
-            (signal_type == "Long" and support < close < resistance and volume_ok) or
-            (signal_type == "Short" and support < close < resistance and volume_ok)
-        )
-
-        if not entry_condition:
-            return None
-
         entry_price = live_price
         rr_factor = 2.5 if pattern_score >= 2 else 2.0
         sl_factor = 0.75
 
         if signal_type == "Long":
+            if not (support < close < resistance and volume_ok):
+                log_rejection("long_not_in_range", {
+                    "close": close,
+                    "support": support,
+                    "resistance": resistance
+                })
+                return None
+
             sl = entry_price - atr * sl_factor
             tp = entry_price + atr * rr_factor
             rr = (tp - entry_price) / (entry_price - sl)
-            if rr < 1.3:
+
+        elif signal_type == "Short":
+            if not (support < close < resistance and volume_ok):
+                log_rejection("short_not_in_range", {
+                    "close": close,
+                    "support": support,
+                    "resistance": resistance
+                })
                 return None
 
-        else:
             sl = entry_price + atr * sl_factor
             tp = entry_price - atr * rr_factor
             rr = (entry_price - tp) / (sl - entry_price)
-            if rr < 1.3:
-                return None
 
-        return {"entry_price": entry_price, "sl": sl, "tp": tp}
+        else:
+            log_rejection("invalid_signal_type", {"signal_type": signal_type})
+            return None
+
+        if rr < 1.3:
+            log_rejection("rr_too_low", {
+                "RR": rr,
+                "min_required": 1.3
+            })
+            return None
+
+        log_debug(f"✅ سیگنال تأیید شد: Entry={entry_price:.4f}, SL={sl:.4f}, TP={tp:.4f}, RR={rr:.2f}")
+        return {
+            "entry_price": round(entry_price, 4),
+            "sl": round(sl, 4),
+            "tp": round(tp, 4)
+        }
 
     except Exception as e:
-        logging.error(f"خطا در find_entry_point برای {symbol}: {str(e)}")
+        logging.error(f"⚠️ خطای بحرانی در بررسی سیگنال {symbol}: {str(e)}")
         return None
 
 # تابع مدیریت trailing stop
