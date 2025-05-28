@@ -992,6 +992,21 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         THRESHOLD = 75
         if score_long >= THRESHOLD and trend_1d_score >= 0:  # شرط اجباری روند 1d
             signal_type = "Long"
+
+            # --- فیلتر اشباع خرید/فروش ---
+            rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
+            if signal_type == "Long" and rsi > 70:
+                logging.info(f"RSI در ناحیه اشباع خرید است، سیگنال Long برای {symbol} رد شد")
+                return None
+
+            # --- بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong ---
+            adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
+            active_conditions = [k for k, v in conds_long.items() if v]
+            if "EMA_Cross" in active_conditions or "ADX_Strong" in active_conditions:
+                if adx < 20:
+                    logging.info(f"بازار در وضعیت سایدوی است (ADX={adx})، سیگنال Long برای {symbol} رد شد")
+                    return None
+
             # محاسبه RR داینامیک بعد از تعیین نوع سیگنال
             if support_4h > 0:
                 dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
@@ -1040,7 +1055,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "قیمت ورود": entry,
                 "حد ضرر": sl,
                 "هدف سود": tp,
-"ریسک به ریوارد": np.float64(rr),
+                "ریسک به ریوارد": np.float64(rr),
                 "حجم پوزیشن": position_size,
                 "سطح اطمینان": min(score_long, 100),
                 "امتیاز": score_long,
@@ -1053,13 +1068,27 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "روند 4h": trend_4h,
                 "قیمت فعلی بازار": live_price
             }
-            # اضافه کردن تسک trailing stop
             asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
             logging.info(f"سیگنال Long تولید شد: {result}")
             return result
 
         elif score_short >= THRESHOLD and trend_1d_score <= 0:  # شرط اجباری روند 1d
             signal_type = "Short"
+
+            # --- فیلتر اشباع خرید/فروش ---
+            rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
+            if signal_type == "Short" and rsi < 30:
+                logging.info(f"RSI در ناحیه اشباع فروش است، سیگنال Short برای {symbol} رد شد")
+                return None
+
+            # --- بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong ---
+            adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
+            active_conditions = [k for k, v in conds_short.items() if v]
+            if "EMA_Cross" in active_conditions or "ADX_Strong" in active_conditions:
+                if adx < 20:
+                    logging.info(f"بازار در وضعیت سایدوی است (ADX={adx})، سیگنال Short برای {symbol} رد شد")
+                    return None
+
             # محاسبه RR داینامیک بعد از تعیین نوع سیگنال
             if resistance_4h > 0:
                 dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
@@ -1108,7 +1137,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "قیمت ورود": entry,
                 "حد ضرر": sl,
                 "هدف سود": tp,
-"ریسک به ریوارد": np.float64(rr),
+                "ریسک به ریوارد": np.float64(rr),
                 "حجم پوزیشن": position_size,
                 "سطح اطمینان": min(score_short, 100),
                 "امتیاز": score_short,
@@ -1121,6 +1150,9 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                 "روند 4h": trend_4h,
                 "قیمت فعلی بازار": live_price
             }
+            asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
+            logging.info(f"سیگنال Short تولید شد: {result}")
+            return result
             # اضافه کردن تسک trailing stop
             asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
             logging.info(f"سیگنال Short تولید شد: {result}")
