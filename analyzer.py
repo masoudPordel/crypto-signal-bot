@@ -923,7 +923,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             "MACD_Cross": (df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1]) and (df["MACD"].iloc[-1] < 0),
             "RSI_Overbought": last["RSI"] > 75,
             "Stochastic_Overbought": last["Stochastic"] > 85,
-            "BB_Breakout": last["close"] < last["BB_lower"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc-2] * 1.5),
+            "BB_Breakout": (last["close"] < last["BB_lower"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-2] * 1.5),
             "MFI_Overbought": last["MFI"] > 85,
             "ADX_Strong": last["ADX"] > 25,
             "Resistance_Confirmation": abs(last["close"] - resistance) <= resistance_buffer and (last["PinBar"] or last["Engulfing"])
