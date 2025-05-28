@@ -920,7 +920,7 @@ async def analyze_symbol(exchange: AsyncExchange, symbol: str, tf: str) -> Optio
         score_short += indicator_score_short
         score_log["long"]["indicators"] = indicator_score_long
         score_log["short"]["indicators"] = indicator_score_short
-        logging.debug(f"Indicator conditions for {symbol} } @ {tf}: long_score={indicator_score_long_short_score={indicator_score_short:.2f}")
+        logging.debug(f"Indicator conditions for {symbol} @ {tf}: long_score={indicator_score_long:.2f}, short_score={indicator_score_short:.2f}")
 
         # Market Structure
         score_long += trend_score_4h
