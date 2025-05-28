@@ -817,7 +817,7 @@ async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, bas
             if df_tf is None or len(df_tf) < 50:
                 continue
             df_tf = compute_indicators(df_tf
-            long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]]
+            long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]
             score += weight * (10 if long_trend else -5)
             total_weight += weight
         except Exception as e:
