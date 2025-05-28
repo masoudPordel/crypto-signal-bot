@@ -900,7 +900,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["short"]["usdt_score"] = -usdt_score
 
         support_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
-        resistance_buffer = (df["ATR'].iloc[-1] / last["close"]) * 1.5
+        resistance_buffer = (df["ATR"].iloc[-1] / last["close"]) * 1.5
         min_conditions = 2
         conds_long = {
             "PinBar": last.get("PinBar", False),
