@@ -1,4 +1,4 @@
-﻿import os
+import os
 import requests
 import pandas as pd
 import numpy as np
@@ -649,25 +649,32 @@ def get_moving_average_score(df: pd.DataFrame, price_col: str = "close") -> int:
         int: امتیاز میانگین‌های متحرک.
     """
     try:
-        ma50 = df[price_col].rolling(window=50).mean()
-        ma100 = df[price_col].rolling(window=100).mean()
-        ma200 = ma100
-        try:
-            ma200 = df[price_col].rolling(window=200).mean()
+    ma50 = df[price_col].rolling(window=50).mean()
+    ma100 = df[price_col].rolling(window=100).mean()
+    ma200 = ma100
+    try:
         if len(df) < 200:
             return 0
+        ma200 = df[price_col].rolling(window=200).mean()
+        
         score = 0
-        if df[price_col].iloc[-1]] > ma200.iloc[-1]:
+        if df[price_col].iloc[-1] > ma200.iloc[-1]:
             score += 5
         else:
             score -= 5
-        if ma50.iloc[-1]] > ma100.iloc[-1] and ma100.iloc[-1]] > ma200.iloc[-1]:
+
+        if ma50.iloc[-1] > ma100.iloc[-1] and ma100.iloc[-1] > ma200.iloc[-1]:
             score += 3
+
         logging.info(f"امتیاز میانگین‌های متحرک: score={score}")
         return score
+
     except Exception as e:
         logging.error(f"خطا در محاسبه امتیاز میانگین‌ها: {e}")
         return 0
+except Exception as e:
+    logging.error(f"خطا در اجرای بلوک بیرونی: {e}")
+    return 0
 
 def get_usdt_dominance_score(df: pd.DataFrame) -> int:
     """
