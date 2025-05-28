@@ -473,191 +473,94 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
     logging.error(f"ناتوانی در دریافت قیمت برای {symbol} پس از {max_attempts} تلاش")
     return None
 
-# تابع پیدا کردن نقطه async def find_entry_point(exchange: ccxt.Exchange, symbol: str, signal_type: str, support: float, resistance: float) -> Optional[Dict]:
-    """
-    پیدا کردن نقطه ورود برای معامله Long یا Short در تایم‌فریم 15 دقیقه.
-    
-    Args:
-        exchange: شیء صرافی (مثل ccxt)
-        symbol: نماد معاملاتی (مثل 'CYBER/USDT')
-        signal_type: نوع سیگنال ('Long' یا 'Short')
-        support: سطح حمایت
-        resistance: سطح مقاومت
-    
-    Returns:
-        dict: {"entry_price": float, "sl": float, "tp": float} یا None اگر نقطه ورود پیدا نشه
-    """
+async def find_entry_point(
+    exchange: ccxt.Exchange,
+    symbol: str,
+    signal_type: str,
+    support: float,
+    resistance: float,
+    confirm_next_candle: bool = False,
+    debug_mode: bool = False
+) -> Optional[Dict]:
     try:
-        logging.info(f"شروع پیدا کردن نقطه ورود برای {symbol} در تایم‌فریم 15m - نوع سیگنال: {signal_type} - زمان: {datetime.now().strftime('%H:%M %d/%m/%Y')}")
-        
-        # دریافت داده‌های 15 دقیقه
         df_15m = await get_ohlcv_cached(exchange, symbol, "15m")
         if df_15m is None or len(df_15m) < 20:
-            logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=داده ناکافی, تعداد کندل‌ها={len(df_15m) if df_15m is not None else 0}")
             return None
 
-        # محاسبه اندیکاتورها
         df_15m = compute_indicators(df_15m)
-        last_15m = df_15m.iloc[-1].to_dict()  # کندل آخر
-        next_15m = df_15m.iloc[-2].to_dict() if len(df_15m) > 1 else None
-
-        # دریافت قیمت واقعی
+        last = df_15m.iloc[-1].to_dict()
+        prev = df_15m.iloc[-2].to_dict() if len(df_15m) > 1 else None
         live_price = await get_live_price(exchange, symbol)
         if live_price is None:
-            logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم دریافت قیمت واقعی")
             return None
 
-        # چک اختلاف قیمت
-        price_diff = abs(live_price - last_15m["close"]) / live_price if live_price != 0 else float('inf')
-        if price_diff > 0.03:  # شل‌تر از 0.02 به 0.03
-            logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=اختلاف قیمت زیاد, live_price={live_price:.6f}, candle_price={last_15m['close']:.6f}, اختلاف={price_diff:.4f}")
+        atr = df_15m["ATR"].iloc[-1]
+        price_diff = abs(live_price - last["close"])
+        if price_diff > atr * 0.5:
             return None
 
-        # چک حجم
         volume_mean = df_15m["volume"].rolling(20).mean().iloc[-1]
-        volume_condition = last_15m["volume"] > volume_mean * 0.2  # شل‌تر از 0.3 به 0.2
-        logging.info(f"بررسی حجم برای {symbol}: current_vol={last_15m['volume']:.2f}, mean={volume_mean:.2f}, condition={volume_condition}")
-        if not volume_condition:
-            logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=حجم ناکافی, current_vol={last_15m['volume']:.2f}, threshold={volume_mean * 0.2:.2f}")
+        volume_ok = last["volume"] > volume_mean * 0.2 or atr > df_15m["ATR"].rolling(20).mean().iloc[-1] * 1.2
+        if not volume_ok:
             return None
 
-        # چک الگوها با تأیید اجباری کندل بعدی
-        pin_bar_confirmed = False
-        engulfing_confirmed = False
-        hammer_confirmed = False
-        doji_confirmed = False
+        # بررسی الگوها با امتیازدهی
+        pattern_score = 0
+        if last.get("Engulfing"): pattern_score += 1
+        if last.get("Hammer"): pattern_score += 1
+        if last.get("Doji"): pattern_score += 0.5
+        if last.get("PinBar"): pattern_score += 1
 
-        if next_15m:
-            # تأیید PinBar
-            if last_15m.get("PinBar", False):
-                if (
-                    (signal_type == "Long" and last_15m["close"] < next_15m["close"] * 1.10) or 
-                    (signal_type == "Short" and last_15m["close"] > next_15m["close"] * 0.90)
-                ):
-                    pin_bar_confirmed = True
-                    logging.info(f"الگوی PinBar برای {symbol} با کندل بعدی تأیید شد (با انعطاف 10%)")
-                else:
-                    logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم تأیید PinBar با کندل بعدی")
+        if confirm_next_candle and prev:
+            if signal_type == "Long" and prev["close"] > prev["open"]: pattern_score += 0.5
+            if signal_type == "Short" and prev["close"] < prev["open"]: pattern_score += 0.5
 
-            # تأیید Engulfing
-            if last_15m.get("Engulfing", False):
-                if (
-                    (signal_type == "Long" and last_15m["close"] > last_15m["open"] and next_15m["close"] > next_15m["open"] and last_15m["close"] < next_15m["close"] * 1.10) or 
-                    (signal_type == "Short" and last_15m["close"] < last_15m["open"] and next_15m["close"] < next_15m["open"] and last_15m["close"] > next_15m["close"] * 0.90)
-                ):
-                    engulfing_confirmed = True
-                    logging.info(f"الگوی Engulfing برای {symbol} با کندل بعدی تأیید شد (با انعطاف 10%)")
-                else:
-                    logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم تأیید Engulfing با کندل بعدی")
+        if pattern_score < 1.5:
+            return None
 
-            # تأیید Hammer
-            if last_15m.get("Hammer", False):
-                if (
-                    (signal_type == "Long" and last_15m["close"] > last_15m["open"] and next_15m["close"] > next_15m["open"] and last_15m["close"] < next_15m["close"] * 1.10)
-                ):
-                    hammer_confirmed = True
-                    logging.info(f"الگوی Hammer برای {symbol} با کندل بعدی تأیید شد (با انعطاف 10%)")
-                else:
-                    logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم تأیید Hammer با کندل بعدی")
-
-            # تأیید Doji
-            if last_15m.get("Doji", False):
-                if (
-                    (signal_type == "Long" and next_15m["close"] > next_15m["open"] and last_15m["close"] < next_15m["close"] * 1.10) or 
-                    (signal_type == "Short" and next_15m["close"] < next_15m["open"] and last_15m["close"] > next_15m["close"] * 0.90)
-                ):
-                    doji_confirmed = True
-                    logging.info(f"الگوی Doji برای {symbol} با کندل بعدی تأیید شد (با انعطاف 10%)")
-                else:
-                    logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم تأیید Doji با کندل بعدی")
-
-        # چک پرایس اکشن با تأیید الگوها
-        price_action = (pin_bar_confirmed or engulfing_confirmed or hammer_confirmed or doji_confirmed)
-        logging.info(f"جزئیات {signal_type} برای {symbol}: close={last_15m['close']:.6f}, resistance={resistance:.6f}, support={support:.6f}")
-        logging.info(f"مقادیر الگوها: PinBar={pin_bar_confirmed}, Engulfing={engulfing_confirmed}, Hammer={hammer_confirmed}, Doji={doji_confirmed}, price_action={price_action}")
-
-        # دریافت داده‌های 1 ساعته و چک حمایت
+        # بررسی داده 1h
         df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
         if df_1h is None or len(df_1h) == 0:
-            logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم دریافت داده 1h")
             return None
 
-        recent_low = df_1h["low"].iloc[-1]
-        if recent_low < support * 0.95:  # شل‌تر از 0.98 به 0.95
-            logging.warning(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=شکست حمایت, recent_low={recent_low:.6f}, support={support:.6f}")
+        recent_close = df_1h["close"].iloc[-1]
+        if signal_type == "Long" and recent_close < support * 0.95:
+            return None
+        if signal_type == "Short" and recent_close > resistance * 1.05:
             return None
 
-        close_price = last_15m["close"]
-        fib_levels = calculate_fibonacci_levels(df_15m)
+        close = last["close"]
 
-        # شرط‌های ورود
+        entry_condition = (
+            (signal_type == "Long" and support < close < resistance and volume_ok) or
+            (signal_type == "Short" and support < close < resistance and volume_ok)
+        )
+
+        if not entry_condition:
+            return None
+
+        entry_price = live_price
+        rr_factor = 2.5 if pattern_score >= 2 else 2.0
+        sl_factor = 0.75
+
         if signal_type == "Long":
-            breakout_resistance = close_price > resistance and volume_condition
-            near_support = abs(close_price - support) / close_price < 0.1 and volume_condition
-            within_range = support < close_price < resistance and volume_condition
-            entry_condition = (breakout_resistance or near_support or within_range) and price_action
+            sl = entry_price - atr * sl_factor
+            tp = entry_price + atr * rr_factor
+            rr = (tp - entry_price) / (entry_price - sl)
+            if rr < 1.3:
+                return None
 
-            if entry_condition:
-                entry_price = live_price
-                atr_15m = df_15m["ATR"].iloc[-1]
-                
-                # تنظیم SL و TP
-                sl = entry_price - (atr_15m * 0.75)
-                tp = entry_price + (atr_15m * 2.5)
-                
-                # محدود کردن SL و TP با حمایت/مقاومت
-                if sl < support * 0.95:
-                    sl = support * 0.95
-                if tp > resistance * 1.05:
-                    tp = resistance * 1.02
+        else:
+            sl = entry_price + atr * sl_factor
+            tp = entry_price - atr * rr_factor
+            rr = (entry_price - tp) / (sl - entry_price)
+            if rr < 1.3:
+                return None
 
-                # محاسبه RR
-                rr_ratio = (tp - entry_price) / (entry_price - sl)
-                logging.info(f"محاسبه TP و SL برای {symbol}: Entry={entry_price:.6f}, TP={tp:.6f}, SL={sl:.6f}, ATR={atr_15m:.6f}, RR={rr_ratio:.2f}")
-
-                # فیلتر RR
-                if rr_ratio < 1.5:  # شل‌تر از 2 به 1.5
-                    logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=RR کمتر از 1.5, RR={rr_ratio:.2f}")
-                    return None
-
-                return {"entry_price": entry_price, "sl": sl, "tp": tp}
-
-        elif signal_type == "Short":
-            breakout_support = close_price < support and volume_condition
-            near_resistance = abs(close_price - resistance) / close_price < 0.1 and volume_condition
-            within_range = support < close_price < resistance and volume_condition
-            entry_condition = (breakout_support or near_resistance or within_range) and price_action
-
-            if entry_condition:
-                entry_price = live_price
-                atr_15m = df_15m["ATR"].iloc[-1]
-                
-                # تنظیم SL و TP
-                sl = entry_price + (atr_15m * 0.75)
-                tp = entry_price - (atr_15m * 2.5)
-                
-                # محدود کردن SL و TP با حمایت/مقاومت
-                if sl > resistance * 1.05:
-                    sl = resistance * 1.02
-                if tp < support * 0.95:
-                    tp = support * 0.95
-
-                # محاسبه RR
-                rr_ratio = (entry_price - tp) / (sl - entry_price)
-                logging.info(f"محاسبه TP و SL برای {symbol}: Entry={entry_price:.6f}, TP={tp:.6f}, SL={sl:.6f}, ATR={atr_15m:.6f}, RR={rr_ratio:.2f}")
-
-                # فیلتر RR
-                if rr_ratio < 1.5:
-                    logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=RR کمتر از 1.5, RR={rr_ratio:.2f}")
-                    return None
-
-                return {"entry_price": entry_price, "sl": sl, "tp": tp}
-
-        logging.info(f"نقطه ورود برای {symbol} در 15m پیدا نشد: دلیل=عدم تحقق شرایط ورود")
-        return None
+        return {"entry_price": entry_price, "sl": sl, "tp": tp}
 
     except Exception as e:
-        logging.error(f"خطا در پیدا کردن نقطه ورود برای {symbol} @ 15m: {str(e)}")
+        logging.error(f"خطا در find_entry_point برای {symbol}: {str(e)}")
         return None
 
 # تابع مدیریت trailing stop
