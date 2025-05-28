@@ -480,7 +480,7 @@ async def find_entry_point(
     support: float,
     resistance: float,
     confirm_next_candle: bool = False,
-    debug_mode: bool = False
+    debug_mode: bool = True
 ) -> Optional[Dict]:
     def log_debug(message):
         if debug_mode:
