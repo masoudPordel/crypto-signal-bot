@@ -164,7 +164,7 @@ class PatternDetector:
         return engulfing
 
     @staticmethod
-    def detect_elliott_wave(df: pd.DataFrame) -> pd.DataFrame:
+     def detect_elliott_wave(df: pd.DataFrame) -> pd.DataFrame:
         df["WavePoint"] = np.nan
         highs = argrelextrema(df['close'].values, np.greater, order=5)[0]
         lows = argrelextrema(df['close'].values, np.less, order=5)[0]
@@ -181,8 +181,8 @@ class PatternDetector:
                 df.loc[wave_points[-1], "WaveTrend"] = "Down"
         return df
 
-  @staticmethod
-def detect_support_resistance(df: pd.DataFrame, window: int = 10) -> tuple:
+    @staticmethod
+    def detect_support_resistance(df: pd.DataFrame, window: int = 10) -> tuple:
     if len(df) < window:
         logging.warning(f"داده ناکافی برای تشخیص حمایت/مقاومت: {len(df)} کندل")
         return None, None, []
