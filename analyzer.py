@@ -1099,8 +1099,8 @@ async def manage_trailing_stop(exchange: AsyncExchange, symbol: str, entry_price
         logging.error(f"Error managing Trailing for {symbol}: {str(e)}")
 
 # تابع تأیید چند تایم‌فریم
-async def multi_timeframe_confirmation(exchange: AsyncExchangeExchange, symbol: str, base_tf: str) -> float:
-    weights = {"1d": "0.4, "4h": 0.3, "1h": 0.2, "15m": 0.1}
+async def multi_timeframe_confirmation(exchange: AsyncExchange, symbol: str, base_tf: str) -> float:
+    weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "15m": 0.1}
     total_weight = 0
     score = 0.0
     try:
@@ -1111,19 +1111,17 @@ async def multi_timeframe_confirmation(exchange: AsyncExchangeExchange, symbol: 
             if df_tf is None or (len(df_tf) < 50 and tf != "1d") or (len(df_tf) < 30 and tf == "1d"):
                 logging.warning(f"Insufficient data for {symbol} @ {tf} in multi-timeframe: candles={len(df_tf) if df_tf is not None else 0}")
                 continue
-            df_tf["close"] = df_tf["close"].ewm(span=12).mean()
-            df_tf["EMA26"] = df_tf["close"].ewm(span=26).mean()
-            long_trend = df_tf["EMA12"].str[-1].iloc[-1] > df_tf["EMA26"].iloc[-1]
+            df_tf = compute_indicators(df_tf)
+            long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]
             score += (weight * 10) if long_trend else (-weight * 5)
             total_weight += weight
         final_score = score / total_weight if total_weight > 0 else 0
         logging.info(f"Multi-timeframe completed for {symbol}: score={final_score:.2f}, total_weight={total_weight}")
         return final_score
     except Exception as e:
-        logging.error(f"Error during multi-timeframe confirmation for {symbol}: {e}, traceback={str(e)}")
-        return 0
-0
-
+        logging.error(f"Error during multi-timeframe confirmation for {symbol}: {e}")
+        return 0.0
+        
 # تابع دریافت داده با کش
 async def get_ohlcv(exchange: AsyncExchange, symbol: str, tf: str, limit: int = 50) -> Optional[pd.Data]:
     try:
