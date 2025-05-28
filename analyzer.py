@@ -509,7 +509,7 @@ async def find_entry_point(
 
         atr = df_15m["ATR"].iloc[-1]
         price_diff = abs(live_price - last["close"])
-        if price_diff > atr * 0.5:
+        if price_diff > atr * 0.8:
             log_rejection("price_mismatch", {
                 "live_price": live_price,
                 "candle_price": last["close"],
