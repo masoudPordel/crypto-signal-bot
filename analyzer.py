@@ -1119,9 +1119,8 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             tp = entry_data["tp"]
             live_price = await get_live_price(exchange, symbol)
             if live_price is None:
-                logging.warning(f"قیمت واقعی برای {```python
-            logging.warning(f"قیمت واقعی برای {symbol} پیدا نشد")
-            return None
+                logging.warning(f"قیمت واقعی برای {symbol} پیدا نشد")
+                return None
 
         result = {
             "نوع معامله": "Long",
