@@ -549,8 +549,8 @@ def detect_double_bottom(df: pd.DataFrame, price_col: str = "close") -> int:
             return 3  # Bullish pattern
     return 0
 
-# تابع پیدا کردن نقطه ورود
-async def find_entry_point(exchange: ccxt.async_support.Exchange, symbol: str, signal_type: str, support: float, resistance: float) -> Optional[Dict]:
+# اصلاح تابع find_entry_point
+async def find_entry_point(exchange: AsyncExchange, symbol: str, signal_type: str, support: float, resistance: float) -> Optional[Dict]:
     try:
         logging.info(f"شروع پیدا کردن نقطه ورود برای {symbol} در تایم‌فریم 15m - نوع سیگنال: {signal_type}")
         df_15m = await get_ohlcv_cached(exchange, symbol, "15m")
@@ -662,109 +662,8 @@ async def find_entry_point(exchange: ccxt.async_support.Exchange, symbol: str, s
         logging.error(f"خطا در پیدا کردن نقطه ورود برای {symbol} @ 15m: {e}")
         return None
 
-# تابع مدیریت trailing stop
-async def manage_trailing_stop(exchange: ccxt.async_support.Exchange, symbol: str, entry_price: float, sl: float, signal_type: str, trail_percentage: float = 0.5):
-    logging.info(f"Starting Trailing Stop for {symbol} with signal type {signal_type}, entry={entry_price}, initial SL={sl}")
-    try:
-        while True:
-            live_price = await get_live_price(exchange, symbol)
-            if live_price is None:
-                logging.warning(f"Failed to get live price for {symbol}, waiting 60 seconds")
-                await asyncio.sleep(60)
-                continue
-            if (live_price > entry_price and signal_type == "Long") or (live_price < entry_price and signal_type == "Short"):
-                trail_amount = live_price * (trail_percentage / 100)
-                new_sl = live_price - trail_amount if signal_type == "Long" else live_price + trail_amount
-                if (signal_type == "Long" and new_sl > sl) or (signal_type == "Short" and new_sl < sl):
-                    sl = new_sl
-                    logging.info(f"Trailing Stop updated for {symbol}: SL={sl}, Live Price={live_price}")
-            await asyncio.sleep(300)
-    except Exception as e:
-        logging.error(f"Error managing Trailing Stop for {symbol}: {str(e)}")
-
-# Multi-timeframe confirmation
-async def multi_timeframe_confirmation(exchange: ccxt.async_support.Exchange, symbol: str, base_tf: str) -> float:
-    weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "15m": 0.1}
-    total_weight = 0
-    score = 0
-    try:
-        for tf, weight in weights.items():
-            if tf == base_tf:
-                continue
-            df_tf = await get_ohlcv_cached(exchange, symbol, tf)
-            if df_tf is None or (len(df_tf) < 50 and tf != "1d") or (len(df_tf) < 30 and tf == "1d"):
-                logging.warning(f"Insufficient data for {symbol} @ {tf} in multi-timeframe: candles={len(df_tf) if df_tf is not None else 0}")
-                continue
-            df_tf["EMA12"] = df_tf["close"].ewm(span=12).mean()
-            df_tf["EMA26"] = df_tf["close"].ewm(span=26).mean()
-            long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]
-            score += (weight * 10) if long_trend else (-weight * 5)
-            total_weight += weight
-        final_score = score / total_weight if total_weight > 0 else 0
-        logging.info(f"Multi-timeframe completed for {symbol}: score={final_score:.2f}, total_weight={total_weight}")
-        return final_score
-    except Exception as e:
-        logging.error(f"Error in multi-timeframe confirmation for {symbol}: {str(e)}")
-        return 0
-
-# Semaphore for rate limiting
-semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-
-# Cached OHLCV fetch
-async def get_ohlcv_cached(exchange, symbol: str, tf: str, limit: int = 50) -> Optional[pd.DataFrame]:
-    try:
-        async with semaphore:
-            key = f"{exchange.id}_{symbol}_{tf}"
-            now = datetime.utcnow()
-            if key in CACHE:
-                cached_df, cached_time = CACHE[key]
-                if (now - cached_time).total_seconds() < CACHE_TTL:
-                    return cached_df
-            raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
-            if not raw_data or len(raw_data) == 0:
-                logging.warning(f"No valid OHLCV data for {symbol} @ {tf}")
-                return None
-            df = pd.DataFrame(raw_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", errors="coerce")
-            if df["timestamp"].isnull().all():
-                logging.error(f"All timestamps invalid for {symbol} @ {tf}")
-                return None
-            for col in ["open", "high", "low", "close", "volume"]:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-            df.set_index("timestamp", inplace=True)
-            CACHE[key] = (df, now)
-            logging.info(f"OHLCV data fetched and cached for {symbol} @ {tf}: candles={len(df)}")
-            return df
-    except Exception as e:
-        logging.error(f"❌ Error fetching OHLCV for {symbol} @ {tf}: {str(e)}")
-        return None
-
-# Position size calculation
-def calculate_position_size(account_balance: float, risk_percentage: float, entry: float, stop_loss: float) -> float:
-    try:
-        if entry is None or stop_loss is None or entry == 0 or stop_loss == 0:
-            logging.warning(f"Invalid inputs for position sizing: entry={entry}, stop_loss={stop_loss}")
-            return 0
-        risk_amount = account_balance * (risk_percentage / 100)
-        distance = abs(entry - stop_loss)
-        position_size = risk_amount / distance if distance != 0 else 0
-        return round(position_size, 2)
-    except Exception as e:
-        logging.error(f"Error calculating position size: {str(e)}")
-        return 0
-
-# Ablation test
-def ablation_test(symbol_results: list, filter_name: str) -> int:
-    try:
-        total_signals = len([r for r in symbol_results if r is not None])
-        logging.info(f"Ablation Test for filter {filter_name}: initial_signals={total_signals}")
-        return total_signals
-    except Exception as e:
-        logging.error(f"Error in ablation test: {str(e)}")
-        return 0
-
-# Symbol analysis
-async def analyze_symbol(exchange: ccxt.async_support.Exchange, symbol: str, tf: str) -> Optional[dict]:
+# اصلاح تابع analyze_symbol
+async def analyze_symbol(exchange: AsyncExchange, symbol: str, tf: str) -> Optional[dict]:
     global VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
     logging.info(f"Starting analysis for {symbol} @ {tf}, start_time={datetime.now()}")
@@ -1188,6 +1087,199 @@ async def analyze_symbol(exchange: ccxt.async_support.Exchange, symbol: str, tf:
     finally:
         elapsed_time = time.time() - start_time
         logging.info(f"Analysis completed for {symbol} @ {tf} in {elapsed_time:.2f}s")
+
+# اصلاح تابع manage_trailing_stop
+async def manage_trailing_stop(exchange: AsyncExchange, symbol: str, entry_price: float, sl: float, signal_type: str, trail_percentage: float = 0.5):
+    logging.info(f"Starting Trailing Stop for {symbol} with signal type {signal_type}, entry={entry_price}, initial SL={sl}")
+    try:
+        while True:
+            live_price = await get_live_price(exchange, symbol)
+            if live_price is None:
+                logging.warning(f"Failed to get live price for {symbol}, waiting 60 seconds")
+                await asyncio.sleep(60)
+                continue
+            if (live_price > entry_price and signal_type == "Long") or (live_price < entry_price and signal_type == "Short"):
+                trail_amount = live_price * (trail_percentage / 100)
+                new_sl = live_price - trail_amount if signal_type == "Long" else live_price + trail_amount
+                if (signal_type == "Long" and new_sl > sl) or (signal_type == "Short" and new_sl < sl):
+                    sl = new_sl
+                    logging.info(f"Trailing Stop updated for {symbol}: SL={sl}, Live Price={live_price}")
+            await asyncio.sleep(300)
+    except Exception as e:
+        logging.error(f"Error managing Trailing Stop for {symbol}: {str(e)}")
+
+# اصلاح تابع multi_timeframe_confirmation
+async def multi_timeframe_confirmation(exchange: AsyncExchange, symbol: str, base_tf: str) -> float:
+    weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "15m": 0.1}
+    total_weight = 0
+    score = 0
+    try:
+        for tf, weight in weights.items():
+            if tf == base_tf:
+                continue
+            df_tf = await get_ohlcv_cached(exchange, symbol, tf)
+            if df_tf is None or (len(df_tf) < 50 and tf != "1d") or (len(df_tf) < 30 and tf == "1d"):
+                logging.warning(f"Insufficient data for {symbol} @ {tf} in multi-timeframe: candles={len(df_tf) if df_tf is not None else 0}")
+                continue
+            df_tf["EMA12"] = df_tf["close"].ewm(span=12).mean()
+            df_tf["EMA26"] = df_tf["close"].ewm(span=26).mean()
+            long_trend = df_tf["EMA12"].iloc[-1] > df_tf["EMA26"].iloc[-1]
+            score += (weight * 10) if long_trend else (-weight * 5)
+            total_weight += weight
+        final_score = score / total_weight if total_weight > 0 else 0
+        logging.info(f"Multi-timeframe completed for {symbol}: score={final_score:.2f}, total_weight={total_weight}")
+        return final_score
+    except Exception as e:
+        logging.error(f"Error in multi-timeframe confirmation for {symbol}: {str(e)}")
+        return 0
+
+# اصلاح تابع get_ohlcv_cached
+async def get_ohlcv_cached(exchange: AsyncExchange, symbol: str, tf: str, limit: int = 50) -> Optional[pd.DataFrame]:
+    try:
+        async with semaphore:
+            key = f"{exchange.id}_{symbol}_{tf}"
+            now = datetime.utcnow()
+            if key in CACHE:
+                cached_df, cached_time = CACHE[key]
+                if (now - cached_time).total_seconds() < CACHE_TTL:
+                    return cached_df
+            raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+            if not raw_data or len(raw_data) == 0:
+                logging.warning(f"No valid OHLCV data for {symbol} @ {tf}")
+                return None
+            df = pd.DataFrame(raw_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", errors="coerce")
+            if df["timestamp"].isnull().all():
+                logging.error(f"All timestamps invalid for {symbol} @ {tf}")
+                return None
+            for col in ["open", "high", "low", "close", "volume"]:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            df.set_index("timestamp", inplace=True)
+            CACHE[key] = (df, now)
+            logging.info(f"OHLCV data fetched and cached for {symbol} @ {tf}: candles={len(df)}")
+            return df
+    except Exception as e:
+        logging.error(f"❌ Error fetching OHLCV for {symbol} @ {tf}: {str(e)}")
+        return None
+
+# اصلاح تابع check_liquidity
+async def check_liquidity(exchange: AsyncExchange, symbol: str, df: pd.DataFrame) -> tuple:
+    global LIQUIDITY_REJECTS
+    try:
+        ticker = await exchange.fetch_ticker(symbol)
+        bid = ticker.get('bid')
+        ask = ticker.get('ask')
+        if bid is None or ask is None or bid == 0 or ask == 0:
+            logging.warning(f"داده نقدینگی برای {symbol} نامعتبر است: bid={bid}, ask={ask}")
+            return float('inf'), 0
+        spread = (ask - bid) / ((bid + ask) / 2)
+        spread_history = []
+        for i in range(-5, 0):
+            try:
+                past_ticker = await exchange.fetch_ticker(symbol)
+                past_bid = past_ticker.get('bid')
+                past_ask = past_ticker.get('ask')
+                if past_bid is None or past_ask is None or past_bid == 0 or past_ask == 0:
+                    continue
+                past_spread = (past_ask - past_bid) / ((past_bid + past_ask) / 2)
+                spread_history.append(past_spread)
+            except Exception as e:
+                logging.warning(f"خطا در دریافت داده گذشته برای {symbol}: {e}")
+                continue
+        spread_mean = np.mean(spread_history) if spread_history else 0.02
+        spread_std = np.std(spread_history) if spread_history else 0.005
+        spread_threshold = 0.005
+        if spread > spread_threshold:
+            logging.warning(f"اسپرد برای {symbol} بیش از حد بالاست: spread={spread:.4f}")
+            LIQUIDITY_REJECTS += 1
+            return spread, -10
+        score = 15 if spread < spread_threshold else -5
+        logging.info(f"نقدینگی {symbol}: spread={spread:.4f}, threshold={spread_threshold:.4f}, score={score}")
+        if spread >= spread_threshold:
+            LIQUIDITY_REJECTS += 1
+        return spread, score
+    except Exception as e:
+        logging.error(f"خطا در بررسی نقدینگی برای {symbol}: {e}")
+        return float('inf'), 0
+
+# اصلاح تابع get_live_price
+async def get_live_price(exchange: AsyncExchange, symbol: str, max_attempts: int = 3) -> float:
+    attempt = 0
+    last_ticker = None
+    while attempt < max_attempts:
+        try:
+            ticker = await exchange.fetch_ticker(symbol)
+            bid = ticker.get('bid')
+            ask = ticker.get('ask')
+            last = ticker.get('last')
+            if bid is None or ask is None or last is None or bid <= 0 or ask <= 0:
+                logging.warning(f"داده قیمت واقعی برای {symbol} نامعتبر است: bid={bid}, ask={ask}, last={last}")
+                attempt += 1
+                await asyncio.sleep(0.3)
+                continue
+            live_price = (bid + ask) / 2 if bid and ask else last
+            last_ticker = live_price
+            logging.info(f"قیمت واقعی بازار برای {symbol}: live_price={live_price}, bid={bid}, ask={ask}, last={last}")
+            return live_price
+        except Exception as e:
+            logging.error(f"خطا در دریافت قیمت واقعی برای {symbol} در تلاش {attempt + 1}: {e}")
+            attempt += 1
+            await asyncio.sleep(0.3)
+    try:
+        df_1m = await get_ohlcv_cached(exchange, symbol, "1m")
+        if df_1m is not None and len(df_1m) > 0:
+            fallback_price = df_1m["close"].iloc[-1]
+            logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، از قیمت کندل 1m استفاده شد: {fallback_price}")
+            return fallback_price
+    except Exception as e:
+        logging.error(f"خطا در دریافت قیمت پیش‌فرض برای {symbol}: {e}")
+    logging.error(f"ناتوانی در دریافت قیمت برای {symbol} پس از {max_attempts} تلاش")
+    return None
+
+# اصلاح تابع analyze_market_structure
+async def analyze_market_structure(exchange: AsyncExchange, symbol: str) -> Dict[str, Any]:
+    try:
+        logging.info(f"شروع تحلیل ساختار بازار برای {symbol} در تایم‌فریم 4h")
+        df_4h = await get_ohlcv_cached(exchange, symbol, "4h", limit=50)
+        if df_4h is None or len(df_4h) < 50:
+            logging.warning(f"داده ناکافی برای تحلیل ساختار بازار {symbol} @ 4h: تعداد کندل‌ها={len(df_4h) if df_4h is not None else 0}")
+            return {"trend": None, "score": 0, "support": 0, "resistance": 0, "fng_index": 50}
+        
+        df_4h = compute_indicators(df_4h)
+        last_4h = df_4h.iloc[-1]
+
+        trend_score = 0
+        trend_direction = "Neutral"
+        if last_4h["EMA12"] > last_4h["EMA26"]:
+            trend_score += 10
+            trend_direction = "Up"
+        elif last_4h["EMA12"] < last_4h["EMA26"]:
+            trend_score += -10
+            trend_direction = "Down"
+
+        support, resistance, _ = PatternDetector.detect_support_resistance(df_4h)
+        logging.info(f"سطوح کلیدی در 4h برای {symbol}: حمایت={support:.2f}, مقاومت={resistance:.2f}")
+
+        fng_index = get_fear_and_greed_index()
+        if fng_index < 25:
+            trend_score += 5
+            logging.info(f"شاخص ترس و طمع در 4h برای {symbol}: {fng_index} (ترس شدید) - 5 امتیاز به روند صعودی اضافه شد")
+        elif fng_index > 75:
+            trend_score += -5
+            logging.info(f"شاخص ترس و طمع در 4h برای {symbol}: {fng_index} (طمع شدید) - 5 امتیاز به روند نزولی اضافه شد")
+
+        result = {
+            "trend": trend_direction,
+            "score": trend_score,
+            "support": support,
+            "resistance": resistance,
+            "fng_index": fng_index
+        }
+        logging.info(f"تحلیل ساختار بازار برای {symbol} @ 4h تکمیل شد: {result}")
+        return result
+    except Exception as e:
+        logging.error(f"خطا در تحلیل ساختار بازار برای {symbol} @ 4h: {str(e)}")
+        return {"trend": None, "score": 0, "support": 0, "resistance": 0, "fng_index": 50}
 
 # تابع اسکن تمام نمادهای کریپتو
 async def scan_all_crypto_symbols(exchange_name: str = "binance", timeframe: str = "1h", max_symbols: int = 500) -> List[Dict]:
