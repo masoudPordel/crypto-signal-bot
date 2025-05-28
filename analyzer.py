@@ -955,131 +955,128 @@ async def analyze_symbol(exchange: AsyncExchange, symbol: str, tf: str) -> Optio
         logging.info(f"Long score breakdown: {score_log['long']}")
         logging.info(f"Short score breakdown: {score_log['short']}")
 
-        # Signal Generation
-        THRESHOLD = 80
-        if score_long >= THRESHOLD and trend_1d_score >= 0:
-            signal_type = "Long"
-            if support_4h > 0:
-                dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer if risk_buffer != 0 else 2.0)
-            logging.info(f"Dynamic RR ratio for {symbol} (Long): RR={dynamic_rr:.6f}")
-            entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
-            if not entry_data:
-                logging.info(f"No entry point found for {symbol} Long in 15m")
-                return None
-            entry = entry_data["entry_price"]
-            sl = entry_data["sl"]
-            tp = entry_data["tp"]
-            live_price = await get_live_price(exchange, symbol)
-            if live_price is None:
-                logging.warning(f"No live price for {symbol}, skipping")
-                return None
-            price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
-            if price_diff > 0.01:
-                logging.warning(f"Entry price deviation too high for {symbol}: entry={entry}, live_price={last_price}, diff={price_diff:.4f}")
-                return None
-            if sl >= entry or tp <= entry:
-                logging.warning(f"Invalid SL or TP for {symbol}: entry={entry}, sl={sl}, tp={tp}")
-                return None
-            if abs(entry - live_price) / live_price > 0.01:
-                logging.warning(f"Entry price too far from market for {symbol}: entry={entry}, live_price={live_price}")
-                return None
-            if abs(sl - live_price) / live_price > 0.1:
-                logging.warning(f"Stop loss too far from market for {symbol}: sl={sl}, live_price={live_price}")
-                return None
-            if abs(tp - live_price) / live_price > 0.3:
-                logging.warning(f"Take profit too far from market for {symbol}: tp={tp}, live_price={live_price}")
-                return None
-            rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
-            position_size = calculate_position_size(10000, 1, entry, sl)
-            signal_strength = "قوي" if score_long > 90 else "متوسط"
-            result = {
-                "نوع معامله": "Long",
-                "نماد": symbol,
-                "تایم‌فریم": tf,
-                "قیمت ورود": entry,
-                "حد ضرر": sl,
-                "هدف سود": tp,
-                "ریسک به ریوارد": np.float64(rr),
-                "حجم پوزیشن": position_size,
-                "سطح اطمینان": min(score_long, 100),
-                "امتیاز": score_long},
-                "قدرت سیگنال": signal_strength,
-                "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
-                "روانشناسی": psych_long,
-                "روند بازار": "صعودی",
-                "فاندامنتال": f"امتیز: {fundamental_score}",
-                "شاخص ترس و طمع": fng_index,
-                "روند 4h": trend_4h,
-                "قیمت فعلی بازار": live_price}
-            }
-            logging.info(f"Long signal generated for {symbol}: {result}")
-            return result
-        elif score_short >= THRESHOLD and trend_1d_score <= 0:
-            signal_type = "Short"
-            if support_4h > 0:
-                dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer if risk_buffer != 0 else 2.0)
-            logging.info(f"Dynamic RR for {symbol} (Short): RR={dynamic_rr:.6f}")
-            entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
-            if not entry_data:
-                logging.info(f"No entry point found for {symbol} Short in 15m")
-                return None
-            entry = entry_data["entry_price"]
-            sl = entry_data["sl"]
-            tp = entry_data["tp"]
-            live_price = await get_live_price(exchange, symbol)
-            if live_price is None:
-                logging.warning(f"No live price for {symbol}, skipping")
-                return None
-            price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
-            if price_diff > 0.01:
-                logging.warning(f"Entry price deviation too high for {symbol}: entry={entry}, live_price={live_price}, diff={price_diff}")
-                return None
-            if sl <= entry or tp >= entry:
-                logging.warning(f"Invalid SL or TP for {symbol}: entry={entry}, sl={sl}, tp={tp}")
-                return None
-            if abs(entry - live_price) / live_price > 0.01:
-                logging.warning(f"Entry price too far from market for {symbol}: entry={entry}, live_price={live_price}")
-                return None
-            if abs(sl - live_price) / live_price > 0.1:
-                logging.warning(f"Stop loss too far from market for {symbol}: sl={sl}, live_price={live_price}")
-                return None
-            if abs(tp - live_price) / live_price > 0.3:
-                logging.warning(f"Take profit too far from market for {symbol}: tp={tp}, live_price={live_price}")
-                return None
-            rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
-            position_size = calculate_position_size(10000, 1, entry, sl)
-            signal_strength = "قوي" if score_short > 90 else "متوسط"
-            result = {
-                "نوع معامله": "Short",
-                "نماد": symbol,
-                "تایم‌فریم": tf,
-                "قیمت ورود": entry,
-                "حد ضرر": sl,
-                "هدف سود": tp,
-                "ریسک به ریوارد": np.float64(rr),
-                "حجم پوزیشن": position_size,
-                "سطح اطمینان": min(score_short, 100),
-                "امتیز": score_short,
-                "قدرت سیگنال": signal_strength,
-                "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
-                "روانشناسی": psych_short,
-                "روند بازار": "نزولي",
-                "فاندامنتال": f"امتیز: {fundamental_score}",
-                "شاخص ترس و طمع": fng_index,
-                "روند 4h": trend_4h,
-                "قیمت فعلی بازار": live_price}
-            }
-            logging.info(f"Short signal generated for {symbol}: {result}")
-            return result}
-        else:
-            logging.info(f"No signal generated for {symbol}: score_long={score_long}, score_short={score_short}, threshold={THRESHOLD}")
-            return None
-    except Exception as e:
-        logging.error(f"Error processing {symbol} @ {tf}: {e}, traceback={str(traceback.format_exc())}")
+        # تولید سیگنال Long
+if score_long >= THRESHOLD and trend_1d_score >= 0:
+    signal_type = "Long"
+    if support_4h > 0:
+        dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer if risk_buffer != 0 else 2.0)
+    logging.info(f"Dynamic RR ratio for {symbol} (Long): RR={dynamic_rr:.6f}")
+    entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
+    if not entry_data:
+        logging.info(f"No entry point found for {symbol} Long in 15m")
         return None
-    finally:
-        elapsed_time = time.time() - start_time
-        logging.info(f"Analysis completed for {symbol} @ {tf} in {elapsed_time:.2f}s")
+    entry = entry_data["entry_price"]
+    sl = entry_data["sl"]
+    tp = entry_data["tp"]
+    live_price = await get_live_price(exchange, symbol)
+    if live_price is None:
+        logging.warning(f"No live price for {symbol}, skipping")
+        return None
+    price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
+    if price_diff > 0.01:
+        logging.warning(f"Entry price deviation too high for {symbol}: entry={entry}, live_price={live_price}, diff={price_diff:.4f}")
+        return None
+    if sl >= entry or tp <= entry:
+        logging.warning(f"Invalid SL or TP for {symbol}: entry={entry}, sl={sl}, tp={tp}")
+        return None
+    if abs(entry - live_price) / live_price > 0.01:
+        logging.warning(f"Entry price too far from market for {symbol}: entry={entry}, live_price={live_price}")
+        return None
+    if abs(sl - live_price) / live_price > 0.1:
+        logging.warning(f"Stop loss too far from market for {symbol}: sl={sl}, live_price={live_price}")
+        return None
+    if abs(tp - live_price) / live_price > 0.3:
+        logging.warning(f"Take profit too far from market for {symbol}: tp={tp}, live_price={live_price}")
+        return None
+    rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
+    position_size = calculate_position_size(10000, 1, entry, sl)
+    signal_strength = "قوي" if score_long > 90 else "متوسط"
+    result = {
+        "نوع معامله": "Long",
+        "نماد": symbol,
+        "تایم‌فریم": tf,
+        "قیمت ورود": entry,
+        "حد ضرر": sl,
+        "هدف سود": tp,
+        "ریسک به ریوارد": np.float64(rr),
+        "حجم پوزیشن": position_size,
+        "سطح اطمینان": min(score_long, 100),
+        "امتیز": score_long,
+        "قدرت سیگنال": signal_strength,
+        "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
+        "روانشناسی": psych_long,
+        "روند بازار": "صعودی",
+        "فاندامنتال": f"امتیز: {fundamental_score}",
+        "شاخص ترس و طمع": fng_index,
+        "روند 4h": trend_4h,
+        "قیمت فعلی بازار": live_price
+    }
+    logging.info(f"Long signal generated for {symbol}: {result}")
+    return result
+
+# تولید سیگنال Short
+elif score_short >= THRESHOLD and trend_1d_score <= 0:
+    signal_type = "Short"
+    if support_4h > 0:
+        dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer if risk_buffer != 0 else 2.0)
+    logging.info(f"Dynamic RR for {symbol} (Short): RR={dynamic_rr:.6f}")
+    entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h)
+    if not entry_data:
+        logging.info(f"No entry point found for {symbol} Short in 15m")
+        return None
+    entry = entry_data["entry_price"]
+    sl = entry_data["sl"]
+    tp = entry_data["tp"]
+    live_price = await get_live_price(exchange, symbol)
+    if live_price is None:
+        logging.warning(f"No live price for {symbol}, skipping")
+        return None
+    price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
+    if price_diff > 0.01:
+        logging.warning(f"Entry price deviation too high for {symbol}: entry={entry}, live_price={live_price}, diff={price_diff}")
+        return None
+    if sl <= entry or tp >= entry:
+        logging.warning(f"Invalid SL or TP for {symbol}: entry={entry}, sl={sl}, tp={tp}")
+        return None
+    if abs(entry - live_price) / live_price > 0.01:
+        logging.warning(f"Entry price too far from market for {symbol}: entry={entry}, live_price={live_price}")
+        return None
+    if abs(sl - live_price) / live_price > 0.1:
+        logging.warning(f"Stop loss too far from market for {symbol}: sl={sl}, live_price={live_price}")
+        return None
+    if abs(tp - live_price) / live_price > 0.3:
+        logging.warning(f"Take profit too far from market for {symbol}: tp={tp}, live_price={live_price}")
+        return None
+    rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
+    position_size = calculate_position_size(10000, 1, entry, sl)
+    signal_strength = "قوي" if score_short > 90 else "متوسط"
+    result = {
+        "نوع معامله": "Short",
+        "نماد": symbol,
+        "تایم‌فریم": tf,
+        "قیمت ورود": entry,
+        "حد ضرر": sl,
+        "هدف سود": tp,
+        "ریسک به ریوارد": np.float64(rr),
+        "حجم پوزیشن": position_size,
+        "سطح اطمینان": min(score_short, 100),
+        "امتیز": score_short,
+        "قدرت سیگنال": signal_strength,
+        "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
+        "روانشناسی": psych_short,
+        "روند بازار": "نزولي",
+        "فاندامنتال": f"امتیز: {fundamental_score}",
+        "شاخص ترس و طمع": fng_index,
+        "روند 4h": trend_4h,
+        "قیمت فعلی بازار": live_price
+    }
+    logging.info(f"Short signal generated for {symbol}: {result}")
+    return result
+
+else:
+    logging.info(f"No signal generated for {symbol}: score_long={score_long}, score_short={score_short}, threshold={THRESHOLD}")
+    return None
+```
 
 # تابع مدیریت استاپ متحرک
 async def manage_trailing_stop(exchange: AsyncExchange, symbol: str, entry_price: float, sl: float, signal_type: str, trail_percentage: float = 0.5):
