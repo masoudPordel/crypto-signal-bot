@@ -609,11 +609,11 @@ async def find_entry_point(
             })
             return None
 
-        log_debug(f"✅ سیگنال تأیید شد: Entry={entry_price:.4f}, SL={sl:.4f}, TP={tp:.4f}, RR={rr:.2f}")
+        log_debug(f"✅ سیگنال تأیید شد: Entry={entry_price}, SL={sl}, TP={tp}, RR={rr:.2f}")
         return {
-            "entry_price": round(entry_price, 4),
-            "sl": round(sl, 4),
-            "tp": round(tp, 4)
+            "entry_price": entry_price,
+            "sl": sl,
+            "tp": tp
         }
 
     except Exception as e:
