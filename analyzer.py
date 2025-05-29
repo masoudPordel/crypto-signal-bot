@@ -631,39 +631,22 @@ async def find_entry_point(
                 logging.error(f"⚠️ خطای بحرانی در بررسی سیگنال {symbol}: {str(e)}")
                 return None
                 
-# تابع مدیریت trailing stopasync def manage_trailing_stop(async def manage_trailing_stop(async def manage_trailing_stop(
-        exchange: ccxt.Exchange,
-        symbol: str,
-        entry_price: float,
-        sl: float,
-        signal_type: str,
-        trail_percentage: float = 0.5,
-        check_interval: int = 300
-):
-        logging.info(f"🎯 شروع Trailing Stop برای {symbol} ({signal_type}) | ورود={entry_price} | SL اولیه={sl}")
-        while True:
-                live_price = await get_live_price(exchange, symbol)
-                if live_price is None:
-                        logging.warning(f"⛔ قیمت واقعی برای {symbol} دریافت نشد، {check_interval} ثانیه صبر می‌کنم")
-                        await asyncio.sleep(check_interval)
-                        continue
-
-                # بررسی فعال شدن حد ضرر
-                if (signal_type == "Long" and live_price <= sl) or (signal_type == "Short" and live_price >= sl):
-                        logging.info(f"❌ حد ضرر فعال شد برای {symbol} | قیمت فعلی: {live_price} | SL: {sl}")
-                        break
-
-                # بروزرسانی حد ضرر
-                if (live_price > entry_price and signal_type == "Long") or (live_price < entry_price and signal_type == "Short"):
-                        trail_amount = max(live_price * (trail_percentage / 100), 0.05)  # حداقل trail
-                        new_sl = live_price - trail_amount if signal_type == "Long" else live_price + trail_amount
-                        if (signal_type == "Long" and new_sl > sl) or (signal_type == "Short" and new_sl < sl):
-                                sl = new_sl
-                                logging.info(f"🔄 SL به‌روزرسانی شد: SL جدید = {sl:.4f}, قیمت فعلی = {live_price:.4f}")
-                                # مثال: ذخیره در دیتابیس یا API
-                                # await update_sl(symbol, sl)
-
-                await asyncio.sleep(check_interval)
+# تابع مدیریت trailing stop
+async def manage_trailing_stop(exchange: ccxt.Exchange, symbol: str, entry_price: float, sl: float, signal_type: str, trail_percentage: float = 0.5):
+    logging.info(f"شروع Trailing Stop برای {symbol} با نوع سیگنال {signal_type}, ورود={entry_price}, SL اولیه={sl}")
+    while True:
+        live_price = await get_live_price(exchange, symbol)
+        if live_price is None:
+            logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، 60 ثانیه صبر می‌کنم")
+            await asyncio.sleep(60)
+            continue
+        if (live_price > entry_price and signal_type == "Long") or (live_price < entry_price and signal_type == "Short"):
+            trail_amount = live_price * (trail_percentage / 100)
+            new_sl = live_price - trail_amount if signal_type == "Long" else live_price + trail_amount
+            if (signal_type == "Long" and new_sl > sl) or (signal_type == "Short" and new_sl < sl):
+                sl = new_sl
+                logging.info(f"Trailing Stop برای {symbol} به‌روزرسانی شد: SL={sl}, Live Price={live_price}")
+        await asyncio.sleep(300)  # چک هر 5 دقیقه
                 
                 # تابع تأیید مولتی تایم‌فریم
 async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, base_tf: str) -> float:
