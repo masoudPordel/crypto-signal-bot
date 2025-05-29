@@ -490,95 +490,119 @@ async def find_scalp_entry_futures(
     resistance: float,
     debug_mode: bool = True
 ) -> Optional[Dict]:
+    import logging
+
     def log_debug(msg):
         if debug_mode:
-            logging.info(f"[DEBUG] {msg}")
+            logging.info(f"[دیباگ] {symbol}: {msg}")
 
     def log_rejection(reason, details=None):
         if debug_mode:
-            logging.info(f"[REJECTED] {symbol} | {reason} | {details or {}}")
+            logging.info(f"[رد شده] {symbol} | دلیل: {reason} | جزییات: {details or {}}")
 
     try:
-        # --- تایید روند در 1h ---
+        log_debug("شروع بررسی روند کلی تایم‌فریم ۱ ساعته")
+
+        # دریافت داده‌های ۱ ساعته و محاسبه اندیکاتورها
         df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
         if df_1h is None or len(df_1h) < 30:
-            log_rejection("1h_data_insufficient")
+            log_rejection("داده‌های تایم‌فریم ۱ ساعته ناکافی")
             return None
 
         df_1h = compute_indicators(df_1h)
+        last_1h = df_1h.iloc[-1].to_dict()
         atr_1h = df_1h["ATR"].iloc[-1]
         volume_mean_1h = df_1h["volume"].rolling(20).mean().iloc[-1]
-        last_1h = df_1h.iloc[-1].to_dict()
 
-        # بررسی روند کلی
         if signal_type == "Long" and last_1h["close"] < last_1h["open"]:
-            log_rejection("1h_trend_not_bullish")
+            log_rejection("روند ۱ ساعته صعودی نیست")
             return None
         if signal_type == "Short" and last_1h["close"] > last_1h["open"]:
-            log_rejection("1h_trend_not_bearish")
+            log_rejection("روند ۱ ساعته نزولی نیست")
             return None
 
-        # --- بررسی ورود دقیق در 15m ---
+        log_debug("روند کلی تایم‌فریم ۱ ساعته تایید شد")
+
+        # دریافت داده‌های ۱۵ دقیقه برای ورود دقیق‌تر
+        log_debug("شروع بررسی تایم‌فریم ۱۵ دقیقه برای ورود")
+
         df_15m = await get_ohlcv_cached(exchange, symbol, "15m")
         if df_15m is None or len(df_15m) < 20:
-            log_rejection("15m_data_insufficient")
+            log_rejection("داده‌های تایم‌فریم ۱۵ دقیقه ناکافی")
             return None
 
         df_15m = compute_indicators(df_15m)
-        last = df_15m.iloc[-1].to_dict()
-        prev = df_15m.iloc[-2].to_dict()
+        last_15m = df_15m.iloc[-1].to_dict()
+        prev_15m = df_15m.iloc[-2].to_dict()
 
         live_price = await get_live_price(exchange, symbol)
         if live_price is None:
-            log_rejection("live_price_missing")
+            log_rejection("قیمت لحظه‌ای در دسترس نیست")
             return None
 
         atr_15m = df_15m["ATR"].iloc[-1]
         volume_mean_15m = df_15m["volume"].rolling(20).mean().iloc[-1]
 
-        # الگوهای کندلی قوی
+        # محاسبه امتیاز الگوهای کندلی قوی
         pattern_score = 0
-        if last.get("Engulfing"): pattern_score += 1
-        if last.get("Hammer"): pattern_score += 1
-        if last.get("Doji"): pattern_score += 0.5
-        if last.get("PinBar"): pattern_score += 1
-        if prev["volume"] > volume_mean_15m and (
-            (signal_type == "Long" and prev["close"] > prev["open"]) or
-            (signal_type == "Short" and prev["close"] < prev["open"])
-        ):
+        if last_15m.get("Engulfing"):
+            pattern_score += 1
+            log_debug("الگوی Engulfing شناسایی شد")
+        if last_15m.get("Hammer"):
+            pattern_score += 1
+            log_debug("الگوی Hammer شناسایی شد")
+        if last_15m.get("Doji"):
             pattern_score += 0.5
+            log_debug("الگوی Doji شناسایی شد")
+        if last_15m.get("PinBar"):
+            pattern_score += 1
+            log_debug("الگوی PinBar شناسایی شد")
+
+        # تایید کندل قبلی با حجم بالا و جهت مناسب
+        if prev_15m["volume"] > volume_mean_15m:
+            if signal_type == "Long" and prev_15m["close"] > prev_15m["open"]:
+                pattern_score += 0.5
+                log_debug("کندل قبلی تأیید کننده روند صعودی با حجم بالا است")
+            if signal_type == "Short" and prev_15m["close"] < prev_15m["open"]:
+                pattern_score += 0.5
+                log_debug("کندل قبلی تأیید کننده روند نزولی با حجم بالا است")
 
         if pattern_score < 1.5:
-            log_rejection("weak_15m_pattern", {"score": pattern_score})
+            log_rejection("الگوهای کندلی ضعیف هستند", {"امتیاز": pattern_score})
             return None
 
         entry = live_price
         sl, tp = None, None
 
-        # تعیین SL و TP در تایم‌فریم 15 دقیقه
+        # تعیین حد ضرر و حد سود بر اساس ATR تایم‌فریم ۱۵ دقیقه
         if signal_type == "Long":
             sl = entry - atr_15m * 0.8
-            tp = entry + (entry - sl) * 1.7  # RR حدود 1.7
+            tp = entry + (entry - sl) * 1.7
+            log_debug(f"ورود لانگ: Entry={entry}, SL={sl}, TP={tp}")
         elif signal_type == "Short":
             sl = entry + atr_15m * 0.8
             tp = entry - (sl - entry) * 1.7
+            log_debug(f"ورود شورت: Entry={entry}, SL={sl}, TP={tp}")
         else:
-            log_rejection("invalid_signal_type")
+            log_rejection("نوع سیگنال نامعتبر است", {"signal_type": signal_type})
             return None
 
-        # چک نهایی نسبت RR
         rr = abs(tp - entry) / abs(entry - sl)
         if rr < 1.3:
-            log_rejection("rr_too_low", {"RR": rr})
+            log_rejection("نسبت ریسک به ریوارد کمتر از حد مجاز است", {"RR": rr})
             return None
 
-        log_debug(f"✅ SCALP ENTRY | Entry={entry}, SL={sl}, TP={tp}, RR={rr:.2f}")
+        log_debug(f"✅ سیگنال تأیید شد | Entry={entry} | SL={sl} | TP={tp} | RR={rr:.2f}")
+
         return {
             "entry_price": entry,
             "sl": sl,
             "tp": tp
         }
 
+    except Exception as e:
+        logging.error(f"⚠️ خطای بحرانی در بررسی سیگنال {symbol}: {str(e)}")
+        return None
     except Exception as e:
         logging.error(f"⚠️ Exception in find_scalp_entry_futures: {str(e)}")
         return None
