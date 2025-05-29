@@ -482,7 +482,7 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
     logging.error(f"ناتوانی در دریافت قیمت برای {symbol} پس از {max_attempts} تلاش")
     return None
 
-async def find_scalp_entry_futures(
+async def find_entry_point(
     exchange: ccxt.Exchange,
     symbol: str,
     signal_type: str,
