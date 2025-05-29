@@ -14,3 +14,4 @@ asyncio>=3.4.3
 imbalanced-learn>=0.10.0
 shap>=0.41.0
 matplotlib
+ta
