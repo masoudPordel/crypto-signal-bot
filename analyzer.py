@@ -631,7 +631,7 @@ async def find_entry_point(
                 logging.error(f"⚠️ خطای بحرانی در بررسی سیگنال {symbol}: {str(e)}")
                 return None
                 
-# تابع مدیریت trailing stopasync def manage_trailing_stop(async def manage_trailing_stop(
+# تابع مدیریت trailing stopasync def manage_trailing_stop(async def manage_trailing_stop(async def manage_trailing_stop(
         exchange: ccxt.Exchange,
         symbol: str,
         entry_price: float,
@@ -665,7 +665,7 @@ async def find_entry_point(
 
                 await asyncio.sleep(check_interval)
                 
-# تابع تأیید مولتی تایم‌فریم
+                # تابع تأیید مولتی تایم‌فریم
 async def multi_timeframe_confirmation(exchange: ccxt.Exchange, symbol: str, base_tf: str) -> float:
     weights = {"1d": 0.4, "4h": 0.3, "1h": 0.2, "15m": 0.1}
     total_weight = 0
