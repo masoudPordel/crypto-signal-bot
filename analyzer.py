@@ -482,155 +482,107 @@ async def get_live_price(exchange: ccxt.Exchange, symbol: str, max_attempts: int
     logging.error(f"ناتوانی در دریافت قیمت برای {symbol} پس از {max_attempts} تلاش")
     return None
 
-async def find_entry_point(
-        exchange: ccxt.Exchange,
-        symbol: str,
-        signal_type: str,
-        support: float,
-        resistance: float,
-        confirm_next_candle: bool = False,
-        debug_mode: bool = True
+async def find_scalp_entry_futures(
+    exchange: ccxt.Exchange,
+    symbol: str,
+    signal_type: str,
+    support: float,
+    resistance: float,
+    debug_mode: bool = True
 ) -> Optional[Dict]:
-        def log_debug(message):
-                if debug_mode:
-                        logging.info(message)
+    def log_debug(msg):
+        if debug_mode:
+            logging.info(f"[DEBUG] {msg}")
 
-        def log_rejection(reason: str, details: dict = None):
-                if debug_mode:
-                        logging.info(f"[REJECTED] {symbol} | reason={reason} | details={details or {}}")
+    def log_rejection(reason, details=None):
+        if debug_mode:
+            logging.info(f"[REJECTED] {symbol} | {reason} | {details or {}}")
 
-        try:
-                log_debug(f"🔍 شروع بررسی سیگنال برای {symbol} ({signal_type})")
+    try:
+        # --- تایید روند در 1h ---
+        df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
+        if df_1h is None or len(df_1h) < 30:
+            log_rejection("1h_data_insufficient")
+            return None
 
-                df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
-                if df_1h is None or len(df_1h) < 30:
-                        log_rejection("insufficient_data_1h", {"length": len(df_1h) if df_1h is not None else 0})
-                        return None
+        df_1h = compute_indicators(df_1h)
+        atr_1h = df_1h["ATR"].iloc[-1]
+        volume_mean_1h = df_1h["volume"].rolling(20).mean().iloc[-1]
+        last_1h = df_1h.iloc[-1].to_dict()
 
-                df_1h = compute_indicators(df_1h)
-                last = df_1h.iloc[-1].to_dict()
-                prev = df_1h.iloc[-2].to_dict() if len(df_1h) > 1 else None
+        # بررسی روند کلی
+        if signal_type == "Long" and last_1h["close"] < last_1h["open"]:
+            log_rejection("1h_trend_not_bullish")
+            return None
+        if signal_type == "Short" and last_1h["close"] > last_1h["open"]:
+            log_rejection("1h_trend_not_bearish")
+            return None
 
-                live_price = await get_live_price(exchange, symbol)
-                if live_price is None:
-                        log_rejection("live_price_missing")
-                        return None
+        # --- بررسی ورود دقیق در 15m ---
+        df_15m = await get_ohlcv_cached(exchange, symbol, "15m")
+        if df_15m is None or len(df_15m) < 20:
+            log_rejection("15m_data_insufficient")
+            return None
 
-                atr = df_1h["ATR"].iloc[-1]
-                atr_mean = df_1h["ATR"].rolling(20).mean().iloc[-1]
-                price_diff = abs(live_price - last["close"])
-                if price_diff > atr * 1.2:
-                        log_rejection("price_mismatch", {
-                                "live_price": live_price,
-                                "candle_price": last["close"],
-                                "ATR": atr,
-                                "diff": price_diff
-                        })
-                        return None
+        df_15m = compute_indicators(df_15m)
+        last = df_15m.iloc[-1].to_dict()
+        prev = df_15m.iloc[-2].to_dict()
 
-                volume_mean = df_1h["volume"].rolling(20).mean().iloc[-1]
-                volume_ok = last["volume"] > volume_mean * 0.5 or atr > atr_mean * 1.2
-                if not volume_ok:
-                        log_rejection("low_volume_or_atr", {
-                                "current_volume": last["volume"],
-                                "volume_threshold": volume_mean * 0.5,
-                                "atr": atr,
-                                "atr_threshold": atr_mean * 1.2
-                        })
-                        return None
+        live_price = await get_live_price(exchange, symbol)
+        if live_price is None:
+            log_rejection("live_price_missing")
+            return None
 
-                pattern_score = 0
-                if last.get("Engulfing"): pattern_score += 1
-                if last.get("Hammer"): pattern_score += 1
-                if last.get("Doji"): pattern_score += 0.5
-                if last.get("PinBar"): pattern_score += 1
+        atr_15m = df_15m["ATR"].iloc[-1]
+        volume_mean_15m = df_15m["volume"].rolling(20).mean().iloc[-1]
 
-                if confirm_next_candle and prev:
-                        if signal_type == "Long" and prev["close"] > prev["open"] and prev["volume"] > volume_mean:
-                                pattern_score += 0.5
-                        if signal_type == "Short" and prev["close"] < prev["open"] and prev["volume"] > volume_mean:
-                                pattern_score += 0.5
+        # الگوهای کندلی قوی
+        pattern_score = 0
+        if last.get("Engulfing"): pattern_score += 1
+        if last.get("Hammer"): pattern_score += 1
+        if last.get("Doji"): pattern_score += 0.5
+        if last.get("PinBar"): pattern_score += 1
+        if prev["volume"] > volume_mean_15m and (
+            (signal_type == "Long" and prev["close"] > prev["open"]) or
+            (signal_type == "Short" and prev["close"] < prev["open"])
+        ):
+            pattern_score += 0.5
 
-                log_debug(f"📊 امتیاز الگوها برای {symbol}: {pattern_score:.1f}")
-                if pattern_score < 1.5:
-                        log_rejection("weak_pattern", {
-                                "pattern_score": pattern_score,
-                                "min_required": 1.5
-                        })
-                        return None
+        if pattern_score < 1.5:
+            log_rejection("weak_15m_pattern", {"score": pattern_score})
+            return None
 
-                if support is None or resistance is None or support <= 0 or resistance <= 0:
-                        log_rejection("invalid_support_resistance", {
-                                "support": support,
-                                "resistance": resistance
-                        })
-                        return None
+        entry = live_price
+        sl, tp = None, None
 
-                recent_close = df_1h["close"].iloc[-1]
-                if signal_type == "Long" and recent_close < support * 0.97:
-                        log_rejection("support_broken", {
-                                "recent_close": recent_close,
-                                "support": support
-                        })
-                        return None
-                if signal_type == "Short" and recent_close > resistance * 1.03:
-                        log_rejection("resistance_broken", {
-                                "recent_close": recent_close,
-                                "resistance": resistance
-                        })
-                        return None
+        # تعیین SL و TP در تایم‌فریم 15 دقیقه
+        if signal_type == "Long":
+            sl = entry - atr_15m * 0.8
+            tp = entry + (entry - sl) * 1.7  # RR حدود 1.7
+        elif signal_type == "Short":
+            sl = entry + atr_15m * 0.8
+            tp = entry - (sl - entry) * 1.7
+        else:
+            log_rejection("invalid_signal_type")
+            return None
 
-                entry_price = live_price
-                sl = None
-                tp = None
+        # چک نهایی نسبت RR
+        rr = abs(tp - entry) / abs(entry - sl)
+        if rr < 1.3:
+            log_rejection("rr_too_low", {"RR": rr})
+            return None
 
-                if signal_type == "Long":
-                        if not (support < entry_price < resistance):
-                                log_rejection("long_not_in_range", {
-                                        "price": entry_price,
-                                        "support": support,
-                                        "resistance": resistance
-                                })
-                                return None
-                        sl = support * 0.99
-                        tp_candidate = entry_price + (entry_price - sl) * 2.5
-                        tp = min(tp_candidate, resistance * 0.98)
+        log_debug(f"✅ SCALP ENTRY | Entry={entry}, SL={sl}, TP={tp}, RR={rr:.2f}")
+        return {
+            "entry_price": entry,
+            "sl": sl,
+            "tp": tp
+        }
 
-                elif signal_type == "Short":
-                        if not (support < entry_price < resistance):
-                                log_rejection("short_not_in_range", {
-                                        "price": entry_price,
-                                        "support": support,
-                                        "resistance": resistance
-                                })
-                                return None
-                        sl = resistance * 1.01
-                        tp_candidate = entry_price - (sl - entry_price) * 2.5
-                        tp = max(tp_candidate, support * 1.02)
-
-                else:
-                        log_rejection("invalid_signal_type", {"signal_type": signal_type})
-                        return None
-
-                rr = abs(tp - entry_price) / abs(entry_price - sl)
-                if rr < 1.3:
-                        log_rejection("rr_too_low", {
-                                "RR": rr,
-                                "min_required": 1.3
-                        })
-                        return None
-
-                log_debug(f"✅ سیگنال تأیید شد: Entry={entry_price}, SL={sl}, TP={tp}, RR={rr:.2f}")
-                return {
-                        "entry_price": round(entry_price, 4),
-                        "sl": round(sl, 4),
-                        "tp": round(tp, 4)
-                }
-
-        except Exception as e:
-                logging.error(f"⚠️ خطای بحرانی در بررسی سیگنال {symbol}: {str(e)}")
-                return None
-                
+    except Exception as e:
+        logging.error(f"⚠️ Exception in find_scalp_entry_futures: {str(e)}")
+        return None
+                        
 # تابع مدیریت trailing stop
 async def manage_trailing_stop(exchange: ccxt.Exchange, symbol: str, entry_price: float, sl: float, signal_type: str, trail_percentage: float = 0.5):
     logging.info(f"شروع Trailing Stop برای {symbol} با نوع سیگنال {signal_type}, ورود={entry_price}, SL اولیه={sl}")
