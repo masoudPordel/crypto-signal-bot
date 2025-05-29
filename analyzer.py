@@ -5,6 +5,7 @@ os.environ["LC_ALL"] = "en_US.UTF-8"
 import requests
 import pandas as pd
 import numpy as np
+import ta
 from scipy.signal import argrelextrema
 import ccxt.async_support as ccxt
 import asyncio
