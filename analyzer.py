@@ -631,7 +631,7 @@ async def find_entry_point(
                 logging.error(f"⚠️ خطای بحرانی در بررسی سیگنال {symbol}: {str(e)}")
                 return None
                 
-# تابع مدیریت trailing stopasync def manage_trailing_stop(
+# تابع مدیریت trailing stopasync def manage_trailing_stop(async def manage_trailing_stop(
         exchange: ccxt.Exchange,
         symbol: str,
         entry_price: float,
