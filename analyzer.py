@@ -91,6 +91,7 @@ def get_fear_and_greed_index() -> int:
         return 50
 
 # کلاس محاسبه اندیکاتورها
+class IndicatorCalculator:
     @staticmethod
     def compute_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
         delta = df["close"].diff()
