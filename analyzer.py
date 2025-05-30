@@ -262,6 +262,16 @@ class IndicatorCalculator:
                 df['ma_short'] = df['close'].rolling(window=window_short).mean()
                 df['ma_long'] = df['close'].rolling(window=window_long).mean()
                 return df
+
+class IndicatorCalculator:
+        @staticmethod
+        def compute_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
+                delta = df["close"].diff()
+                gain = delta.where(delta > 0, 0).rolling(period).mean()
+                loss = -delta.where(delta < 0, 0).rolling(period).mean()
+                rs = gain / loss.replace(0, 1e-10)
+                rsi = 100 - (100 / (1 + rs))
+                return rsi
                 
 # کلاس فیلتر سیگنال
 class SignalFilter:
