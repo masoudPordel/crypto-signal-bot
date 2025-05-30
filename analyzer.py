@@ -347,7 +347,53 @@ class PatternDetector:
                         )
 
                 return bullish_divergence, bearish_divergence
-                
+
+        @staticmethod
+        def detect_head_and_shoulders(df: pd.DataFrame, window: int = 20) -> pd.Series:
+                is_head_and_shoulders = pd.Series([False] * len(df), index=df.index)
+                try:
+                        highs = argrelextrema(df['high'].values, np.greater, order=5)[0]
+                        lows = argrelextrema(df['low'].values, np.less, order=5)[0]
+                        for i in range(len(highs) - 2):
+                                left_shoulder = df['high'].iloc[highs[i]]
+                                head = df['high'].iloc[highs[i+1]]
+                                right_shoulder = df['high'].iloc[highs[i+2]]
+                                if head > left_shoulder and head > right_shoulder:
+                                        neckline_lows = lows[(lows > highs[i]) & (lows < highs[i+2])]
+                                        if len(neckline_lows) >= 2:
+                                                is_head_and_shoulders.iloc[highs[i+2]] = True
+                except Exception as e:
+                        logging.error(f"خطا در تشخیص سر و شانه: {str(e)}")
+                return is_head_and_shoulders
+
+        @staticmethod
+        def detect_double_top(df: pd.DataFrame, window: int = 20) -> pd.Series:
+                is_double_top = pd.Series([False] * len(df), index=df.index)
+                try:
+                        highs = argrelextrema(df['high'].values, np.greater, order=5)[0]
+                        for i in range(len(highs) - 1):
+                                first_top = df['high'].iloc[highs[i]]
+                                second_top = df['high'].iloc[highs[i+1]]
+                                if abs(first_top - second_top) / first_top < 0.02:
+                                        is_double_top.iloc[highs[i+1]] = True
+                except Exception as e:
+                        logging.error(f"خطا در تشخیص دابل تاپ: {str(e)}")
+                return is_double_top
+
+        @staticmethod
+        def detect_double_bottom(df: pd.DataFrame, window: int = 20) -> pd.Series:
+                is_double_bottom = pd.Series([False] * len(df), index=df.index)
+                try:
+                        lows = argrelextrema(df['low'].values, np.less, order=5)[0]
+                        for i in range(len(lows) - 1):
+                                first_bottom = df['low'].iloc[lows[i]]
+                                second_bottom = df['low'].iloc[lows[i+1]]
+                                if abs(first_bottom - second_bottom) / first_bottom < 0.02:
+                                        is_double_bottom.iloc[lows[i+1]] = True
+                except Exception as e:
+                        logging.error(f"خطا در تشخیص دابل باتم: {str(e)}")
+                return is_double_bottom
+                                
 # کلاس فیلتر سیگنال
 class SignalFilter:
     def __init__(self):
