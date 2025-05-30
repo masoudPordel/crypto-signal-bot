@@ -100,13 +100,15 @@ class IndicatorCalculator:
         rs = gain / loss.replace(0, 1e-10)
         rsi = 100 - (100 / (1 + rs))
         return rsi
-
+        
+class IndicatorCalculator:
     @staticmethod
     def compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
         tr = pd.concat([df["high"] - df["low"], abs(df["high"] - df["close"].shift()), abs(df["low"] - df["close"].shift())], axis=1).max(axis=1)
         atr = tr.rolling(period).mean()
         return atr
-
+        
+class IndicatorCalculator:
     @staticmethod
     def compute_bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float = 2) -> tuple:
         sma = df["close"].rolling(period).mean()
@@ -114,7 +116,8 @@ class IndicatorCalculator:
         upper = sma + std_dev * std
         lower = sma - std_dev * std
         return upper, lower
-
+        
+class IndicatorCalculator:
     @staticmethod
     def compute_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
         df["up"] = df["high"].diff()
@@ -128,14 +131,16 @@ class IndicatorCalculator:
         dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
         adx = dx.rolling(window=period).mean()
         return adx
-
+        
+class IndicatorCalculator:
     @staticmethod
     def compute_stochastic(df: pd.DataFrame, period: int = 14) -> pd.Series:
         low_min = df["low"].rolling(window=period).min()
         high_max = df["high"].rolling(window=period).max()
         k = 100 * (df["close"] - low_min) / (high_max - low_min).replace(0, 1e-10)
         return k
-
+        
+class IndicatorCalculator:
     @staticmethod
     def compute_mfi(df: pd.DataFrame, period: int = 14) -> pd.Series:
         typical_price = (df['high'] + df['low'] + df['close']) / 3
