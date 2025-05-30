@@ -90,67 +90,74 @@ def get_fear_and_greed_index() -> int:
         logging.error(f"خطا در دریافت شاخص ترس و طمع: {e}")
         return 50
 
-# کلاس محاسبه اندیکاتورها
 class IndicatorCalculator:
-    @staticmethod
-    def compute_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
-        delta = df["close"].diff()
-        gain = delta.where(delta > 0, 0).rolling(period).mean()
-        loss = -delta.where(delta < 0, 0).rolling(period).mean()
-        rs = gain / loss.replace(0, 1e-10)
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
-        
-class IndicatorCalculator:
-    @staticmethod
-    def compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-        tr = pd.concat([df["high"] - df["low"], abs(df["high"] - df["close"].shift()), abs(df["low"] - df["close"].shift())], axis=1).max(axis=1)
-        atr = tr.rolling(period).mean()
-        return atr
-        
-class IndicatorCalculator:
-    @staticmethod
-    def compute_bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float = 2) -> tuple:
-        sma = df["close"].rolling(period).mean()
-        std = df["close"].rolling(period).std()
-        upper = sma + std_dev * std
-        lower = sma - std_dev * std
-        return upper, lower
-        
-class IndicatorCalculator:
-    @staticmethod
-    def compute_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
-        df["up"] = df["high"].diff()
-        df["down"] = -df["low"].diff()
-        df["+DM"] = np.where((df["up"] > df["down"]) & (df["up"] > 0), df["up"], 0.0)
-        df["-DM"] = np.where((df["down"] > df["up"]) & (df["down"] > 0), df["down"], 0.0)
-        tr = pd.concat([df["high"] - df["low"], abs(df["high"] - df["close"].shift()), abs(df["low"] - df["close"].shift())], axis=1).max(axis=1)
-        tr_smooth = tr.rolling(window=period).sum()
-        plus_di = 100 * (df["+DM"].rolling(window=period).sum() / tr_smooth)
-        minus_di = 100 * (df["-DM"].rolling(window=period).sum() / tr_smooth)
-        dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
-        adx = dx.rolling(window=period).mean()
-        return adx
-        
-class IndicatorCalculator:
-    @staticmethod
-    def compute_stochastic(df: pd.DataFrame, period: int = 14) -> pd.Series:
-        low_min = df["low"].rolling(window=period).min()
-        high_max = df["high"].rolling(window=period).max()
-        k = 100 * (df["close"] - low_min) / (high_max - low_min).replace(0, 1e-10)
-        return k
-        
-class IndicatorCalculator:
-    @staticmethod
-    def compute_mfi(df: pd.DataFrame, period: int = 14) -> pd.Series:
-        typical_price = (df['high'] + df['low'] + df['close']) / 3
-        raw_money_flow = typical_price * df['volume']
-        positive_flow = raw_money_flow.where(typical_price > typical_price.shift(1), 0).rolling(period).sum()
-        negative_flow = raw_money_flow.where(typical_price < typical_price.shift(1), 0).rolling(period).sum()
-        mfi = 100 - (100 / (1 + positive_flow / negative_flow.replace(0, 1e-10)))
-        return mfi
+        @staticmethod
+        def compute_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
+                delta = df["close"].diff()
+                gain = delta.where(delta > 0, 0).rolling(period).mean()
+                loss = -delta.where(delta < 0, 0).rolling(period).mean()
+                rs = gain / loss.replace(0, 1e-10)
+                rsi = 100 - (100 / (1 + rs))
+                return rsi
 
-# کلاس تشخیص الگوها
+        @staticmethod
+        def compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+                tr = pd.concat([
+                        df["high"] - df["low"],
+                        abs(df["high"] - df["close"].shift()),
+                        abs(df["low"] - df["close"].shift())
+                ], axis=1).max(axis=1)
+                atr = tr.rolling(period).mean()
+                return atr
+
+        @staticmethod
+        def compute_bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float = 2) -> tuple:
+                sma = df["close"].rolling(period).mean()
+                std = df["close"].rolling(period).std()
+                upper = sma + std_dev * std
+                lower = sma - std_dev * std
+                return upper, lower
+
+        @staticmethod
+        def compute_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
+                df["up"] = df["high"].diff()
+                df["down"] = -df["low"].diff()
+                df["+DM"] = np.where((df["up"] > df["down"]) & (df["up"] > 0), df["up"], 0.0)
+                df["-DM"] = np.where((df["down"] > df["up"]) & (df["down"] > 0), df["down"], 0.0)
+                tr = pd.concat([
+                        df["high"] - df["low"],
+                        abs(df["high"] - df["close"].shift()),
+                        abs(df["low"] - df["close"].shift())
+                ], axis=1).max(axis=1)
+                tr_smooth = tr.rolling(window=period).sum()
+                plus_di = 100 * (df["+DM"].rolling(window=period).sum() / tr_smooth)
+                minus_di = 100 * (df["-DM"].rolling(window=period).sum() / tr_smooth)
+                dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+                adx = dx.rolling(window=period).mean()
+                return adx
+
+        @staticmethod
+        def compute_stochastic(df: pd.DataFrame, period: int = 14) -> pd.Series:
+                low_min = df["low"].rolling(window=period).min()
+                high_max = df["high"].rolling(window=period).max()
+                k = 100 * (df["close"] - low_min) / (high_max - low_min).replace(0, 1e-10)
+                return k
+
+        @staticmethod
+        def compute_mfi(df: pd.DataFrame, period: int = 14) -> pd.Series:
+                typical_price = (df['high'] + df['low'] + df['close']) / 3
+                raw_money_flow = typical_price * df['volume']
+                positive_flow = raw_money_flow.where(typical_price > typical_price.shift(1), 0).rolling(period).sum()
+                negative_flow = raw_money_flow.where(typical_price < typical_price.shift(1), 0).rolling(period).sum()
+                mfi = 100 - (100 / (1 + positive_flow / negative_flow.replace(0, 1e-10)))
+                return mfi
+
+        @staticmethod
+        def compute_moving_averages(df: pd.DataFrame, window_short: int = 9, window_long: int = 21) -> pd.DataFrame:
+                df['ma_short'] = df['close'].rolling(window=window_short).mean()
+                df['ma_long'] = df['close'].rolling(window=window_long).mean()
+                return df
+                
 class PatternDetector:
         @staticmethod
         def detect_pin_bar(df: pd.DataFrame) -> pd.Series:
@@ -158,15 +165,20 @@ class PatternDetector:
                 df["range"] = df["high"] - df["low"]
                 df["upper"] = df["high"] - df[["close", "open"]].max(axis=1)
                 df["lower"] = df[["close", "open"]].min(axis=1) - df["low"]
-                pin_bar = (df["body"] < 0.3 * df["range"]) & ((df["upper"] > 2 * df["body"]) | (df["lower"] > 2 * df["body"]))
+                pin_bar = (df["body"] < 0.3 * df["range"]) & (
+                        (df["upper"] > 2 * df["body"]) | (df["lower"] > 2 * df["body"]))
                 return pin_bar
 
         @staticmethod
         def detect_engulfing(df: pd.DataFrame) -> pd.Series:
                 prev_o = df["open"].shift(1)
                 prev_c = df["close"].shift(1)
-                engulfing = (((df["close"] > df["open"]) & (prev_c < prev_o) & (df["close"] > prev_o) & (df["open"] < prev_c)) |
-                             ((df["close"] < df["open"]) & (prev_c > prev_o) & (df["close"] < prev_o) & (df["open"] > prev_c)))
+                engulfing = (
+                        ((df["close"] > df["open"]) & (prev_c < prev_o) &
+                         (df["close"] > prev_o) & (df["open"] < prev_c)) |
+                        ((df["close"] < df["open"]) & (prev_c > prev_o) &
+                         (df["close"] < prev_o) & (df["open"] > prev_c))
+                )
                 return engulfing
 
         @staticmethod
@@ -182,8 +194,12 @@ class PatternDetector:
                 df["range"] = df["high"] - df["low"]
                 df["upper"] = df["high"] - df[["close", "open"]].max(axis=1)
                 df["lower"] = df[["close", "open"]].min(axis=1) - df["low"]
-                hammer = (df["body"] < 0.3 * df["range"]) & (df["lower"] > 2 * df["body"]) & \
-                         (df["upper"] < 0.5 * df["body"]) & (df["close"].shift(1) < df["close"].shift(2))
+                hammer = (
+                        (df["body"] < 0.3 * df["range"]) &
+                        (df["lower"] > 2 * df["body"]) &
+                        (df["upper"] < 0.5 * df["body"]) &
+                        (df["close"].shift(1) < df["close"].shift(2))
+                )
                 return hammer
 
         @staticmethod
@@ -193,8 +209,10 @@ class PatternDetector:
                 lows = argrelextrema(df['close'].values, np.less, order=5)[0]
                 df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
                 df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
+
                 df["WaveTrend"] = np.nan
                 df["WaveTrend"] = df["WaveTrend"].astype("object")
+
                 wave_points = df["WavePoint"].dropna().index
                 if len(wave_points) >= 5:
                         recent_points = df.loc[wave_points[-5:], "close"]
@@ -217,8 +235,14 @@ class PatternDetector:
                 resistance = pivot + (high - low) * 0.382
                 support = pivot - (high - low) * 0.382
 
-                recent_highs = df['high'][(df['high'].shift(1) < df['high']) & (df['high'].shift(-1) < df['high'])].iloc[-window:]
-                recent_lows = df['low'][(df['low'].shift(1) > df['low']) & (df['low'].shift(-1) > df['low'])].iloc[-window:]
+                recent_highs = df['high'][
+                        (df['high'].shift(1) < df['high']) &
+                        (df['high'].shift(-1) < df['high'])
+                ].iloc[-window:]
+                recent_lows = df['low'][
+                        (df['low'].shift(1) > df['low']) &
+                        (df['low'].shift(-1) > df['low'])
+                ].iloc[-window:]
 
                 recent_resistance = recent_highs.max() if not recent_highs.empty else resistance.iloc[-1]
                 recent_support = recent_lows.min() if not recent_lows.empty else support.iloc[-1]
@@ -241,42 +265,36 @@ class PatternDetector:
         def detect_rsi_divergence(df: pd.DataFrame, lookback: int = 10) -> tuple:
                 rsi = IndicatorCalculator.compute_rsi(df)
                 prices = df['close']
+
                 recent_lows_price = argrelextrema(prices.values, np.less, order=lookback)[0]
                 recent_highs_price = argrelextrema(prices.values, np.greater, order=lookback)[0]
                 recent_lows_rsi = argrelextrema(rsi.values, np.less, order=lookback)[0]
                 recent_highs_rsi = argrelextrema(rsi.values, np.greater, order=lookback)[0]
+
                 bullish_divergence = False
                 bearish_divergence = False
+
                 if len(recent_lows_price) > 1 and len(recent_lows_rsi) > 1:
                         last_price_low = prices.iloc[recent_lows_price[-1]]
                         prev_price_low = prices.iloc[recent_lows_price[-2]]
                         last_rsi_low = rsi.iloc[recent_lows_rsi[-1]]
                         prev_rsi_low = rsi.iloc[recent_lows_rsi[-2]]
-                        bullish_divergence = (last_price_low < prev_price_low * 1.02) and (last_rsi_low > prev_rsi_low * 0.98)
+                        bullish_divergence = (
+                                (last_price_low < prev_price_low * 1.02) and
+                                (last_rsi_low > prev_rsi_low * 0.98)
+                        )
+
                 if len(recent_highs_price) > 1 and len(recent_highs_rsi) > 1:
                         last_price_high = prices.iloc[recent_highs_price[-1]]
                         prev_price_high = prices.iloc[recent_highs_price[-2]]
                         last_rsi_high = rsi.iloc[recent_highs_rsi[-1]]
                         prev_rsi_high = rsi.iloc[recent_highs_rsi[-2]]
-                        bearish_divergence = (last_price_high > prev_price_high * 0.98) and (last_rsi_high < prev_rsi_high * 1.02)
-                return bullish_divergence, bearish_divergence
-                
-class IndicatorCalculator:
-        @staticmethod
-        def compute_moving_averages(df: pd.DataFrame, window_short: int = 9, window_long: int = 21) -> pd.DataFrame:
-                df['ma_short'] = df['close'].rolling(window=window_short).mean()
-                df['ma_long'] = df['close'].rolling(window=window_long).mean()
-                return df
+                        bearish_divergence = (
+                                (last_price_high > prev_price_high * 0.98) and
+                                (last_rsi_high < prev_rsi_high * 1.02)
+                        )
 
-class IndicatorCalculator:
-        @staticmethod
-        def compute_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
-                delta = df["close"].diff()
-                gain = delta.where(delta > 0, 0).rolling(period).mean()
-                loss = -delta.where(delta < 0, 0).rolling(period).mean()
-                rs = gain / loss.replace(0, 1e-10)
-                rsi = 100 - (100 / (1 + rs))
-                return rsi
+                return bullish_divergence, bearish_divergence
                 
 # کلاس فیلتر سیگنال
 class SignalFilter:
