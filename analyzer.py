@@ -180,82 +180,81 @@ class PatternDetector:
                 hammer = (df["body"] < 0.3 * df["range"]) & (df["lower"] > 2 * df["body"]) & \
                          (df["upper"] < 0.5 * df["body"]) & (df["close"].shift(1) < df["close"].shift(2))
                 return hammer
-                
-    @staticmethod
-    def detect_elliott_wave(df: pd.DataFrame) -> pd.DataFrame:
-        df["WavePoint"] = np.nan
-        highs = argrelextrema(df['close'].values, np.greater, order=5)[0]
-        lows = argrelextrema(df['close'].values, np.less, order=5)[0]
-        df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
-        df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
-        df["WaveTrend"] = np.nan
-        df["WaveTrend"] = df["WaveTrend"].astype("object")
-        wave_points = df["WavePoint"].dropna().index
-        if len(wave_points) >= 5:
-            recent_points = df.loc[wave_points[-5:], "close"]
-            if recent_points.is_monotonic_increasing:
-                df.loc[wave_points[-1], "WaveTrend"] = "Up"
-            elif recent_points.is_monotonic_decreasing:
-                df.loc[wave_points[-1], "WaveTrend"] = "Down"
-        return df
-        
 
-    @staticmethod
-    def detect_support_resistance(df: pd.DataFrame, window: int = 10) -> tuple:
-        if len(df) < window:
-            logging.warning(f"داده ناکافی برای تشخیص حمایت/مقاومت: {len(df)} کندل")
-            return None, None, []
+        @staticmethod
+        def detect_elliott_wave(df: pd.DataFrame) -> pd.DataFrame:
+                df["WavePoint"] = np.nan
+                highs = argrelextrema(df['close'].values, np.greater, order=5)[0]
+                lows = argrelextrema(df['close'].values, np.less, order=5)[0]
+                df.loc[df.index[highs], "WavePoint"] = df.loc[df.index[highs], "close"]
+                df.loc[df.index[lows], "WavePoint"] = df.loc[df.index[lows], "close"]
+                df["WaveTrend"] = np.nan
+                df["WaveTrend"] = df["WaveTrend"].astype("object")
+                wave_points = df["WavePoint"].dropna().index
+                if len(wave_points) >= 5:
+                        recent_points = df.loc[wave_points[-5:], "close"]
+                        if recent_points.is_monotonic_increasing:
+                                df.loc[wave_points[-1], "WaveTrend"] = "Up"
+                        elif recent_points.is_monotonic_decreasing:
+                                df.loc[wave_points[-1], "WaveTrend"] = "Down"
+                return df
 
-        high = df['high'].rolling(window).max()
-        low = df['low'].rolling(window).min()
-        close = df['close'].rolling(window).mean()
-        pivot = (high + low + close) / 3
-        resistance = pivot + (high - low) * 0.382
-        support = pivot - (high - low) * 0.382
+        @staticmethod
+        def detect_support_resistance(df: pd.DataFrame, window: int = 10) -> tuple:
+                if len(df) < window:
+                        logging.warning(f"داده ناکافی برای تشخیص حمایت/مقاومت: {len(df)} کندل")
+                        return None, None, []
 
-        recent_highs = df['high'][(df['high'].shift(1) < df['high']) & (df['high'].shift(-1) < df['high'])].iloc[-window:]
-        recent_lows = df['low'][(df['low'].shift(1) > df['low']) & (df['low'].shift(-1) > df['low'])].iloc[-window:]
+                high = df['high'].rolling(window).max()
+                low = df['low'].rolling(window).min()
+                close = df['close'].rolling(window).mean()
+                pivot = (high + low + close) / 3
+                resistance = pivot + (high - low) * 0.382
+                support = pivot - (high - low) * 0.382
 
-        recent_resistance = recent_highs.max() if not recent_highs.empty else resistance.iloc[-1]
-        recent_support = recent_lows.min() if not recent_lows.empty else support.iloc[-1]
+                recent_highs = df['high'][(df['high'].shift(1) < df['high']) & (df['high'].shift(-1) < df['high'])].iloc[-window:]
+                recent_lows = df['low'][(df['low'].shift(1) > df['low']) & (df['low'].shift(-1) > df['low'])].iloc[-window:]
 
-        if pd.isna(recent_resistance) or recent_resistance == 0:
-            recent_resistance = df['close'].iloc[-20:].mean() * 1.02
-            logging.warning(f"مقاومت پیش‌فرض برای {len(df)} کندل تنظیم شد: {recent_resistance}")
+                recent_resistance = recent_highs.max() if not recent_highs.empty else resistance.iloc[-1]
+                recent_support = recent_lows.min() if not recent_lows.empty else support.iloc[-1]
 
-        if pd.isna(recent_support) or recent_support == 0:
-            recent_support = df['close'].iloc[-20:].mean() * 0.98
-            logging.warning(f"حمایت پیش‌فرض برای {len(df)} کندل تنظیم شد: {recent_support}")
+                if pd.isna(recent_resistance) or recent_resistance == 0:
+                        recent_resistance = df['close'].iloc[-20:].mean() * 1.02
+                        logging.warning(f"مقاومت پیش‌فرض برای {len(df)} کندل تنظیم شد: {recent_resistance}")
 
-        volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
-        vol_threshold = volume_profile.quantile(0.5)
-        high_vol_levels = volume_profile[volume_profile > vol_threshold].index.tolist()
+                if pd.isna(recent_support) or recent_support == 0:
+                        recent_support = df['close'].iloc[-20:].mean() * 0.98
+                        logging.warning(f"حمایت پیش‌فرض برای {len(df)} کندل تنظیم شد: {recent_support}")
 
-        return recent_support, recent_resistance, high_vol_levels
-        
-    @staticmethod
-    def detect_rsi_divergence(df: pd.DataFrame, lookback: int = 10) -> tuple:
-        rsi = IndicatorCalculator.compute_rsi(df)
-        prices = df['close']
-        recent_lows_price = argrelextrema(prices.values, np.less, order=lookback)[0]
-        recent_highs_price = argrelextrema(prices.values, np.greater, order=lookback)[0]
-        recent_lows_rsi = argrelextrema(rsi.values, np.less, order=lookback)[0]
-        recent_highs_rsi = argrelextrema(rsi.values, np.greater, order=lookback)[0]
-        bullish_divergence = False
-        bearish_divergence = False
-        if len(recent_lows_price) > 1 and len(recent_lows_rsi) > 1:
-            last_price_low = prices.iloc[recent_lows_price[-1]]
-            prev_price_low = prices.iloc[recent_lows_price[-2]]
-            last_rsi_low = rsi.iloc[recent_lows_rsi[-1]]
-            prev_rsi_low = rsi.iloc[recent_lows_rsi[-2]]
-            bullish_divergence = (last_price_low < prev_price_low * 1.02) and (last_rsi_low > prev_rsi_low * 0.98)
-        if len(recent_highs_price) > 1 and len(recent_highs_rsi) > 1:
-            last_price_high = prices.iloc[recent_highs_price[-1]]
-            prev_price_high = prices.iloc[recent_highs_price[-2]]
-            last_rsi_high = rsi.iloc[recent_highs_rsi[-1]]
-            prev_rsi_high = rsi.iloc[recent_highs_rsi[-2]]
-            bearish_divergence = (last_price_high > prev_price_high * 0.98) and (last_rsi_high < prev_rsi_high * 1.02)
-        return bullish_divergence, bearish_divergence
+                volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
+                vol_threshold = volume_profile.quantile(0.5)
+                high_vol_levels = volume_profile[volume_profile > vol_threshold].index.tolist()
+
+                return recent_support, recent_resistance, high_vol_levels
+
+        @staticmethod
+        def detect_rsi_divergence(df: pd.DataFrame, lookback: int = 10) -> tuple:
+                rsi = IndicatorCalculator.compute_rsi(df)
+                prices = df['close']
+                recent_lows_price = argrelextrema(prices.values, np.less, order=lookback)[0]
+                recent_highs_price = argrelextrema(prices.values, np.greater, order=lookback)[0]
+                recent_lows_rsi = argrelextrema(rsi.values, np.less, order=lookback)[0]
+                recent_highs_rsi = argrelextrema(rsi.values, np.greater, order=lookback)[0]
+                bullish_divergence = False
+                bearish_divergence = False
+                if len(recent_lows_price) > 1 and len(recent_lows_rsi) > 1:
+                        last_price_low = prices.iloc[recent_lows_price[-1]]
+                        prev_price_low = prices.iloc[recent_lows_price[-2]]
+                        last_rsi_low = rsi.iloc[recent_lows_rsi[-1]]
+                        prev_rsi_low = rsi.iloc[recent_lows_rsi[-2]]
+                        bullish_divergence = (last_price_low < prev_price_low * 1.02) and (last_rsi_low > prev_rsi_low * 0.98)
+                if len(recent_highs_price) > 1 and len(recent_highs_rsi) > 1:
+                        last_price_high = prices.iloc[recent_highs_price[-1]]
+                        prev_price_high = prices.iloc[recent_highs_price[-2]]
+                        last_rsi_high = rsi.iloc[recent_highs_rsi[-1]]
+                        prev_rsi_high = rsi.iloc[recent_highs_rsi[-2]]
+                        bearish_divergence = (last_price_high > prev_price_high * 0.98) and (last_rsi_high < prev_rsi_high * 1.02)
+                return bullish_divergence, bearish_divergence
 
 # کلاس فیلتر سیگنال
 class SignalFilter:
