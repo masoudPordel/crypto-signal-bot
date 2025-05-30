@@ -208,8 +208,8 @@ class IndicatorCalculator:
                 except Exception as e:
                         logging.error(f"خطا در compute_macd: {str(e)}")
                         zero_series = pd.Series([0] * len(df), index=df.index)
-                        return zero_series, zero_series, zero_seriesseries​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
-                
+                        return zero_series, zero_series, zero_series
+                        
 class PatternDetector:
         @staticmethod
         def detect_pin_bar(df: pd.DataFrame) -> pd.Series:
