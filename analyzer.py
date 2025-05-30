@@ -520,22 +520,8 @@ async def find_entry_point(
                 atr_15m = df_15m["ATR"].iloc[-1]
                 volume_mean_15m = df_15m["volume"].rolling(20).mean().iloc[-1]
 
-                # تأیید نقدینگی با آستانه پویا
-                high_liquidity_symbols = ["BTC/USDT", "ETH/USDT", "BNB/USDT"]
-                spread_threshold = 0.002 if symbol in high_liquidity_symbols else 0.01
-
-                cache_key = f"liquidity_{symbol}"
-                now = datetime.utcnow()
-                if cache_key in CACHE and (now - CACHE[cache_key][1]).total_seconds() < 60:
-                        spread, liquidity_score = CACHE[cache_key][0]
-                        log_debug(f"استفاده از نقدینگی کش‌شده برای {symbol}: spread={spread:.4f}, score={liquidity_score}")
-                else:
-                        spread, liquidity_score = await check_liquidity(exchange, symbol, df_15m)
-                        CACHE[cache_key] = ((spread, liquidity_score), now)
-
-                if spread > spread_threshold or liquidity_score < 0:
-                        log_rejection(f"نقدینگی ضعیف یا اسپرد بالا: spread={spread:.4f}, threshold={spread_threshold}, score={liquidity_score}")
-                        return None
+                # حذف بررسی نقدینگی (فرض: در analyze_symbol انجام شده)
+                log_debug("بررسی نقدینگی در analyze_symbol انجام شده، صرف‌نظر از بررسی مجدد")
 
                 # سیستم امتیازدهی سیگنال
                 signal_score = 0
