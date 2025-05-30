@@ -255,7 +255,13 @@ class PatternDetector:
                         prev_rsi_high = rsi.iloc[recent_highs_rsi[-2]]
                         bearish_divergence = (last_price_high > prev_price_high * 0.98) and (last_rsi_high < prev_rsi_high * 1.02)
                 return bullish_divergence, bearish_divergence
-
+                
+        @staticmethod
+        def compute_moving_averages(df: pd.DataFrame, window_short: int = 9, window_long: int = 21) -> pd.DataFrame:
+                df['ma_short'] = df['close'].rolling(window=window_short).mean()
+                df['ma_long'] = df['close'].rolling(window=window_long).mean()
+                return df
+                
 # کلاس فیلتر سیگنال
 class SignalFilter:
     def __init__(self):
