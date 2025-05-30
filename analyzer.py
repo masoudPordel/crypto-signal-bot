@@ -627,11 +627,11 @@ async def find_entry_point(
                 fib_levels = calculate_fibonacci_levels(df_15m)
 
                 if signal_type == "Long":
-                        sl = entry - atr_15m * 0.8
+                        sl = entry - atr_15m * 0.9
                         tp_options = [level for level in fib_levels.values() if level > entry]
                         tp = min(tp_options) if tp_options else entry + (entry - sl) * dynamic_rr_factor
                 elif signal_type == "Short":
-                        sl = entry + atr_15m * 0.8
+                        sl = entry + atr_15m * 0.9
                         tp_options = [level for level in fib_levels.values() if level < entry]
                         tp = max(tp_options) if tp_options else entry - (sl - entry) * dynamic_rr_factor
                 else:
