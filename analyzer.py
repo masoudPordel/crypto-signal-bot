@@ -153,25 +153,62 @@ class IndicatorCalculator:
                 return mfi
 
         @staticmethod
-        def compute_moving_averages(df: pd.DataFrame, window_short: int = 9, window_long: int = 21) -> pd.DataFrame:
-                df['ma_short'] = df['close'].rolling(window=window_short).mean()
-                df['ma_long'] = df['close'].rolling(window=window_long).mean()
+        def compute_moving_averages(df: pd.DataFrame) -> pd.DataFrame:
+                df['MA50'] = df['close'].rolling(window=50).mean()
+                df['MA100'] = df['close'].rolling(window=100).mean()
+                df['MA200'] = df['close'].rolling(window=200).mean()
                 return df
-
 
         @staticmethod
-        def compute_macd_divergence(df: pd.DataFrame) -> pd.DataFrame:
-                macd, macd_signal, macd_hist = IndicatorCalculator.compute_macd(df)
+        def compute_macd_divergence(df: pd.DataFrame, lookback: int = 10) -> pd.DataFrame:
+                try:
+                        macd, _, _ = IndicatorCalculator.compute_macd(df)
+                        prices = df['close']
+                        recent_lows_price = argrelextrema(prices.values, np.less, order=lookback)[0]
+                        recent_highs_price = argrelextrema(prices.values, np.greater, order=lookback)[0]
+                        recent_lows_macd = argrelextrema(macd.values, np.less, order=lookback)[0]
+                        recent_highs_macd = argrelextrema(macd.values, np.greater, order=lookback)[0]
+                        bullish_divergence = False
+                        bearish_divergence = False
+                        if len(recent_lows_price) > 1 and len(recent_lows_macd) > 1:
+                                last_price_low = prices.iloc[recent_lows_price[-1]]
+                                prev_price_low = prices.iloc[recent_lows_price[-2]]
+                                last_macd_low = macd.iloc[recent_lows_macd[-1]]
+                                prev_macd_low = macd.iloc[recent_lows_macd[-2]]
+                                bullish_divergence = (last_price_low < prev_price_low * 1.02) and (last_macd_low > prev_macd_low * 0.98)
+                        if len(recent_highs_price) > 1 and len(recent_highs_macd) > 1:
+                                last_price_high = prices.iloc[recent_highs_price[-1]]
+                                prev_price_high = prices.iloc[recent_highs_price[-2]]
+                                last_macd_high = macd.iloc[recent_highs_macd[-1]]
+                                prev_macd_high = macd.iloc[recent_highs_macd[-2]]
+                                bearish_divergence = (last_price_high > prev_price_high * 0.98) and (last_macd_high < prev_macd_high * 1.02)
+                        df['MACD_Bullish_Divergence'] = bullish_divergence
+                        df['MACD_Bearish_Divergence'] = bearish_divergence
+                        return df[['MACD_Bullish_Divergence', 'MACD_Bearish_Divergence']]
+                except Exception as e:
+                        logging.error(f"خطا در compute_macd_divergence: {str(e)}")
+                        df['MACD_Bullish_Divergence'] = False
+                        df['MACD_Bearish_Divergence'] = False
+                        return df[['MACD_Bullish_Divergence', 'MACD_Bearish_Divergence']]
 
-                if len(macd) == len(df):
-                        df['macd']             = macd
-                        df['macd_signal']      = macd_signal
-                        df['macd_hist']        = macd_hist
-                        df['macd_divergence']  = macd - macd_signal
-                else:
-                        raise ValueError("طول macd با df برابر نیست")
-
-                return df
+        @staticmethod
+        def compute_macd(df: pd.DataFrame, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9):
+                try:
+                        if len(df) < slow_period + signal_period:
+                                raise ValueError("تعداد کندل‌ها برای محاسبه MACD کافی نیست")
+                        ema_fast = df['close'].ewm(span=fast_period, adjust=False).mean()
+                        ema_slow = df['close'].ewm(span=slow_period, adjust=False).mean()
+                        macd = ema_fast - ema_slow
+                        signal = macd.ewm(span=signal_period, adjust=False).mean()
+                        hist = macd - signal
+                        macd = macd.reindex(df.index).fillna(0)
+                        signal = signal.reindex(df.index).fillna(0)
+                        hist = hist.reindex(df.index).fillna(0)
+                        return macd, signal, hist
+                except Exception as e:
+                        logging.error(f"خطا در compute_macd: {str(e)}")
+                        zero_series = pd.Series([0] * len(df), index=df.index)
+                        return zero_series, zero_series, zero_seriesseries​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
                 
 class PatternDetector:
         @staticmethod
