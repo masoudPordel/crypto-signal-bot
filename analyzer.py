@@ -170,10 +170,15 @@ class IndicatorCalculator:
         @staticmethod
         def compute_macd_divergence(df: pd.DataFrame) -> pd.DataFrame:
                 macd, macd_signal, macd_hist = IndicatorCalculator.compute_macd(df)
-                df['macd']        = macd
-                df['macd_signal'] = macd_signal
-                df['macd_hist']   = macd_hist
-                df['macd_divergence'] = df['macd'] - df['macd_signal']
+
+                if len(macd) == len(df):
+                        df['macd']             = macd
+                        df['macd_signal']      = macd_signal
+                        df['macd_hist']        = macd_hist
+                        df['macd_divergence']  = macd - macd_signal
+                else:
+                        raise ValueError("طول macd با df برابر نیست")
+
                 return df
                 
 class PatternDetector:
