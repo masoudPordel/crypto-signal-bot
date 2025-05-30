@@ -147,23 +147,40 @@ class IndicatorCalculator:
 
 # کلاس تشخیص الگوها
 class PatternDetector:
-    @staticmethod
-    def detect_pin_bar(df: pd.DataFrame) -> pd.Series:
-        df["body"] = abs(df["close"] - df["open"])
-        df["range"] = df["high"] - df["low"]
-        df["upper"] = df["high"] - df[["close", "open"]].max(axis=1)
-        df["lower"] = df[["close", "open"]].min(axis=1) - df["low"]
-        pin_bar = (df["body"] < 0.3 * df["range"]) & ((df["upper"] > 2 * df["body"]) | (df["lower"] > 2 * df["body"]))
-        return pin_bar
+        @staticmethod
+        def detect_pin_bar(df: pd.DataFrame) -> pd.Series:
+                df["body"] = abs(df["close"] - df["open"])
+                df["range"] = df["high"] - df["low"]
+                df["upper"] = df["high"] - df[["close", "open"]].max(axis=1)
+                df["lower"] = df[["close", "open"]].min(axis=1) - df["low"]
+                pin_bar = (df["body"] < 0.3 * df["range"]) & ((df["upper"] > 2 * df["body"]) | (df["lower"] > 2 * df["body"]))
+                return pin_bar
 
-    @staticmethod
-    def detect_engulfing(df: pd.DataFrame) -> pd.Series:
-        prev_o = df["open"].shift(1)
-        prev_c = df["close"].shift(1)
-        engulfing = (((df["close"] > df["open"]) & (prev_c < prev_o) & (df["close"] > prev_o) & (df["open"] < prev_c)) |
-                     ((df["close"] < df["open"]) & (prev_c > prev_o) & (df["close"] < prev_o) & (df["open"] > prev_c)))
-        return engulfing
+        @staticmethod
+        def detect_engulfing(df: pd.DataFrame) -> pd.Series:
+                prev_o = df["open"].shift(1)
+                prev_c = df["close"].shift(1)
+                engulfing = (((df["close"] > df["open"]) & (prev_c < prev_o) & (df["close"] > prev_o) & (df["open"] < prev_c)) |
+                             ((df["close"] < df["open"]) & (prev_c > prev_o) & (df["close"] < prev_o) & (df["open"] > prev_c)))
+                return engulfing
 
+        @staticmethod
+        def detect_doji(df: pd.DataFrame) -> pd.Series:
+                df["body"] = abs(df["close"] - df["open"])
+                df["range"] = df["high"] - df["low"]
+                doji = (df["body"] <= 0.1 * df["range"]) & (df["range"] > 0)
+                return doji
+
+        @staticmethod
+        def detect_hammer(df: pd.DataFrame) -> pd.Series:
+                df["body"] = abs(df["close"] - df["open"])
+                df["range"] = df["high"] - df["low"]
+                df["upper"] = df["high"] - df[["close", "open"]].max(axis=1)
+                df["lower"] = df[["close", "open"]].min(axis=1) - df["low"]
+                hammer = (df["body"] < 0.3 * df["range"]) & (df["lower"] > 2 * df["body"]) & \
+                         (df["upper"] < 0.5 * df["body"]) & (df["close"].shift(1) < df["close"].shift(2))
+                return hammer
+                
     @staticmethod
     def detect_elliott_wave(df: pd.DataFrame) -> pd.DataFrame:
         df["WavePoint"] = np.nan
@@ -501,7 +518,7 @@ async def find_entry_point(
         try:
                 log_debug("شروع بررسی روند کلی تایم‌فریم ۱۵ دقیقه")
 
-                # دریافت داده‌های ۱ ساعته برای ADX
+                # دریافت داده‌های ۱ ساعته برای ADX (اختیاری)
                 df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
                 if df_1h is None or len(df_1h) < 30:
                         log_rejection("داده‌های تایم‌فریم ۱ ساعته ناکافی")
@@ -520,7 +537,7 @@ async def find_entry_point(
                 atr_15m = df_15m["ATR"].iloc[-1]
                 volume_mean_15m = df_15m["volume"].rolling(20).mean().iloc[-1]
 
-                # حذف بررسی نقدینگی (فرض: در analyze_symbol انجام شده)
+                # حذف بررسی نقدینگی
                 log_debug("بررسی نقدینگی در analyze_symbol انجام شده، صرف‌نظر از بررسی مجدد")
 
                 # سیستم امتیازدهی سیگنال
@@ -530,37 +547,47 @@ async def find_entry_point(
                 # امتیاز واگرایی RSI
                 rsi_divergence = last_15m.get("RSI_Divergence", 0)
                 if signal_type == "Long" and rsi_divergence == 1:
-                        signal_score += 1
-                        score_details["RSI_Divergence"] = 1
-                        log_debug("واگرایی صعودی RSI شناسایی شد (+۱ امتیاز)")
+                        signal_score += 0.5
+                        score_details["RSI_Divergence"] = 0.5
+                        log_debug("واگرایی صعودی RSI شناسایی شد (+۰.۵ امتیاز)")
                 elif signal_type == "Short" and rsi_divergence == -1:
-                        signal_score += 1
-                        score_details["RSI_Divergence"] = 1
-                        log_debug("واگرایی نزولی RSI شناسایی شد (+۱ امتیاز)")
+                        signal_score += 0.5
+                        score_details["RSI_Divergence"] = 0.5
+                        log_debug("واگرایی نزولی RSI شناسایی شد (+۰.۵ امتیاز)")
 
                 # امتیاز واگرایی MACD
                 macd_divergence = last_15m.get("MACD_Divergence", 0)
                 if signal_type == "Long" and macd_divergence == 1:
-                        signal_score += 1
-                        score_details["MACD_Divergence"] = 1
-                        log_debug("واگرایی صعودی MACD شناسایی شد (+۱ امتیاز)")
+                        signal_score += 0.5
+                        score_details["MACD_Divergence"] = 0.5
+                        log_debug("واگرایی صعودی MACD شناسایی شد (+۰.۵ امتیاز)")
                 elif signal_type == "Short" and macd_divergence == -1:
-                        signal_score += 1
-                        score_details["MACD_Divergence"] = 1
-                        log_debug("واگرایی نزولی MACD شناسایی شد (+۱ امتیاز)")
+                        signal_score += 0.5
+                        score_details["MACD_Divergence"] = 0.5
+                        log_debug("واگرایی نزولی MACD شناسایی شد (+۰.۵ امتیاز)")
 
                 # امتیاز الگوهای کندلی
                 pattern_score = 0
-                if last_15m.get("Engulfing") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.5:
+                if last_15m.get("Engulfing") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.1:
                         pattern_score += 2
                         signal_score += 2
                         score_details["Engulfing"] = 2
                         log_debug("الگوی Engulfing با حجم بالا شناسایی شد (+۲ امتیاز)")
-                elif last_15m.get("PinBar") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.2:
+                elif last_15m.get("PinBar") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.1:
                         pattern_score += 1.5
                         signal_score += 1.5
                         score_details["PinBar"] = 1.5
                         log_debug("الگوی PinBar با حجم بالا شناسایی شد (+۱.۵ امتیاز)")
+                elif last_15m.get("Hammer") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.1:
+                        pattern_score += 1.5
+                        signal_score += 1.5
+                        score_details["Hammer"] = 1.5
+                        log_debug("الگوی Hammer با حجم بالا شناسایی شد (+۱.۵ امتیاز)")
+                elif last_15m.get("Doji") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.1:
+                        pattern_score += 1
+                        signal_score += 1
+                        score_details["Doji"] = 1
+                        log_debug("الگوی Doji با حجم بالا شناسایی شد (+۱ امتیاز)")
 
                 # امتیاز حجم
                 if df_15m["volume"].iloc[-1] > volume_mean_15m:
@@ -574,12 +601,12 @@ async def find_entry_point(
                         signal_score += 1
                         score_details["ADX"] = 1
                         log_debug("روند قوی با ADX > 25 (+۱ امتیاز)")
-                elif adx < 20 and df_1h["ADX"].iloc[-1] < 25:
-                        log_rejection(f"قدرت روند ضعیف (ADX < 20 و ADX 1h < 25)، سیگنال رد شد", {"adx_15m": adx})
+                elif adx < 15:
+                        log_rejection(f"قدرت روند خیلی ضعیف (ADX < 15)، سیگنال رد شد", {"adx_15m": adx})
                         return None
 
                 # بررسی امتیاز کلی
-                min_signal_score = 2.5  # آستانه حداقل امتیاز
+                min_signal_score = 1.5
                 if signal_score < min_signal_score:
                         log_rejection(f"امتیاز سیگنال ({signal_score:.2f}) کمتر از حداقل مجاز ({min_signal_score})", score_details)
                         return None
@@ -616,7 +643,7 @@ async def find_entry_point(
                 risk = abs(entry - sl)
                 reward = abs(tp - entry)
                 rr = reward / risk if risk != 0 else 0
-                min_rr = 1.3 + (volatility * 10)
+                min_rr = 1.2 + (volatility * 5)
                 if rr < min_rr:
                         log_rejection(f"نسبت ریسک به ریوارد {rr:.2f} کمتر از حداقل مجاز {min_rr:.2f} است")
                         return None
