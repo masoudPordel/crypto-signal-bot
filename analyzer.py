@@ -158,14 +158,6 @@ class IndicatorCalculator:
                 df['ma_long'] = df['close'].rolling(window=window_long).mean()
                 return df
 
-        @staticmethod
-        def compute_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9) -> tuple:
-                ema_fast        = df['close'].ewm(span=fast, adjust=False).mean()
-                ema_slow        = df['close'].ewm(span=slow, adjust=False).mean()
-                macd            = ema_fast - ema_slow
-                macd_signal     = macd.ewm(span=signal, adjust=False).mean()
-                macd_hist       = macd - macd_signal
-                return macd, macd_signal, macd_hist
 
         @staticmethod
         def compute_macd_divergence(df: pd.DataFrame) -> pd.DataFrame:
