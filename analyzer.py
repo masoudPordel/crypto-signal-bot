@@ -34,41 +34,47 @@ COINMARKETCAL_API_KEY = os.getenv("COINMARKETCAL_API_KEY", "iFrSo3PUBJ36P8ZnEIBM
 # کش برای دامیننس USDT
 usdt_dominance_cache = TTLCache(maxsize=1, ttl=3600)  # 1 ساعت
 
-def fetch_usdt_dominance(max_retries: int = 3, initial_delay: float = 1.0) -> pd.Series:
-        """
-        دریافت دامیننس USDT از CoinGecko API با کشینگ و مدیریت خطای 429.
-        """
-        cache_key = "usdt_dominance"
-        if cache_key in usdt_dominance_cache:
-                logging.debug("دریافت دامیننس USDT از کش")
-                return usdt_dominance_cache[cache_key]
+# تعریف کش جهانی
+usdt_dominance_cache = {}
 
-        for attempt in range(max_retries):
-                try:
-                        response = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
-                        response.raise_for_status()
-                        data = response.json()
-                        dominance = data["data"]["market_cap_percentage"].get("usdt", 0)
-                        if dominance == 0:
-                                logging.warning("دامیننس USDT دریافت نشد، مقدار صفر تنظیم شد")
-                        # سری با 100 مقدار برای هماهنگی با OHLCV
-                        series = pd.Series([dominance] * 100)
-                        usdt_dominance_cache[cache_key] = series
-                        logging.info(f"دامیننس USDT دریافت شد: {dominance}")
-                        return series
-                except requests.exceptions.HTTPError as e:
-                        if e.response.status_code == 429:
-                                delay = initial_delay * (2 ** attempt)  # تأخیر تصاعدی
-                                logging.warning(f"خطای 429 در تلاش {attempt + 1}/{max_retries}، انتظار {delay} ثانیه")
-                                time.sleep(delay)
-                                continue
-                        logging.error(f"خطا در دریافت دامیننس USDT: {str(e)}")
-                        return pd.Series()
-                except Exception as e:
-                        logging.error(f"خطا در دریافت دامیننس USDT: {str(e)}")
-                        return pd.Series()
-        logging.error(f"ناتوانی در دریافت دامیننس USDT پس از {max_retries} تلاش")
-        return pd.Series()
+def fetch_usdt_dominance(max_retries: int = 3, initial_delay: float = 1.0) -> pd.Series:
+    """
+    دریافت دامیننس USDT از CoinGecko API با کشینگ و مدیریت خطای 429.
+    """
+    cache_key = "usdt_dominance"
+    if cache_key in usdt_dominance_cache:
+        logging.debug("دریافت دامیننس USDT از کش")
+        return usdt_dominance_cache[cache_key]
+
+    for attempt in range(max_retries):
+        try:
+            response = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            dominance = data["data"]["market_cap_percentage"].get("usdt", 0)
+            if dominance == 0:
+                logging.warning("دامیننس USDT دریافت نشد، مقدار صفر تنظیم شد")
+            
+            # ساخت pd.Series برای سازگاری با analyze_symbol
+            dominance_series = pd.Series([dominance], index=[pd.Timestamp.now()])
+            usdt_dominance_cache[cache_key] = dominance_series
+            logging.debug("دامیننس USDT با موفقیت دریافت و کش شد")
+            return dominance_series
+
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 429:
+                delay = initial_delay * (2 ** attempt)
+                logging.warning(f"خطای 429: محدودیت نرخ API، {delay} ثانیه صبر می‌کنم")
+                time.sleep(delay)
+                continue
+            logging.error(f"خطای HTTP در دریافت دامیننس USDT: {e}")
+            return pd.Series()
+        except Exception as e:
+            logging.error(f"خطا در دریافت دامیننس USDT: {e}")
+            return pd.Series()
+
+    logging.error(f"دریافت دامیننس USDT پس از {max_retries} تلاش ناموفق بود")
+    return pd.Series()
                 
 TIMEFRAMES = ["15m", "1h", "4h", "1d"]
 
