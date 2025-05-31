@@ -1516,6 +1516,65 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
         except Exception as e:
                 logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
                 return None
+                
+                            # اضافه کردن تسک trailing stop
+            asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
+            logging.info(f"سیگنال Short تولید شد: {result}")
+            return result
+
+        logging.info(f"سیگنال برای {symbol} @ {tf} رد شد")
+        return None
+
+    except Exception as e:
+        logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
+        return None
+
+# تابع اسکن همه نمادها
+async def scan_all_crypto_symbols(on_signal=None) -> None:
+    exchange = ccxt.mexc({
+        'enableRateLimit': True,
+        'rateLimit': 2000
+    })
+    try:
+        logging.debug(f"شروع بارگذاری بازارها از MEXC")
+        await exchange.load_markets()
+        logging.info(f"بازارها بارگذاری شد: تعداد نمادها={len(exchange.symbols)}")
+        top_coins = get_top_500_symbols_from_cmc()
+        usdt_symbols = [s for s in exchange.symbols if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)]
+        logging.debug(f"فیلتر نمادها: تعداد USDT symbols={len(usdt_symbols)}")
+        chunk_size = 10
+        total_chunks = (len(usdt_symbols) + chunk_size - 1) // chunk_size
+        symbol_results = []
+        for idx in range(total_chunks):
+            chunk = usdt_symbols[idx*chunk_size:(idx+1)*chunk_size]
+            logging.info(f"شروع اسکن دسته {idx+1}/{total_chunks}: {chunk}")
+            tasks = []
+            for sym in chunk:
+                tasks.append(asyncio.create_task(analyze_symbol(exchange, sym, "1h")))
+            async with semaphore:
+                for task in asyncio.as_completed(tasks):
+                    try:
+                        result = await task
+                        if isinstance(result, Exception):
+                            logging.error(f"خطا در تسک: {result}")
+                            continue
+                        if result and on_signal:
+                            await on_signal(result)
+                        symbol_results.append(result)
+                    except Exception as e:
+                        logging.error(f"خطا در انتظار تسک برای دسته {idx+1}: {e}")
+                        continue
+            await asyncio.sleep(WAIT_BETWEEN_CHUNKS)
+        ablation_test(symbol_results, "volume")
+        ablation_test(symbol_results, "liquidity")
+        ablation_test(symbol_results, "support_resistance")
+        logging.info(f"آمار رد شدن‌ها: نقدینگی={LIQUIDITY_REJECTS}, حجم={VOLUME_REJECTS}, حمایت/مقاومت={SR_REJECTS}")
+    except Exception as e:
+        logging.error(f"خطای کلی در اسکن نمادها: {str(e)}")
+    finally:
+        logging.debug(f"بستن اتصال به MEXC")
+        await exchange.close()
+
                 # تابع اصلی برای تست
 async def main():
     exchange = ccxt.mexc({
