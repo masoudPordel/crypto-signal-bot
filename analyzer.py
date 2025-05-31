@@ -1538,7 +1538,7 @@ async def scan_all_crypto_symbols(on_signal=None) -> None:
         logging.debug(f"فیلتر نمادها: تعداد USDT symbols={len(usdt_symbols)}")
 
         # دریافت usdt_dominance_series
-        usdt_dominance_series = await fetch_usdt_dominance(exchange) if 'fetch_usdt_dominance' in globals() else pd.Series()
+        usdt_dominance_series = fetch_usdt_dominance() if 'fetch_usdt_dominance' in globals() else pd.Series()
 
         chunk_size = 10
         total_chunks = (len(usdt_symbols) + chunk_size - 1) // chunk_size
