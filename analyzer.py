@@ -1362,8 +1362,10 @@ except Exception as e:
     logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
     return None
 
+# اگر try موفق نبود و به return نرسید
 logging.info(f"سیگنال برای {symbol} @ {tf} رد شد")
 return None
+
 # تابع اسکن همه نمادها
 async def scan_all_crypto_symbols(on_signal=None) -> None:
     exchange = ccxt.mexc({
