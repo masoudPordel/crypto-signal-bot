@@ -1278,72 +1278,73 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
                                         return None
 
                         # محاسبه RR داینامیک بعد از تعیین نوع سیگنال
-                        if support_4h > 0:
-                                dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
-                        logging.info(f"نسبت RR داینامیک برای {symbol} (Long): RR={dynamic_rr}")
+                if support_4h > 0:
+                        dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
+                logging.info(f"نسبت RR داینامیک برای {symbol} (Long): RR={dynamic_rr}")
 
-                        entry_data = await find_entry_point(exchange, signal_type, support_4h, usdt_dominance_series)
-                        if entry_data is None:
-                                logging.info(f"نقطه ورود Long برای {symbol} در 15m نشد")
-                                return None
+                entry_data = await find_entry_point(exchange, signal_type, support_4h, usdt_dominance_series)
+                if entry_data is None:
+                        logging.info(f"نقطه ورود Long برای {symbol} در 15m نشد")
+                        return None
 
-                            entry = entry_data["entry_price"]
-                        sl = entry_data["sl"]
-                        tp = entry_data["tp"]
-                        live_price = await get_live_price(exchange, symbol)
-                        if live_price is None:
-                            logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، سیگنال رد می‌شود")
-                            return None
+                entry = entry_data["entry_price"]
+                sl = entry_data["sl"]
+                tp = entry_data["tp"]
 
-                        price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
-                        if price_diff > 0.01:
-                            logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry}, live_price={live_price}, اختلاف={price_diff}")
-                            return None
+                live_price = await get_live_price(exchange, symbol)
+                if live_price is None:
+                        logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، سیگنال رد می‌شود")
+                        return None
 
-                        if sl >= entry or tp <= entry:
-                            logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry}, sl={sl}, tp={tp}")
-                            return None
+                price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
+                if price_diff > 0.01:
+                        logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry}, live_price={live_price}, اختلاف={price_diff}")
+                        return None
 
-                        if abs(entry - live_price) / live_price > 0.01:
-                            logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry}, live_price={live_price}")
-                            return None
-                        if abs(sl - live_price) / live_price > 0.1:
-                            logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl}, live_price={live_price}")
-                            return None
-                        if abs(tp - live_price) / live_price > 0.3:
-                            logging.warning(f"هدف سود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: tp={tp}, live_price={live_price}")
-                            return None
+                if sl >= entry or tp <= entry:
+                        logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry}, sl={sl}, tp={tp}")
+                        return None
 
-                        rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) !=0 else 0
-                        position_size = calculate_position_size(10000, 1, entry, sl)
-                        signal_strength = "قوی" if score_long > 90 else "متوسط"
-                        result = {
-                            "نوع معامله": "Long",
-                            "نماد": symbol,
-                            "تایم‌فریم": tf,
-                            "قیمت ورود": entry,
-                            "حد ضرر": sl,
-                            "هدف سود": tp,
-                            "ریسک به ریوارد": np.float64(rr),
-                            "حجم پوزیشن": position_size,
-                            "سطح اطمینان": min(score_long, 100),
-                            "امتیاز": score_long,
-                            "قدرت سیگنال": signal_strength,
-                            "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
-                            "روانشناسی": psych_long,
-                            "روند بازار": "صعودی",
-                            "فاندامنتال": f"امتیاز: {fundamental_score}",
-                            "شاخص ترس و طمع": fng_index,
-                            "روند 4h": trend_4h,
-                            "قیمت فعلی بازار": live_price
-                        }
-                        asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
-                        logging.info(f"سیگنال Long تولید شد: {result}")
-                        return result
+                if abs(entry - live_price) / live_price > 0.01:
+                        logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry}, live_price={live_price}")
+                        return None
 
-                elif score_short >= THRESHOLD and trend_1d_score <= 0:  # شرط اجباری روند 1d
-                        signal_type = "Short"
+                if abs(sl - live_price) / live_price > 0.1:
+                        logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl}, live_price={live_price}")
+                        return None
 
+                if abs(tp - live_price) / live_price > 0.3:
+                        logging.warning(f"هدف سود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: tp={tp}, live_price={live_price}")
+                        return None
+
+                rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
+                position_size = calculate_position_size(10000, 1, entry, sl)
+                signal_strength = "قوی" if score_long > 90 else "متوسط"
+
+                result = {
+                        "نوع معامله": "Long",
+                        "نماد": symbol,
+                        "تایم‌فریم": tf,
+                        "قیمت ورود": entry,
+                        "حد ضرر": sl,
+                        "هدف سود": tp,
+                        "ریسک به ریوارد": np.float64(rr),
+                        "حجم پوزیشن": position_size,
+                        "سطح اطمینان": min(score_long, 100),
+                        "امتیاز": score_long,
+                        "قدرت سیگنال": signal_strength,
+                        "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
+                        "روانشناسی": psych_long,
+                        "روند بازار": "صعودی",
+                        "فاندامنتال": f"امتیاز: {fundamental_score}",
+                        "شاخص ترس و طمع": fng_index,
+                        "روند 4h": trend_4h,
+                        "قیمت فعلی بازار": live_price
+                }
+
+                asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
+                logging.info(f"سیگنال Long تولید شد: {result}")
+                return result
                         # --- فیلتر اشباع خرید/فروش ---
                         rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().loc[-1]
                         if signal_type == "Short" and rsi < 30:
