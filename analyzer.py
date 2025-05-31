@@ -255,13 +255,7 @@ class PatternDetector:
                         prev_rsi_high = rsi.iloc[recent_highs_rsi[-2]]
                         bearish_divergence = (last_price_high > prev_price_high * 0.98) and (last_rsi_high < prev_rsi_high * 1.02)
                 return bullish_divergence, bearish_divergence
-                
-        @staticmethod
-        def compute_moving_averages(df: pd.DataFrame, window_short: int = 9, window_long: int = 21) -> pd.DataFrame:
-                df['ma_short'] = df['close'].rolling(window=window_short).mean()
-                df['ma_long'] = df['close'].rolling(window=window_long).mean()
-                return df
-                
+
 # کلاس فیلتر سیگنال
 class SignalFilter:
     def __init__(self):
@@ -382,63 +376,49 @@ def check_market_events(symbol: str) -> int:
 
 # تابع محاسبه اندیکاتورها
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-        try:
-                df = df.ffill().bfill().fillna(0)
-                df["EMA12"] = df["close"].ewm(span=12).mean()
-                df["EMA26"] = df["close"].ewm(span=26).mean()
-                df["MACD"] = df["EMA12"] - df["EMA26"]
-                df["Signal"] = df["MACD"].ewm(span=9).mean()
-                df["RSI"] = IndicatorCalculator.compute_rsi(df)
-                df["ATR"] = IndicatorCalculator.compute_atr(df)
-                df["ADX"] = IndicatorCalculator.compute_adx(df)
-                df["Stochastic"] = IndicatorCalculator.compute_stochastic(df)
-                df["BB_upper"], df["BB_lower"] = IndicatorCalculator.compute_bollinger_bands(df)
-                df["PinBar"] = PatternDetector.detect_pin_bar(df)
-                df["Engulfing"] = PatternDetector.detect_engulfing(df)
-                df = PatternDetector.detect_elliott_wave(df)
-                df["MFI"] = IndicatorCalculator.compute_mfi(df)
-                df["Hammer"] = ((df["close"] - df["low"]) / (df["high"] - df["low"]) > 0.66) & (df["close"] > df["open"])
-                df["Doji"] = abs(df["close"] - df["open"]) / (df["high"] - df["low"]) < 0.1
-                df = IndicatorCalculator.compute_moving_averages(df)
-                df[["RSI_Bullish_Divergence", "RSI_Bearish_Divergence"]] = PatternDetector.detect_rsi_divergence(df)
-                df[["MACD_Bullish_Divergence", "MACD_Bearish_Divergence"]] = IndicatorCalculator.compute_macd_divergence(df)
-                df["HeadAndShoulders"] = PatternDetector.detect_head_and_shoulders(df)
-                df["DoubleTop"] = PatternDetector.detect_double_top(df)
-                df["DoubleBottom"] = PatternDetector.detect_double_bottom(df)
+    try:
+        df = df.ffill().bfill().fillna(0)
+        df["EMA12"] = df["close"].ewm(span=12).mean()
+        df["EMA26"] = df["close"].ewm(span=26).mean()
+        df["MACD"] = df["EMA12"] - df["EMA26"]
+        df["Signal"] = df["MACD"].ewm(span=9).mean()
+        df["RSI"] = IndicatorCalculator.compute_rsi(df)
+        df["ATR"] = IndicatorCalculator.compute_atr(df)
+        df["ADX"] = IndicatorCalculator.compute_adx(df)
+        df["Stochastic"] = IndicatorCalculator.compute_stochastic(df)
+        df["BB_upper"], df["BB_lower"] = IndicatorCalculator.compute_bollinger_bands(df)
+        df["PinBar"] = PatternDetector.detect_pin_bar(df)
+        df["Engulfing"] = PatternDetector.detect_engulfing(df)
+        df = PatternDetector.detect_elliott_wave(df)
+        df["MFI"] = IndicatorCalculator.compute_mfi(df)
 
-                logging.debug(f"اندیکاتورها با موفقیت محاسبه شدند: {list(df.columns)}")
-        except Exception as e:
-                logging.error(f"خطا در محاسبات اندیکاتورها: {str(e)}")
-                df["EMA12"] = df["close"].mean()
-                df["EMA26"] = df["close"].mean()
-                df["MACD"] = 0
-                df["Signal"] = 0
-                df["RSI"] = 50
-                df["ATR"] = 0
-                df["ADX"] = 0
-                df["Stochastic"] = 50
-                df["BB_upper"] = df["close"].mean() * 1.1
-                df["BB_lower"] = df["close"].mean() * 0.9
-                df["PinBar"] = False
-                df["Engulfing"] = False
-                df["WavePoint"] = np.nan
-                df["WaveTrend"] = np.nan
-                df["MFI"] = 50
-                df["Hammer"] = False
-                df["Doji"] = False
-                df["MA50"] = df["close"].mean()
-                df["MA100"] = df["close"].mean()
-                df["MA200"] = df["close"].mean()
-                df["RSI_Bullish_Divergence"] = False
-                df["RSI_Bearish_Divergence"] = False
-                df["MACD_Bullish_Divergence"] = False
-                df["MACD_Bearish_Divergence"] = False
-                df["HeadAndShoulders"] = False
-                df["DoubleTop"] = False
-                df["DoubleBottom"] = False
-                logging.warning(f"اندیکاتورها با مقادیر پیش‌فرض پر شدند")
-        return df
-    
+        # اضافه کردن Hammer و Doji
+        df["Hammer"] = ((df["close"] - df["low"]) / (df["high"] - df["low"]) > 0.66) & (df["close"] > df["open"])  # Hammer صعودی
+        df["Doji"] = abs(df["close"] - df["open"]) / (df["high"] - df["low"]) < 0.1  # Doji
+
+        logging.debug(f"اندیکاتورها با موفقیت محاسبه شدند: {list(df.columns)}")
+    except Exception as e:
+        logging.error(f"خطا در محاسبات اندیکاتورها: {str(e)}")
+        df["EMA12"] = df["close"].mean()
+        df["EMA26"] = df["close"].mean()
+        df["MACD"] = 0
+        df["Signal"] = 0
+        df["RSI"] = 50
+        df["ATR"] = 0
+        df["ADX"] = 0
+        df["Stochastic"] = 50
+        df["BB_upper"] = df["close"].mean() * 1.1
+        df["BB_lower"] = df["close"].mean() * 0.9
+        df["PinBar"] = False
+        df["Engulfing"] = False
+        df["WavePoint"] = np.nan
+        df["MFI"] = 50
+        # مقادیر پیش‌فرض برای Hammer و Doji
+        df["Hammer"] = False
+        df["Doji"] = False
+        logging.warning(f"اندیکاتورها با مقادیر پیش‌فرض پر شدند")
+    return df
+
 # تابع تحلیل ساختار بازار
 async def analyze_market_structure(exchange: ccxt.Exchange, symbol: str) -> Dict[str, Any]:
     try:
@@ -524,7 +504,6 @@ async def find_entry_point(
         signal_type: str,
         support: float,
         resistance: float,
-        usdt_dominance_series: pd.Series,
         debug_mode: bool = True
 ) -> Optional[Dict]:
         def log_debug(msg):
@@ -538,7 +517,7 @@ async def find_entry_point(
         try:
                 log_debug("شروع بررسی روند کلی تایم‌فریم ۱۵ دقیقه")
 
-                # دریافت داده‌های ۱ ساعته برای ADX و میانگین متحرک
+                # دریافت داده‌های ۱ ساعته برای ADX (اختیاری)
                 df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
                 if df_1h is None or len(df_1h) < 30:
                         log_rejection("داده‌های تایم‌فریم ۱ ساعته ناکافی")
@@ -563,19 +542,9 @@ async def find_entry_point(
                 # سیستم امتیازدهی سیگنال
                 signal_score = 0
                 score_details = {}
-                weights = {
-                        "rsi_divergence": 0.15,
-                        "macd_divergence": 0.15,
-                        "candlestick_patterns": 0.3,
-                        "volume": 0.1,
-                        "adx": 0.1,
-                        "usdt_dominance": 0.1,
-                        "moving_average": 0.1,
-                        "price_patterns": 0.1
-                }
 
                 # امتیاز واگرایی RSI
-                rsi_divergence = 1 if last_15m.get("RSI_Bullish_Divergence") else -1 if last_15m.get("RSI_Bearish_Divergence") else 0
+                rsi_divergence = last_15m.get("RSI_Divergence", 0)
                 if signal_type == "Long" and rsi_divergence == 1:
                         signal_score += 0.5
                         score_details["RSI_Divergence"] = 0.5
@@ -635,44 +604,8 @@ async def find_entry_point(
                         log_rejection(f"قدرت روند خیلی ضعیف (ADX < 15)، سیگنال رد شد", {"adx_15m": adx})
                         return None
 
-                # امتیاز دامیننس USDT
-                usdt_score = get_usdt_dominance_score(usdt_dominance_series)
-                if usdt_score != 0:
-                        weighted_usdt_score = usdt_score * weights["usdt_dominance"]
-                        signal_score += weighted_usdt_score
-                        score_details["USDT_Dominance"] = weighted_usdt_score
-                        log_debug(f"دامیننس USDT: امتیاز {weighted_usdt_score:.2f}")
-
-                # امتیاز میانگین متحرک
-                ma_score = get_moving_average_score(df_1h, price_col="close")
-                if ma_score != 0:
-                        weighted_ma_score = ma_score * weights["moving_average"]
-                        signal_score += weighted_ma_score
-                        score_details["Moving_Average"] = weighted_ma_score
-                        log_debug(f"میانگین متحرک: امتیاز {weighted_ma_score:.2f}")
-
-                # امتیاز الگوهای قیمتی
-                price_pattern_score = 0
-                if last_15m.get("HeadAndShoulders"):
-                        price_pattern_score -= 5
-                        score_details["HeadAndShoulders"] = -5
-                        log_debug("الگوی سر و شانه شناسایی شد (-۵ امتیاز)")
-                if last_15m.get("DoubleTop"):
-                        price_pattern_score -= 3
-                        score_details["DoubleTop"] = -3
-                        log_debug("الگوی دابل تاپ شناسایی شد (-۳ امتیاز)")
-                if last_15m.get("DoubleBottom"):
-                        price_pattern_score += 3
-                        score_details["DoubleBottom"] = 3
-                        log_debug("الگوی دابل باتم شناسایی شد (+۳ امتیاز)")
-                if price_pattern_score != 0:
-                        weighted_pattern_score = price_pattern_score * weights["price_patterns"]
-                        signal_score += weighted_pattern_score
-                        score_details["Price_Patterns"] = weighted_pattern_score
-                        log_debug(f"الگوهای قیمتی: امتیاز {weighted_pattern_score:.2f}")
-
                 # بررسی امتیاز کلی
-                min_signal_score = 2.0
+                min_signal_score = 1.5
                 if signal_score < min_signal_score:
                         log_rejection(f"امتیاز سیگنال ({signal_score:.2f}) کمتر از حداقل مجاز ({min_signal_score})", score_details)
                         return None
@@ -690,7 +623,7 @@ async def find_entry_point(
                 volatility = df_15m["ATR"].iloc[-1] / last_15m["close"]
                 dynamic_rr_factor = 1.7 + (volatility * 5)
 
-                # محاسبه سطوح فیبوناچی (بدون تغییر)
+                # محاسبه سطوح فیبوناچی
                 fib_levels = calculate_fibonacci_levels(df_15m)
 
                 if signal_type == "Long":
@@ -1329,3 +1262,88 @@ async def main():
 # اجرای برنامه
 if __name__ == "__main__":
     asyncio.run(main())
+
+# === Custom Additions for Enhanced Scoring ===
+
+def calculate_fibonacci_levels(df, high_col="high", low_col="low"):
+    max_price = df[high_col].max()
+    min_price = df[low_col].min()
+    diff = max_price - min_price
+    levels = {
+        "0.236": max_price - 0.236 * diff,
+        "0.382": max_price - 0.382 * diff,
+        "0.5": max_price - 0.5 * diff,
+        "0.618": max_price - 0.618 * diff,
+        "0.786": max_price - 0.786 * diff,
+    }
+    return levels
+
+def get_usdt_dominance_score(usdt_dominance_series):
+    recent = usdt_dominance_series[-1]
+    previous = usdt_dominance_series[-5] if len(usdt_dominance_series) >= 5 else usdt_dominance_series[0]
+    if recent < previous:
+        return 5  # Bullish for crypto
+    elif recent > previous:
+        return -5  # Bearish for crypto
+    return 0
+
+def get_moving_average_score(df, price_col="close"):
+    ma50 = df[price_col].rolling(window=50).mean()
+    ma100 = df[price_col].rolling(window=100).mean()
+    ma200 = df[price_col].rolling(window=200).mean()
+    score = 0
+    if df[price_col].iloc[-1] > ma200.iloc[-1]:
+        score += 5
+    else:
+        score -= 5
+    if ma50.iloc[-1] > ma100.iloc[-1] and ma100.iloc[-1] > ma200.iloc[-1]:
+        score += 3  # Uptrend alignment
+    return score
+
+# === Pattern Detection Additions ===
+
+def detect_head_and_shoulders(df, price_col="close"):
+    data = df[price_col].values
+    max_idx = argrelextrema(np.array(data), np.greater)[0]
+
+    if len(max_idx) < 3:
+        return 0
+
+    for i in range(1, len(max_idx) - 1):
+        left = data[max_idx[i - 1]]
+        head = data[max_idx[i]]
+        right = data[max_idx[i + 1]]
+
+        if head > left and head > right and abs(left - right) < 0.02 * head:
+            return -5
+    return 0
+
+def detect_double_top(df, price_col="close"):
+    data = df[price_col].values
+    max_idx = argrelextrema(np.array(data), np.greater)[0]
+
+    if len(max_idx) < 2:
+        return 0
+
+    for i in range(len(max_idx) - 1):
+        first = data[max_idx[i]]
+        second = data[max_idx[i + 1]]
+
+        if abs(first - second) < 0.02 * first:
+            return -3
+    return 0
+
+def detect_double_bottom(df, price_col="close"):
+    data = df[price_col].values
+    min_idx = argrelextrema(np.array(data), np.less)[0]
+
+    if len(min_idx) < 2:
+        return 0
+
+    for i in range(len(min_idx) - 1):
+        first = data[min_idx[i]]
+        second = data[min_idx[i + 1]]
+
+        if abs(first - second) < 0.02 * first:
+            return 3
+    return 0
