@@ -1273,11 +1273,12 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
 
         THRESHOLD = 90
         result = None
-# ادامه کد بعد از try-except
+        
+try:
+        some_code()
 except Exception as e:
-        logging.error(f"خطا در محاسبه RSI یا ADX برای {symbol} @ {tf}: {str(e)}")
-        return None
-
+        logging.error(...)
+        
         if score_long >= THRESHOLD and trend_1d_score >= 0:  # شرط اجباری روند 1d
                 signal_type = "Long"
                 # --- فیلتر اشباع خرید/فروش ---
