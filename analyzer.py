@@ -1639,3 +1639,25 @@ async def main():
 # اجرای برنامه
 if __name__ == "__main__":
     asyncio.run(main())
+    
+    async def test_analyze_symbol():
+    logging.info("تست تحلیل نمادها شروع شد")
+    exchange = ccxt.binance()  # یا صرافی خودت
+    symbols = ["CKB/USDT", "COMP/USDT", "CORE/USDT"]
+    tf = "1h"
+    
+    # تست دامیننس
+    usdt_dominance_series = fetch_usdt_dominance()
+    if usdt_dominance_series.empty:
+        logging.error("دامیننس USDT دریافت نشد")
+    else:
+        logging.info(f"دامیننس USDT دریافت شد: مقدار={usdt_dominance_series.iloc[-1]:.2f}")
+    
+    # تست تحلیل نمادها
+    for symbol in symbols:
+        result = await analyze_symbol(exchange, symbol, tf, usdt_dominance_series)
+        logging.info(f"نتیجه تحلیل {symbol}: {result}")
+
+if __name__ == "__main__":
+    logging.getLogger().setLevel(logging.DEBUG)
+    asyncio.run(test_analyze_symbol())
