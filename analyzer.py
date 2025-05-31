@@ -1057,14 +1057,42 @@ async def get_ohlcv_cached(exchange, symbol, tf, limit=50) -> Optional[pd.DataFr
                                 return cached_df
 
                 # دریافت داده از صرافی
-                raw_data = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+       import pandas as pd
+import logging
 
+async def fetch_and_validate_ohlcv(exchange, symbol, timeframe, limit=100):
+        try:
+                # دریافت داده‌های OHLCV
+                raw_data = await exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+
+                # چک کردن خالی بودن داده‌ها
                 if not raw_data or len(raw_data) == 0:
-                        logging.warning(f"داده OHLCV برای {symbol} / {tf} خالی یا ناموجود است")
+                        logging.warning(f"داده OHLCV برای {symbol} / {timeframe} خالی یا ناموجود است")
                         return None
 
+                # تبدیل به DataFrame
                 df = pd.DataFrame(raw_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
 
+                # اعتبارسنجی داده‌ها
+                if df.empty or len(df) < 50:  # حداقل 50 کندل برای اطمینان
+                        logging.warning(f"داده ناکافی برای {symbol} @ {timeframe}: تعداد کندل‌ها={len(df)}")
+                        return None
+
+                if df[["open", "high", "low", "close", "volume"]].isna().any().any() or (df["volume"] <= 0).any():
+                        logging.warning(f"داده‌های OHLCV برای {symbol} @ {timeframe} شامل NaN یا volume صفر/منفی است")
+                        return None
+
+                # چک مقادیر غیرمنطقی (مثلاً قیمت منفی)
+                if (df[["open", "high", "low", "close"]] < 0).any().any():
+                        logging.warning(f"داده‌های قیمت برای {symbol} @ {timeframe} شامل مقادیر منفی غیرمنطقی است")
+                        return None
+
+                logging.info(f"داده OHLCV برای {symbol} @ {timeframe} با موفقیت دریافت شد: تعداد کندل‌ها={len(df)}")
+                return df
+
+        except Exception as e:
+                logging.error(f"خطا در دریافت داده برای {symbol} @ {timeframe}: {e}")
+                return None
                 # تبدیل تایم‌استمپ به فرمت درست
                 df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", errors="coerce")
                 if df["timestamp"].isnull().all():
