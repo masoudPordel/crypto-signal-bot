@@ -768,14 +768,21 @@ async def find_entry_point(
                         return None
 
                 # امتیاز دامیننس USDT
-                usdt_score = get_usdt_dominance_score(usdt_dominance_series)
-                if usdt_score != 0:
-                        weighted_usdt_score = usdt_score * weights["usdt_dominance"]
-                        signal_score += weighted_usdt_score
-                        score_details["USDT_Dominance"] = weighted_usdt_score
-                        log_debug(f"دامیننس USDT: امتیاز {weighted_usdt_score:.2f}")
-
-                # امتیاز میانگین متحرک
+                 usdt_score = 0
+                if usdt_dominance_series is not None and not usdt_dominance_series.empty:
+                        try:
+                                usdt_score = get_usdt_dominance_score(usdt_dominance_series)
+                                if usdt_score != 0:
+                                        weighted_usdt_score = usdt_score * weights["usdt_dominance"]
+                                        signal_score += weighted_usdt_score
+                                        score_details["USDT_Dominance"] = weighted_usdt_score
+                                        logging.debug(f"دامیننس USDT: امتیاز {weighted_usdt_score:.2f}")
+                        except Exception as e:
+                                logging.error(f"خطا در محاسبه امتیاز دامیننس USDT: {str(e)}")
+                                score_details["USDT_Dominance"] = 0
+                else:
+                        logging.warning("داده دامیننس USDT در دسترس نیست، امتیاز صفر اعمال شد")
+                        score_details["USDT_Dominance"] = 0                # امتیاز میانگین متحرک
                 ma_score = get_moving_average_score(df_1h, price_col="close")
                 if ma_score != 0:
                         weighted_ma_score = ma_score * weights["moving_average"]
