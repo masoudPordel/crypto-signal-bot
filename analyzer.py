@@ -25,30 +25,37 @@ def clean_dataframe_for_indicators(df: pd.DataFrame) -> Optional[pd.DataFrame]:
     Returns:
         DataFrame پاک‌شده یا None اگر داده نامعتبر باشد
     """
+    logging.debug(f"شروع پاک‌سازی دیتافریم: شکل اولیه={df.shape}")
+    
     if df is None or df.empty:
         logging.warning("دیتافریم خالی است")
         return None
     
-    # اطمینان از وجود ستون‌های مورد نیاز
     required_cols = ['open', 'high', 'low', 'close', 'volume']
     if not all(col in df.columns for col in required_cols):
-        logging.error("ستون‌های مورد نیاز در دیتافریم وجود ندارند")
+        logging.error(f"ستون‌های مورد نیاز در دیتافریم وجود ندارند: ستون‌های موجود={df.columns}")
         return None
     
-    # حذف ردیف‌های حاوی NaN یا صفر
+    logging.debug(f"تعداد NaN در دیتافریم: {df[required_cols].isna().sum().to_dict()}")
+    
     df_cleaned = df.dropna().copy()
+    logging.debug(f"شکل دیتافریم پس از حذف NaN: {df_cleaned.shape}")
+    
     for col in ['high', 'low', 'close']:
+        before_count = len(df_cleaned)
         df_cleaned = df_cleaned[df_cleaned[col] > 0]
+        logging.debug(f"فیلتر مقادیر صفر یا منفی برای {col}: ردیف‌های باقی‌مانده={len(df_cleaned)} (قبل={before_count})")
     
     if len(df_cleaned) < 14:
         logging.warning(f"داده کافی برای محاسبه اندیکاتورها نیست: {len(df_cleaned)} کندل")
         return None
     
+    logging.debug(f"دیتافریم پاک‌شده با موفقیت آماده شد: شکل نهایی={df_cleaned.shape}")
     return df_cleaned
-
+    
 # تنظیم لاگ‌ها
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s - [File: %(filename)s | Line: %(lineno)d | Func: %(funcName)s]',
     handlers=[
         logging.FileHandler("debug_detailed.log", encoding="utf-8"),
@@ -63,42 +70,51 @@ COINMARKETCAL_API_KEY = os.getenv("COINMARKETCAL_API_KEY", "iFrSo3PUBJ36P8ZnEIBM
 # کش برای دامیننس USDT
 usdt_dominance_cache = TTLCache(maxsize=1, ttl=3600)  # 1 ساعت
 
-# تعریف کش جهانی
-def fetch_usdt_dominance(max_retries: int = 3, initial_delay: float = 1.0) -> pd.Series:
+# تعریف کش جهانیdef fetch_usdt_dominance(max_retries: int = 3, initial_delay: float = 2.0) -> pd.Series:
     """
     دریافت دامیننس USDT از CoinGecko API با کشینگ و مدیریت خطای 429.
     """
     cache_key = "usdt_dominance"
+    logging.debug("شروع دریافت دامیننس USDT")
+    
     if cache_key in usdt_dominance_cache:
         dominance_series = usdt_dominance_cache[cache_key]
-        logging.debug(f"دریافت دامیننس USDT از کش: مقدار={dominance_series.iloc[-1] if not dominance_series.empty else 'خالی'}")
+        if not dominance_series.empty:
+            logging.debug(f"دریافت دامیننس USDT از کش: مقدار={dominance_series.iloc[-1]:.2f}")
+        else:
+            logging.warning("کش دامیننس USDT خالی است")
         return dominance_series
 
     for attempt in range(max_retries):
         try:
-            response = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
+            logging.debug(f"تلاش {attempt + 1}/{max_retries} برای دریافت دامیننس از API")
+            response = requests.get("https://api.coingecko.com/api/v3/global", timeout=15)
             response.raise_for_status()
             data = response.json()
             dominance = data["data"]["market_cap_percentage"].get("usdt", 0)
-            if dominance == 0:
-                logging.warning("دامیننس USDT دریافت نشد، مقدار صفر تنظیم شد")
             
-            # ساخت pd.Series برای سازگاری با analyze_symbol
+            if dominance == 0 or dominance is None:
+                logging.warning(f"دامیننس USDT نامعتبر دریافت شد: مقدار={dominance}")
+                return pd.Series()
+            
             dominance_series = pd.Series([dominance], index=[pd.Timestamp.now()])
             usdt_dominance_cache[cache_key] = dominance_series
-            logging.debug(f"دامیننس USDT با موفقیت از API دریافت و کش شد: مقدار={dominance}")
+            logging.debug(f"دامیننس USDT با موفقیت از API دریافت و کش شد: مقدار={dominance:.2f}")
             return dominance_series
 
         except requests.exceptions.HTTPError as e:
+            logging.error(f"خطای HTTP در دریافت دامیننس USDT: {e}, کد پاسخ={response.status_code if response else 'نامشخص'}")
             if response.status_code == 429:
                 delay = initial_delay * (2 ** attempt)
-                logging.warning(f"خطای 429: محدودیت نرخ API، {delay} ثانیه صبر می‌کنم")
+                logging.warning(f"خطای 429: محدودیت نرخ API، {delay:.2f} ثانیه صبر می‌کنم")
                 time.sleep(delay)
                 continue
-            logging.error(f"خطای HTTP در دریافت دامیننس USDT: {e}")
             return pd.Series()
-        except Exception as e:
-            logging.error(f"خطا در دریافت دامیننس USDT: {e}")
+        except requests.exceptions.RequestException as e:
+            logging.error(f"خطای شبکه در دریافت دامیننس USDT: {e}")
+            return pd.Series()
+        except (KeyError, ValueError) as e:
+            logging.error(f"خطای پردازش داده دامیننس USDT: {e}")
             return pd.Series()
 
     logging.error(f"دریافت دامیننس USDT پس از {max_retries} تلاش ناموفق بود")
