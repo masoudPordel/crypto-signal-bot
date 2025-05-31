@@ -1287,9 +1287,9 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
                                 logging.info(f"نقطه ورود Long برای {symbol} در 15m نشد")
                                 return None
 
-                        entry = entry_data["entry_price"]
-                                sl = entry_data["sl"]
-                                tp = entry_data["tp"]
+                            entry = entry_data["entry_price"]
+                        sl = entry_data["sl"]
+                        tp = entry_data["tp"]
                         live_price = await get_live_price(exchange, symbol)
                         if live_price is None:
                             logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، سیگنال رد می‌شود")
