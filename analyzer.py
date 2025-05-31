@@ -1003,8 +1003,7 @@ def ablation_test(symbol_results: list, filter_name: str) -> int:
     logging.info(f"Ablation Test برای فیلتر {filter_name}: تعداد سیگنال‌های اولیه={total_signals}")
     return total_signals
 
-# تابع تحلیل نماد
-async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dominance_series: pd.Series) -> Optional[dict]:
+# تابع تحلیل نمادasync def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dominance_series: pd.Series) -> Optional[dict]:
         global VOLUME_REJECTS, SR_REJECTS
         start_time = time.time()
         logging.info(f"شروع تحلیل {symbol} @ {tf}, زمان شروع={datetime.now()}")
@@ -1120,9 +1119,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
                 score_short += sr_score_short
                 score_log["long"]["support_resistance"] = sr_score_long
                 score_log["short"]["support_resistance"] = sr_score_short
-                if distance_to_resistance <= s_r_buffer:
-                        SR_REJECTS += 1
-                if distance_to_support <= s_r_buffer:
+                if distance_to_resistance <= s_r_buffer or distance_to_support <= s_r_buffer:
                         SR_REJECTS += 1
 
                 spread, liquidity_score = await check_liquidity(exchange, symbol, df)
@@ -1189,27 +1186,27 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
                         "Resistance_Confirmation": distance_to_resistance <= resistance_buffer and (last["PinBar"] or last["Engulfing"])
                 }
                 indicator_score_long = (10 if conds_long["PinBar"] else 0) + \
-                              (10 if conds_long["Engulfing"] else 0) + \
-                              (15 if conds_long["Elliott_Wave"] else 0) + \
-                              (5 if conds_long["EMA_Cross"] else 0) + \
-                              (5 if conds_long["MACD_Cross"] else 0) + \
-                              (3 if conds_long["RSI_Oversold"] else 0) + \
-                              (3 if conds_long["Stochastic_Oversold"] else 0) + \
-                              (5 if conds_long["BB_Breakout"] else 0) + \
-                              (3 if conds_long["MFI_Oversold"] else 0) + \
-                              (5 if conds_long["ADX_Strong"] else 0) + \
-                              (10 if conds_long["Support_Confirmation"] else 0)
+                                      (10 if conds_long["Engulfing"] else 0) + \
+                                      (15 if conds_long["Elliott_Wave"] else 0) + \
+                                      (5 if conds_long["EMA_Cross"] else 0) + \
+                                      (5 if conds_long["MACD_Cross"] else 0) + \
+                                      (3 if conds_long["RSI_Oversold"] else 0) + \
+                                      (3 if conds_long["Stochastic_Oversold"] else 0) + \
+                                      (5 if conds_long["BB_Breakout"] else 0) + \
+                                      (3 if conds_long["MFI_Oversold"] else 0) + \
+                                      (5 if conds_long["ADX_Strong"] else 0) + \
+                                      (10 if conds_long["Support_Confirmation"] else 0)
                 indicator_score_short = (10 if conds_short["PinBar"] else 0) + \
-                             (10 if conds_short["Engulfing"] else 0) + \
-                             (15 if conds_short["Elliott_Wave"] else 0) + \
-                             (5 if conds_short["EMA_Cross"] else 0) + \
-                             (5 if conds_short["MACD_Cross"] else 0) + \
-                             (3 if conds_short["RSI_Overbought"] else 0) + \
-                             (3 if conds_short["Stochastic_Overbought"] else 0) + \
-                             (5 if conds_short["BB_Breakout"] else 0) + \
-                             (3 if conds_short["MFI_Overbought"] else 0) + \
-                             (5 if conds_short["ADX_Strong"] else 0) + \
-                             (10 if conds_short["Resistance_Confirmation"] else 0)
+                                       (10 if conds_short["Engulfing"] else 0) + \
+                                       (15 if conds_short["Elliott_Wave"] else 0) + \
+                                       (5 if conds_short["EMA_Cross"] else 0) + \
+                                       (5 if conds_short["MACD_Cross"] else 0) + \
+                                       (3 if conds_short["RSI_Overbought"] else 0) + \
+                                       (3 if conds_short["Stochastic_Overbought"] else 0) + \
+                                       (5 if conds_short["BB_Breakout"] else 0) + \
+                                       (3 if conds_short["MFI_Overbought"] else 0) + \
+                                       (5 if conds_short["ADX_Strong"] else 0) + \
+                                       (10 if conds_short["Resistance_Confirmation"] else 0)
 
                 if sum(1 for v in conds_long.values() if v) < min_conditions:
                         indicator_score_long = 0
@@ -1260,114 +1257,181 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
                 logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
                 THRESHOLD = 90
+                result = None
+                try:
+                        rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
+                        adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
+                except Exception as e:
+                        logging.error(f"خطا در محاسبه RSI یا ADX برای {symbol} @ {tf}: {str(e)}")
+                        return None
+
                 if score_long >= THRESHOLD and trend_1d_score >= 0:  # شرط اجباری روند 1d
                         signal_type = "Long"
-
                         # --- فیلتر اشباع خرید/فروش ---
-                        rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
-                        if signal_type == "Long" and rsi > 70:
+                        if rsi > 70:
                                 logging.info(f"RSI در ناحیه اشباع خرید است، سیگنال Long برای {symbol} رد شد")
                                 return None
 
                         # --- بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong ---
-                        adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
                         active_conditions = [k for k, v in conds_long.items() if v]
                         if "EMA_Cross" in active_conditions or "ADX_Strong" in active_conditions:
                                 if adx < 20:
                                         logging.info(f"بازار در وضعیت سایدوی است (ADX={adx})، سیگنال Long برای {symbol} رد شد")
                                         return None
 
-                        # محاسبه RR داینامیک بعد از تعیین نوع سیگنال
-                if support_4h > 0:
-                        dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
-                logging.info(f"نسبت RR داینامیک برای {symbol} (Long): RR={dynamic_rr}")
+                        # محاسبه RR داینامیک
+                        if support_4h > 0:
+                                dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
+                        logging.info(f"نسبت RR داینامیک برای {symbol} (Long): RR={dynamic_rr}")
 
-                entry_data = await find_entry_point(exchange, signal_type, support_4h, usdt_dominance_series)
-                if entry_data is None:
-                        logging.info(f"نقطه ورود Long برای {symbol} در 15m نشد")
-                        return None
+                        entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h, usdt_dominance_series)
+                        if entry_data is None:
+                                logging.info(f"نقطه ورود Long برای {symbol} در 15m یافت نشد")
+                                return None
 
-                entry = entry_data["entry_price"]
-                sl = entry_data["sl"]
-                tp = entry_data["tp"]
+                        entry = entry_data["entry_price"]
+                        sl = entry_data["sl"]
+                        tp = entry_data["tp"]
 
-                live_price = await get_live_price(exchange, symbol)
-                if live_price is None:
-                        logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، سیگنال رد می‌شود")
-                        return None
+                        live_price = await get_live_price(exchange, symbol)
+                        if live_price is None:
+                                logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، سیگنال رد می‌شود")
+                                return None
 
-                price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
-                if price_diff > 0.01:
-                        logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry}, live_price={live_price}, اختلاف={price_diff}")
-                        return None
+                        price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
+                        if price_diff > 0.01:
+                                logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry}, live_price={live_price}, اختلاف={price_diff}")
+                                return None
 
-                if sl >= entry or tp <= entry:
-                        logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry}, sl={sl}, tp={tp}")
-                        return None
+                        if sl >= entry or tp <= entry:
+                                logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry}, sl={sl}, tp={tp}")
+                                return None
 
-                if abs(entry - live_price) / live_price > 0.01:
-                        logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry}, live_price={live_price}")
-                        return None
+                        if abs(entry - live_price) / live_price > 0.01:
+                                logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry}, live_price={live_price}")
+                                return None
 
-                if abs(sl - live_price) / live_price > 0.1:
-                        logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl}, live_price={live_price}")
-                        return None
+                        if abs(sl - live_price) / live_price > 0.1:
+                                logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl}, live_price={live_price}")
+                                return None
 
-                if abs(tp - live_price) / live_price > 0.3:
-                        logging.warning(f"هدف سود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: tp={tp}, live_price={live_price}")
-                        return None
+                        if abs(tp - live_price) / live_price > 0.3:
+                                logging.warning(f"هدف سود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: tp={tp}, live_price={live_price}")
+                                return None
 
-                rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
-                position_size = calculate_position_size(10000, 1, entry, sl)
-                signal_strength = "قوی" if score_long > 90 else "متوسط"
+                        rr = round((tp - entry) / (entry - sl), 2) if (entry - sl) != 0 else 0
+                        position_size = calculate_position_size(10000, 1, entry, sl)
+                        signal_strength = "قوی" if score_long > 90 else "متوسط"
 
-                result = {
-                        "نوع معامله": "Long",
-                        "نماد": symbol,
-                        "تایم‌فریم": tf,
-                        "قیمت ورود": entry,
-                        "حد ضرر": sl,
-                        "هدف سود": tp,
-                        "ریسک به ریوارد": np.float64(rr),
-                        "حجم پوزیشن": position_size,
-                        "سطح اطمینان": min(score_long, 100),
-                        "امتیاز": score_long,
-                        "قدرت سیگنال": signal_strength,
-                        "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
-                        "روانشناسی": psych_long,
-                        "روند بازار": "صعودی",
-                        "فاندامنتال": f"امتیاز: {fundamental_score}",
-                        "شاخص ترس و طمع": fng_index,
-                        "روند 4h": trend_4h,
-                        "قیمت فعلی بازار": live_price
-                }
+                        result = {
+                                "نوع معامله": "Long",
+                                "نماد": symbol,
+                                "تایم‌فریم": tf,
+                                "قیمت ورود": entry,
+                                "حد ضرر": sl,
+                                "هدف سود": tp,
+                                "ریسک به ریوارد": np.float64(rr),
+                                "حجم پوزیشن": position_size,
+                                "سطح اطمینان": min(score_long, 100),
+                                "امتیاز": score_long,
+                                "قدرت سیگنال": signal_strength,
+                                "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
+                                "روانشناسی": psych_long,
+                                "روند بازار": "صعودی",
+                                "فاندامنتال": f"امتیاز: {fundamental_score}",
+                                "شاخص ترس و طمع": fng_index,
+                                "روند 4h": trend_4h,
+                                "قیمت فعلی بازار": live_price
+                        }
 
-                asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
-                logging.info(f"سیگنال Long تولید شد: {result}")
-                return result
+                elif score_short >= THRESHOLD and trend_1d_score <= 0:  # شرط اجباری روند 1d
+                        signal_type = "Short"
+                        # --- فیلتر اشباع خرید/فروش ---
+                        if rsi < 30:
+                                logging.info(f"RSI در ناحیه اشباع فروش است، سیگنال Short برای {symbol} رد شد")
+                                return None
 
-        # --- فیلتر اشباع خرید/فروش ---
-try:
-    rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
-    adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
-except Exception as e:
-    logging.error(f"خطا در محاسبه RSI یا ADX برای {symbol} @ {tf}: {str(e)}")
-    return None
+                        # --- بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong ---
+                        active_conditions = [k for k, v in conds_short.items() if v]
+                        if "EMA_Cross" in active_conditions or "ADX_Strong" in active_conditions:
+                                if adx < 20:
+                                        logging.info(f"بازار در وضعیت سایدوی است (ADX={adx})، سیگنال Short برای {symbol} رد شد")
+                                        return None
 
-# اگر RSI و ADX درست محاسبه شدند، ادامه اجرا:
-asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
-logging.info(f"سیگنال Short تولید شد: {result}")
-return result
+                        # محاسبه RR داینامیک
+                        if support_4h > 0:
+                                dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
+                        logging.info(f"نسبت RR داینامیک برای {symbol} (Short): RR={dynamic_rr}")
 
-    # اضافه کردن تسک trailing stop
-    asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
-    logging.info(f"سیگنال Short تولید شد: {result}")
-    return result
+                        entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h, usdt_dominance_series)
+                        if entry_data is None:
+                                logging.info(f"نقطه ورود Short برای {symbol} در 15m یافت نشد")
+                                return None
 
-except Exception as e:
-    logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
-    return None
-    # تابع اسکن همه نمادها
+                        entry = entry_data["entry_price"]
+                        sl = entry_data["sl"]
+                        tp = entry_data["tp"]
+
+                        live_price = await get_live_price(exchange, symbol)
+                        if live_price is None:
+                                logging.warning(f"قیمت واقعی برای {symbol} دریافت نشد، سیگنال رد می‌شود")
+                                return None
+
+                        price_diff = abs(entry - live_price) / live_price if live_price != 0 else float('inf')
+                        if price_diff > 0.01:
+                                logging.warning(f"اختلاف قیمت ورود با قیمت واقعی برای {symbol} بیش از حد است: entry={entry}, live_price={live_price}, اختلاف={price_diff}")
+                                return None
+
+                        if sl <= entry or tp >= entry:
+                                logging.warning(f"حد ضرر یا هدف سود برای {symbol} نامعتبر است: entry={entry}, sl={sl}, tp={tp}")
+                                return None
+
+                        if abs(entry - live_price) / live_price > 0.01:
+                                logging.warning(f"قیمت ورود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: entry={entry}, live_price={live_price}")
+                                return None
+
+                        if abs(sl - live_price) / live_price > 0.1:
+                                logging.warning(f"حد ضرر برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: sl={sl}, live_price={live_price}")
+                                return None
+
+                        if abs(tp - live_price) / live_price > 0.3:
+                                logging.warning(f"هدف سود برای {symbol} با قیمت فعلی بازار فاصله زیادی دارد: tp={tp}, live_price={live_price}")
+                                return None
+
+                        rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
+                        position_size = calculate_position_size(10000, 1, entry, sl)
+                        signal_strength = "قوی" if score_short > 90 else "متوسط"
+
+                        result = {
+                                "نوع معامله": "Short",
+                                "نماد": symbol,
+                                "تایم‌فریم": tf,
+                                "قیمت ورود": entry,
+                                "حد ضرر": sl,
+                                "هدف سود": tp,
+                                "ریسک به ریوارد": np.float64(rr),
+                                "حجم پوزیشن": position_size,
+                                "سطح اطمینان": min(score_short, 100),
+                                "امتیاز": score_short,
+                                "قدرت سیگنال": signal_strength,
+                                "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
+                                "روانشناسی": psych_short,
+                                "روند بازار": "نزولی",
+                                "فاندامنتال": f"امتیاز: {fundamental_score}",
+                                "شاخص ترس و طمع": fng_index,
+                                "روند 4h": trend_4h,
+                                "قیمت فعلی بازار": live_price
+                        }
+
+                if result:
+                        asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
+                        logging.info(f"سیگنال {result['نوع معامله']} تولید شد: {result}")
+                        return result
+
+        except Exception as e:
+                logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
+                return None
+                    # تابع اسکن همه نمادها
 async def scan_all_crypto_symbols(on_signal=None) -> None:
     exchange = ccxt.mexc({
         'enableRateLimit': True,
