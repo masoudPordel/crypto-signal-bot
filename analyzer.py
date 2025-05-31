@@ -1041,7 +1041,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
             logging.info(f"تحلیل برای {symbol} فقط در تایم‌فریم 1h انجام می‌شود. تایم‌فریم فعلی: {tf}")
             return None
 
-        df = await get_ohlcv_cached(exchange, symbol, tf, limit=50)
+        df = await get_ohlcv_cached(exchange, symbol, tf, limit=100)
         if df is None or len(df) < 30:
             logging.warning(f"داده ناکافی برای {symbol} @ {tf}: تعداد کندل‌ها={len(df) if df is not None else 0}")
             return None
