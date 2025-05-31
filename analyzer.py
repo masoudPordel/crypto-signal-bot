@@ -767,8 +767,8 @@ async def find_entry_point(
                         log_rejection(f"قدرت روند خیلی ضعیف (ADX < 15)، سیگنال رد شد", {"adx_15m": adx})
                         return None
 
-                # امتیاز دامیننس USDT
-                 usdt_score = 0
+                              # امتیاز دامیننس USDT
+                usdt_score = 0
                 if usdt_dominance_series is not None and not usdt_dominance_series.empty:
                         try:
                                 usdt_score = get_usdt_dominance_score(usdt_dominance_series)
@@ -782,14 +782,8 @@ async def find_entry_point(
                                 score_details["USDT_Dominance"] = 0
                 else:
                         logging.warning("داده دامیننس USDT در دسترس نیست، امتیاز صفر اعمال شد")
-                        score_details["USDT_Dominance"] = 0                # امتیاز میانگین متحرک
-                ma_score = get_moving_average_score(df_1h, price_col="close")
-                if ma_score != 0:
-                        weighted_ma_score = ma_score * weights["moving_average"]
-                        signal_score += weighted_ma_score
-                        score_details["Moving_Average"] = weighted_ma_score
-                        log_debug(f"میانگین متحرک: امتیاز {weighted_ma_score:.2f}")
-
+                        score_details["USDT_Dominance"] = 0
+                        
                 # امتیاز الگوهای قیمتی
                 price_pattern_score = 0
                 if last_15m.get("HeadAndShoulders"):
