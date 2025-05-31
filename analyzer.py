@@ -1355,14 +1355,14 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
                         "timeframe": tf
                 }
                 return result                "نوع معامله": "Long",
-                "نماد": symbol,return {
+return {
     "نوع معامله": "Long",
     "نماد": symbol,
     "تایم‌فریم": tf,
     "قیمت ورود": entry,
     "حد ضرر": sl,
     "هدف سود": tp,
-    "ریسک به ریوارد": np.float64(rr),
+    "ریسک به ریوارد": float(rr),
     "حجم پوزیشن": position_size,
     "سطح اطمینان": min(score_long, 100),
     "امتیاز": score_long,
