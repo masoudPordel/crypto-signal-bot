@@ -1346,22 +1346,22 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
                 logging.info(f"سیگنال Long تولید شد: {result}")
                 return result
                         # --- فیلتر اشباع خرید/فروش ---
-                        rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().loc[-1]
+        rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
+        
+        # --- بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong ---
+        adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
+        
+        # اضافه کردن تسک trailing stop
+        asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
+        logging.info(f"سیگنال Short تولید شد: {result}")
+        return result
 
-                        # --- بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong ---
-                        adx = ta.trend.ADXIndicator(high=df["high'], low=df["low"], close=df["close"], window=14).adx(). ​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
-                        
-            # اضافه کردن تسک trailing stop
-            asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
-            logging.info(f"سیگنال Short تولید شد: {result}")
-            return result
+    logging.info(f"سیگنال برای {symbol} @ {tf} رد شد")
+    return None
 
-        logging.info(f"سیگنال برای {symbol} @ {tf} رد شد")
-        return None
-
-    except Exception as e:
-        logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
-        return None
+except Exception as e:
+    logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
+    return None
 
 # تابع اسکن همه نمادها
 async def scan_all_crypto_symbols(on_signal=None) -> None:
