@@ -1355,8 +1355,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
                         "timeframe": tf
                 }
                 return result                "نوع معامله": "Long",
-return {
-    "نوع معامله": "Long",
+result = {
     "نماد": symbol,
     "تایم‌فریم": tf,
     "قیمت ورود": entry,
@@ -1372,6 +1371,10 @@ return {
     "روند بازار": "صعودی",
     "فاندامنتال": f"امتیاز: {fundamental_score}"
 }
+
+result["نوع معامله"] = "Long"
+
+return result
 
         elif score_short >= THRESHOLD and trend_1d_score <= 0:  # شرط اجباری روند 1d
             signal_type = "Short"
