@@ -64,16 +64,15 @@ COINMARKETCAL_API_KEY = os.getenv("COINMARKETCAL_API_KEY", "iFrSo3PUBJ36P8ZnEIBM
 usdt_dominance_cache = TTLCache(maxsize=1, ttl=3600)  # 1 ساعت
 
 # تعریف کش جهانی
-usdt_dominance_cache = {}
-
 def fetch_usdt_dominance(max_retries: int = 3, initial_delay: float = 1.0) -> pd.Series:
     """
     دریافت دامیننس USDT از CoinGecko API با کشینگ و مدیریت خطای 429.
     """
     cache_key = "usdt_dominance"
     if cache_key in usdt_dominance_cache:
-        logging.debug("دریافت دامیننس USDT از کش")
-        return usdt_dominance_cache[cache_key]
+        dominance_series = usdt_dominance_cache[cache_key]
+        logging.debug(f"دریافت دامیننس USDT از کش: مقدار={dominance_series.iloc[-1] if not dominance_series.empty else 'خالی'}")
+        return dominance_series
 
     for attempt in range(max_retries):
         try:
@@ -87,7 +86,7 @@ def fetch_usdt_dominance(max_retries: int = 3, initial_delay: float = 1.0) -> pd
             # ساخت pd.Series برای سازگاری با analyze_symbol
             dominance_series = pd.Series([dominance], index=[pd.Timestamp.now()])
             usdt_dominance_cache[cache_key] = dominance_series
-            logging.debug("دامیننس USDT با موفقیت دریافت و کش شد")
+            logging.debug(f"دامیننس USDT با موفقیت از API دریافت و کش شد: مقدار={dominance}")
             return dominance_series
 
         except requests.exceptions.HTTPError as e:
