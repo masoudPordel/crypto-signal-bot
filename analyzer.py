@@ -1272,14 +1272,23 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
+        # تعریف آستانه و محاسبه اندیکاتورها RSI و ADX
         THRESHOLD = 90
         result = None
-        try:
-            rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
-            adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
-        except Exception as e:
-            logging.error(f"خطا در محاسبه RSI یا ADX برای {symbol} @ {tf}: {str(e)}")
-            return None
+
+        # پیش‌پردازش داده‌ها برای جلوگیری از خطا
+        if df is None or len(df) < 14 or df["close"].isna().any() or (df["close"] == 0).any():
+                logging.warning(f"داده ناکافی یا نامعتبر برای {symbol} @ {tf}")
+                rsi = 50  # مقدار پیش‌فرض
+                adx = 0   # مقدار پیش‌فرض
+        else:
+                try:
+                        rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
+                        adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
+                except Exception as e:
+                        logging.error(f"خطا در محاسبه RSI یا ADX برای {symbol} @ {tf}: {str(e)}")
+                        rsi = 50  # مقدار پیش‌فرض
+                        adx = 0   # مقدار پیش‌فرض
 
         if score_long >= THRESHOLD and trend_1d_score >= 0:  # شرط اجباری روند 1d
             signal_type = "Long"
