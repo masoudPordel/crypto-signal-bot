@@ -1004,6 +1004,7 @@ def ablation_test(symbol_results: list, filter_name: str) -> int:
     return total_signals
 
 # تابع تحلیل نماد
+async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dominance_series: pd.Series) -> Optional[dict]:
     global VOLUME_REJECTS, SR_REJECTS
     start_time = time.time()
     logging.info(f"شروع تحلیل {symbol} @ {tf}, زمان شروع={datetime.now()}")
@@ -1014,6 +1015,7 @@ def ablation_test(symbol_results: list, filter_name: str) -> int:
             logging.warning(f"داده دامیننس USDT برای {symbol} در دسترس نیست، از سری خالی استفاده می‌شود")
             usdt_dominance_series = pd.Series()
 
+        # دریافت ساختار بازار
         market_structure = await analyze_market_structure(exchange, symbol)
         trend_4h = market_structure["trend"]
         trend_score_4h = market_structure["score"]
