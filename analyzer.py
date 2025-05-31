@@ -1349,35 +1349,15 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
         # --- فیلتر اشباع خرید/فروش ---
 try:
     rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
-
-    # --- بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong ---
     adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
+except Exception as e:
+    logging.error(f"خطا در محاسبه RSI یا ADX برای {symbol} @ {tf}: {str(e)}")
+    return None
 
-    # محاسبات مربوط به پوزیشن Short
-    rr = round((entry - tp) / (sl - entry), 2) if (sl - entry) != 0 else 0
-    position_size = calculate_position_size(10000, 1, entry, sl)
-    signal_strength = "قوی" if score_short > 90 else "متوسط"
-
-    result = {
-        "نوع معامله": "Short",
-        "نماد": symbol,
-        "تایم‌فریم": tf,
-        "قیمت ورود": entry,
-        "حد ضرر": sl,
-        "هدف سود": tp,
-        "ریسک به ریوارد": np.float64(rr),
-        "حجم پوزیشن": position_size,
-        "سطح اطمینان": min(score_short, 100),
-        "امتیاز": score_short,
-        "قدرت سیگنال": signal_strength,
-        "تحلیل": " | ".join([k for k, v in conds_short.items() if v]),
-        "روانشناسی": psych_short,
-        "روند بازار": "نزولی",
-        "فاندامنتال": f"امتیاز: {fundamental_score}",
-        "شاخص ترس و طمع": fng_index,
-        "روند 4h": trend_4h,
-        "قیمت فعلی بازار": live_price
-    }
+# اگر RSI و ADX درست محاسبه شدند، ادامه اجرا:
+asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
+logging.info(f"سیگنال Short تولید شد: {result}")
+return result
 
     # اضافه کردن تسک trailing stop
     asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
