@@ -1347,9 +1347,6 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
                 return result
                         # --- فیلتر اشباع خرید/فروش ---
                         rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().loc[-1]
-                        if signal_type == "Short" and rsi < 30:
-                            logging.info(f"RSI در ناحیه اشباع فروش است، سیگنال Short برای {symbol} رد شد")
-                            return None
 
                         # --- بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong ---
                         adx = ta.trend.ADXIndicator(high=df["high'], low=df["low"], close=df["close"], window=14).adx(). ​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
