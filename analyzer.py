@@ -1345,8 +1345,9 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
                 asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
                 logging.info(f"سیگنال Long تولید شد: {result}")
                 return result
-                        # --- فیلتر اشباع خرید/فروش ---
-        rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
+
+        # --- فیلتر اشباع خرید/فروش ---
+        rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]1]
         
         # --- بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong ---
         adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
