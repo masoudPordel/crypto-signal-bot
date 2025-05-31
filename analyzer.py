@@ -1355,24 +1355,23 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
                         "timeframe": tf
                 }
                 return result                "نوع معامله": "Long",
-                "نماد": symbol,
-                "تایم‌فریم": tf,
-                "قیمت ورود": entry,
-                "حد ضرر": sl,
-                "هدف سود": tp,
-                "ریسک به ریوارد": np.float64(rr),
-                "حجم پوزیشن": position_size,
-                "سطح اطمینان": min(score_long, 100),
-                "امتیاز": score_long,
-                "قدرت سیگنال": signal_strength,
-                "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
-                "روانشناسی": psych_long,
-                "روند بازار": "صعودی",
-                "فاندامنتال": f"امتیاز: {fundamental_score}",
-                "شاخص ترس و طمع": fng_index,
-                "روند 4h": trend_4h,
-                "قیمت فعلی بازار": live_price
-            }
+                "نماد": symbol,return {
+    "نوع معامله": "Long",
+    "نماد": symbol,
+    "تایم‌فریم": tf,
+    "قیمت ورود": entry,
+    "حد ضرر": sl,
+    "هدف سود": tp,
+    "ریسک به ریوارد": np.float64(rr),
+    "حجم پوزیشن": position_size,
+    "سطح اطمینان": min(score_long, 100),
+    "امتیاز": score_long,
+    "قدرت سیگنال": signal_strength,
+    "تحلیل": " | ".join([k for k, v in conds_long.items() if v]),
+    "روانشناسی": psych_long,
+    "روند بازار": "صعودی",
+    "فاندامنتال": f"امتیاز: {fundamental_score}"
+}
 
         elif score_short >= THRESHOLD and trend_1d_score <= 0:  # شرط اجباری روند 1d
             signal_type = "Short"
