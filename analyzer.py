@@ -262,7 +262,9 @@ class IndicatorCalculator:
                 except Exception as e:
                         logging.error(f"Error in compute_macd: {str(e)}")
                         nan_series = pd.Series(np.nan, index=df.index)
-                        return nan_series, nan_series, nan_seriesclass PatternDetector:
+                        return nan_series, nan_series, nan_series
+                         
+class PatternDetector:
         @staticmethod
         def detect_pin_bar(df: pd.DataFrame) -> pd.Series:
                 df["body"] = abs(df["close"] - df["open"])
