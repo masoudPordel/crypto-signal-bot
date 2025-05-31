@@ -70,10 +70,8 @@ COINMARKETCAL_API_KEY = os.getenv("COINMARKETCAL_API_KEY", "iFrSo3PUBJ36P8ZnEIBM
 # کش برای دامیننس USDT
 usdt_dominance_cache = TTLCache(maxsize=1, ttl=3600)  # 1 ساعت
 
-# تعریف کش جهانیdef fetch_usdt_dominance(max_retries: int = 3, initial_delay: float = 2.0) -> pd.Series:
-    """
-    دریافت دامیننس USDT از CoinGecko API با کشینگ و مدیریت خطای 429.
-    """
+def fetch_usdt_dominance(max_retries: int = 3, initial_delay: float = 2.0) -> pd.Series:
+    """دریافت دامیننس USDT از CoinGecko API با کشینگ و مدیریت خطای 429."""
     cache_key = "usdt_dominance"
     logging.debug("شروع دریافت دامیننس USDT")
     
