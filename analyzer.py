@@ -1524,12 +1524,16 @@ async def scan_all_crypto_symbols(on_signal=None) -> None:
         'rateLimit': 2000
     })
     try:
-        logging.debug(f"شروع بارگذاری بازارها از MEXC")
+        logging.info(f"شروع بارگذاری بازارها از MEXC")
         await exchange.load_markets()
         logging.info(f"بازارها بارگذاری شد: تعداد نمادها={len(exchange.symbols)}")
         top_coins = get_top_500_symbols_from_cmc()
         usdt_symbols = [s for s in exchange.symbols if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)]
         logging.debug(f"فیلتر نمادها: تعداد USDT symbols={len(usdt_symbols)}")
+
+        # دریافت usdt_dominance_series
+        usdt_dominance_series = await fetch_usdt_dominance(exchange) if 'fetch_usdt_dominance' in globals() else pd.Series()
+
         chunk_size = 10
         total_chunks = (len(usdt_symbols) + chunk_size - 1) // chunk_size
         symbol_results = []
@@ -1538,7 +1542,7 @@ async def scan_all_crypto_symbols(on_signal=None) -> None:
             logging.info(f"شروع اسکن دسته {idx+1}/{total_chunks}: {chunk}")
             tasks = []
             for sym in chunk:
-                tasks.append(asyncio.create_task(analyze_symbol(exchange, sym, "1h")))
+                tasks.append(asyncio.create_task(analyze_symbol(exchange, sym, "1h", usdt_dominance_series)))
             async with semaphore:
                 for task in asyncio.as_completed(tasks):
                     try:
