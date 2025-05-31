@@ -1476,7 +1476,7 @@ async def scan_all_crypto_symbols(on_signal=None) -> None:
         ablation_test(symbol_results, "volume")
         ablation_test(symbol_results, "liquidity")
         ablation_test(symbol_results, "support_resistance")
-        logging.info(f"Rejection statistics: liquidity={LIQUIDITY_REJECTS:,}, volume={VOLUME_REJECTS}, support=/resistance:={SR_REJECTS}}")
+        logging.info(f"Rejection statistics: liquidity={LIQUIDITY_REJECTS:,}, volume={VOLUME_REJECTS}, support/resistance={SR_REJECTS}")
 
     except Exception as e:
         logging.error(f"General error in scanning crypto symbols: {str(e)}")
