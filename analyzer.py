@@ -1517,18 +1517,6 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
                 logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
                 return None
                 
-                            # اضافه کردن تسک trailing stop
-            asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
-            logging.info(f"سیگنال Short تولید شد: {result}")
-            return result
-
-        logging.info(f"سیگنال برای {symbol} @ {tf} رد شد")
-        return None
-
-    except Exception as e:
-        logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
-        return None
-
 # تابع اسکن همه نمادها
 async def scan_all_crypto_symbols(on_signal=None) -> None:
     exchange = ccxt.mexc({
