@@ -29,6 +29,42 @@ logging.basicConfig(
 # تنظیمات ثابت
 CMC_API_KEY = os.getenv("CMC_API_KEY", "ff5a7b31-458f-4e5a-a684-acba34c33c11")
 COINMARKETCAL_API_KEY = os.getenv("COINMARKETCAL_API_KEY", "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa")
+
+def fetch_usdt_dominance() -> pd.Series:
+        """
+        دریافت دامیننس USDT از CoinGecko API و تبدیل به سری پانداس.
+        """
+        try:
+                response = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                dominance = data["data"]["market_cap_percentage"].get("usdt", 0)
+                if dominance == 0:
+                        logging.warning("دامیننس USDT دریافت نشد، مقدار صفر تنظیم شد")
+                # سری با 100 مقدار برای هماهنگی با OHLCV
+                return pd.Series([dominance] * 100)
+        except Exception as e:
+                logging.error(f"خطا در دریافت دامیننس USDT: {str(e)}")
+                return pd.Series()  # سری خالی در صورت خطا
+                
+def get_usdt_dominance_score(usdt_dominance_series: pd.Series) -> float:
+        """
+        محاسبه امتیاز دامیننس USDT بر اساس مقدار آن.
+        """
+        try:
+                if usdt_dominance_series.empty:
+                        logging.warning("سری دامیننس USDT خالی است، امتیاز صفر")
+                        return 0
+                last_dominance = usdt_dominance_series.iloc[-1]
+                if last_dominance < 4.0:  # آستانه پایین برای صعودی
+                        return 1.0  # مثبت برای Long
+                elif last_dominance > 6.0:  # آستانه بالا برای نزولی
+                        return -1.0  # منفی برای Short
+                return 0.0  # خنثی
+        except Exception as e:
+                logging.error(f"خطا در محاسبه امتیاز دامیننس USDT: {str(e)}")
+                return 0.0
+                
 TIMEFRAMES = ["15m", "1h", "4h", "1d"]
 
 VOLUME_WINDOW = 20
@@ -767,7 +803,7 @@ async def find_entry_point(
                         log_rejection(f"قدرت روند خیلی ضعیف (ADX < 15)، سیگنال رد شد", {"adx_15m": adx})
                         return None
 
-                              # امتیاز دامیننس USDT
+                                      # امتیاز دامیننس USDT
                 usdt_score = 0
                 if usdt_dominance_series is not None and not usdt_dominance_series.empty:
                         try:
@@ -776,7 +812,7 @@ async def find_entry_point(
                                         weighted_usdt_score = usdt_score * weights["usdt_dominance"]
                                         signal_score += weighted_usdt_score
                                         score_details["USDT_Dominance"] = weighted_usdt_score
-                                        logging.debug(f"دامیننس USDT: امتیاز {weighted_usdt_score:.2f}")
+                                        log_debug(f"دامیننس USDT: امتیاز {weighted_usdt_score:.2f}")
                         except Exception as e:
                                 logging.error(f"خطا در محاسبه امتیاز دامیننس USDT: {str(e)}")
                                 score_details["USDT_Dominance"] = 0
@@ -969,6 +1005,11 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
     logging.info(f"شروع تحلیل {symbol} @ {tf}, زمان شروع={datetime.now()}")
 
     try:
+        # دریافت دامیننس USDT
+        usdt_dominance_series = fetch_usdt_dominance()
+        if usdt_dominance_series.empty:
+                logging.warning(f"داده دامیننس USDT برای {symbol} دریافت نشد، از سری خالی استفاده می‌شود")
+
         market_structure = await analyze_market_structure(exchange, symbol)
         trend_4h = market_structure["trend"]
         trend_score_4h = market_structure["score"]
@@ -976,58 +1017,65 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         resistance_4h = market_structure["resistance"]
         fng_index = market_structure.get("fng_index", 50)
 
-        if tf != "1h":
-            logging.info(f"تحلیل برای {symbol} فقط در تایم‌فریم 1h انجام می‌شود. تایم‌فریم فعلی: {tf}")
-            return None
+        # ... (بقیه کد تا قبل از فراخوانی find_entry_point)
 
-        df = await get_ohlcv_cached(exchange, symbol, tf, limit=50)
-        if df is None or len(df) < 30:
-            logging.warning(f"داده ناکافی برای {symbol} @ {tf}: تعداد کندل‌ها={len(df) if df is not None else 0}")
-            return None
-        logging.info(f"داده دریافت شد برای {symbol} @ {tf} در {time.time() - start_time:.2f} ثانیه, تعداد ردیف‌ها={len(df)}")
+        # فراخوانی find_entry_point برای Long
+        if score_long >= THRESHOLD and trend_1d_score >= 0:
+            signal_type = "Long"
+            # فیلترهای RSI و ADX
+            rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
+            if signal_type == "Long" and rsi > 70:
+                logging.info(f"RSI در ناحیه اشباع خرید است، سیگنال Long برای {symbol} رد شد")
+                return None
+            adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
+            active_conditions = [k for k, v in conds_long.items() if v]
+            if "EMA_Cross" in active_conditions or "ADX_Strong" in active_conditions:
+                if adx < 20:
+                    logging.info(f"بازار در وضعیت سایدوی است (ADX={adx})، سیگنال Long برای {symbol} رد شد")
+                    return None
+            # محاسبه RR داینامیک
+            if support_4h > 0:
+                dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
+            logging.info(f"نسبت RR داینامیک برای {symbol} (Long): RR={dynamic_rr}")
+            # فراخوانی find_entry_point با usdt_dominance_series
+            entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h, usdt_dominance_series)
+            if entry_data is None:
+                logging.info(f"نقطه ورود Long برای {symbol} در 15m پیدا نشد")
+                return None
+            # ... (بقیه کد برای Long)
 
-        required_columns = ['open', 'high', 'low', 'close', 'volume']
-        if not all(col in df.columns for col in required_columns):
-            logging.error(f"ستون‌های مورد نیاز در دیتافریم {symbol} @ {tf} وجود ندارند")
-            return None
-        df = df.ffill().bfill().fillna(0)
+        # فراخوانی find_entry_point برای Short
+        elif score_short >= THRESHOLD and trend_1d_score <= 0:
+            signal_type = "Short"
+            # فیلترهای RSI و ADX
+            rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
+            if signal_type == "Short" and rsi < 30:
+                logging.info(f"RSI در ناحیه اشباع فروش است، سیگنال Short برای {symbol} رد شد")
+                return None
+            adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
+            active_conditions = [k for k, v in conds_short.items() if v]
+            if "EMA_Cross" in active_conditions or "ADX_Strong" in active_conditions:
+                if adx < 20:
+                    logging.info(f"بازار در وضعیت سایدوی است (ADX={adx})، سیگنال Short برای {symbol} رد شد")
+                    return None
+            # محاسبه RR داینامیک
+            if resistance_4h > 0:
+                dynamic_rr = max(dynamic_rr, (resistance_4h - support_4h) / risk_buffer)
+            logging.info(f"نسبت RR داینامیک برای {symbol} (Short): RR={dynamic_rr}")
+            # فراخوانی find_entry_point با usdt_dominance_series
+            entry_data = await find_entry_point(exchange, symbol, signal_type, support_4h, resistance_4h, usdt_dominance_series)
+            if entry_data is None:
+                logging.info(f"نقطه ورود Short برای {symbol} در 15m پیدا نشد")
+                return None
+            # ... (بقیه کد برای Short)
 
-        df = compute_indicators(df)
-        last = df.iloc[-1]
+        logging.info(f"سیگنال برای {symbol} @ {tf} رد شد")
+        return None
 
-        score_long = 0
-        score_short = 0
-        score_log = {"long": {}, "short": {}}
-
-        # تأیید روند با تایم‌فریم بالاتر (1d)
-        df_1d = await get_ohlcv_cached(exchange, symbol, "1d")
-        trend_1d_score = 0
-        if df_1d is not None and len(df_1d) > 0:
-            df_1d = compute_indicators(df_1d)
-            long_trend_1d = df_1d["EMA12"].iloc[-1] > df_1d["EMA26"].iloc[-1]
-            trend_1d_score = 10 if long_trend_1d else -10
-            logging.info(f"تأیید روند 1d برای {symbol}: trend_score={trend_1d_score}")
-
-        vol_avg = df["volume"].rolling(VOLUME_WINDOW).mean().iloc[-1]
-        current_vol = df["volume"].iloc[-1]
-        vol_mean = df["volume"].rolling(20).mean().iloc[-1]
-        vol_std = df["volume"].rolling(20).std().iloc[-1]
-        vol_threshold = vol_mean * 0.3
-        vol_score = 10 if current_vol >= vol_threshold else -2
-        score_long += vol_score
-        score_short += vol_score
-        score_log["long"]["volume"] = vol_score
-        score_log["short"]["volume"] = vol_score
-        logging.info(f"حجم برای {symbol} @ {tf}: current_vol={current_vol:.2f}, threshold={vol_threshold:.2f}, score={vol_score}")
-        if current_vol < vol_threshold:
-            VOLUME_REJECTS += 1
-
-        # مقدار پیش‌فرض برای dynamic_rr
-        atr_1h = df["ATR"].iloc[-1]
-        risk_buffer = atr_1h * 2
-        dynamic_rr = 2.0  # مقدار پیش‌فرض
-        logging.info(f"نسبت RR پیش‌فرض برای {symbol}: RR={dynamic_rr}")
-
+    except Exception as e:
+        logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
+        return None
+        
         volatility = df["ATR"].iloc[-1] / last["close"]
         vola_mean = (df["ATR"] / df["close"]).rolling(20).mean().iloc[-1]
         vola_std = (df["ATR"] / df["close"]).rolling(20).std().iloc[-1]
@@ -1402,6 +1450,10 @@ async def scan_all_crypto_symbols(on_signal=None) -> None:
         top_coins = get_top_500_symbols_from_cmc()
         usdt_symbols = [s for s in exchange.symbols if any(s.startswith(f"{coin}/") and s.endswith("/USDT") for coin in top_coins)]
         logging.debug(f"فیلتر نمادها: تعداد USDT symbols={len(usdt_symbols)}")
+        # دریافت دامیننس USDT
+        usdt_dominance_series = fetch_usdt_dominance()
+        if usdt_dominance_series.empty:
+                logging.warning("داده دامیننس USDT دریافت نشد، از سری خالی استفاده می‌شود")
         chunk_size = 10
         total_chunks = (len(usdt_symbols) + chunk_size - 1) // chunk_size
         symbol_results = []
@@ -1434,7 +1486,7 @@ async def scan_all_crypto_symbols(on_signal=None) -> None:
     finally:
         logging.debug(f"بستن اتصال به MEXC")
         await exchange.close()
-
+        
 # تابع اصلی برای تست
 async def main():
     exchange = ccxt.mexc({
