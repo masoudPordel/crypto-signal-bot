@@ -233,25 +233,36 @@ class IndicatorCalculator:
                         return df[['MACD_Bullish_Divergence', 'MACD_Bearish_Divergence']]
 
         @staticmethod
-        def compute_macd(df: pd.DataFrame, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9):
+        def compute_macd(df: pd.DataFrame, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9) -> tuple[pd.Series, pd.Series, pd.Series]:
                 try:
-                        if len(df) < slow_period + signal_period:
-                                raise ValueError("تعداد کندل‌ها برای محاسبه MACD کافی نیست")
-                        ema_fast = df['close'].ewm(span=fast_period, adjust=False).mean()
-                        ema_slow = df['close'].ewm(span=slow_period, adjust=False).mean()
+                        if df["close"].isna().any() or (df["close"] <= 0).any() or len(df) < slow_period + signal_period:
+                                logging.warning(f"Invalid or insufficient data for MACD calculation: candles={len(df)}")
+                                nan_series = pd.Series(np.nan, index=df.index)
+                                return nan_series, nan_series, nan_series
+
+                        close_data = df[["close"]].ffill().bfill()["close"]
+
+                        if (close_data == 0).any():
+                                logging.warning("Close prices contain zero values")
+                                nan_series = pd.Series(np.nan, index=df.index)
+                                return nan_series, nan_series, nan_series
+
+                        ema_fast = close_data.ewm(span=fast_period, adjust=False).mean()
+                        ema_slow = close_data.ewm(span=slow_period, adjust=False).mean()
                         macd = ema_fast - ema_slow
                         signal = macd.ewm(span=signal_period, adjust=False).mean()
                         hist = macd - signal
-                        macd = macd.reindex(df.index).fillna(0)
-                        signal = signal.reindex(df.index).fillna(0)
-                        hist = hist.reindex(df.index).fillna(0)
+
+                        macd = macd.reindex(df.index)
+                        signal = signal.reindex(df.index)
+                        hist = hist.reindex(df.index)
+
                         return macd, signal, hist
+
                 except Exception as e:
-                        logging.error(f"خطا در compute_macd: {str(e)}")
-                        zero_series = pd.Series([0] * len(df), index=df.index)
-                        return zero_series, zero_series, zero_series
-                        
-class PatternDetector:
+                        logging.error(f"Error in compute_macd: {str(e)}")
+                        nan_series = pd.Series(np.nan, index=df.index)
+                        return nan_series, nan_series, nan_seriesclass PatternDetector:
         @staticmethod
         def detect_pin_bar(df: pd.DataFrame) -> pd.Series:
                 df["body"] = abs(df["close"] - df["open"])
@@ -1260,13 +1271,41 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
 
         THRESHOLD = 90
         result = None
-        try:
-            rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
-            adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
-        except Exception as e:
-            logging.error(f"خطا در محاسبه RSI یا ADX برای {symbol} @ {tf}: {str(e)}")
-            return None
+try:
+    # بررسی داده‌های ورودی
+    if (
+        df["high"].isna().any()
+        or df["low"].isna().any()
+        or df["close"].isna().any()
+        or (df["high"] <= df["low"]).any()
+        or (df["close"] <= 0).any()
+        or len(df) < 14
+    ):
+        logging.warning(f"داده‌های ورودی برای {symbol} @ {tf} نامعتبر یا ناکافی هستند")
+        return None
 
+    # اطمینان از اینکه high, low, close مقادیر معتبر دارند
+    df = df[["high", "low", "close"]].ffill().bfill()
+    if (df["high"] == df["low"]).all() or (df["close"] == 0).any():
+        logging.warning(f"داده‌های قیمت برای {symbol} @ {tf} یکنواخت یا صفر هستند")
+        return None
+
+    # محاسبه RSI
+    rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
+    if np.isnan(rsi) or np.isinf(rsi):
+        logging.warning(f"مقدار RSI برای {symbol} @ {tf} نامعتبر است")
+        return None
+
+    # محاسبه ADX
+    adx_indicator = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14)
+    adx = adx_indicator.adx().iloc[-1]
+    if np.isnan(adx) or np.isinf(adx):
+        logging.warning(f"مقدار ADX برای {symbol} @ {tf} نامعتبر است")
+        return None
+except Exception as e:
+    logging.error(f"خطا در محاسبه RSI یا ADX برای {symbol} @ {tf}: {str(e)}")
+    return None
+    
         if score_long >= THRESHOLD and trend_1d_score >= 0:  # شرط اجباری روند 1d
             signal_type = "Long"
             # --- فیلتر اشباع خرید/فروش ---
