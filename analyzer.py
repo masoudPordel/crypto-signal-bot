@@ -1275,11 +1275,15 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str, usdt_dom
         result = None
         
         try:
-            # کد
+            result = {
+                "symbol": symbol,
+                "score_long": score_long,
+                "score_short": score_short,
+                "score_log": score_log
+            }
         except Exception as e:
             logging.error(f"Error in function for {symbol}: {str(e)}")
-            return None
-            
+            return None           
         if score_long >= THRESHOLD and trend_1d_score >= 0:  # شرط اجباری روند 1d
                 signal_type = "Long"
                 # --- فیلتر اشباع خرید/فروش ---
