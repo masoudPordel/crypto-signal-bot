@@ -1636,15 +1636,14 @@ async def main():
         logging.debug(f"بستن اتصال به MEXC پس از تست")
         await exchange.close()
 
-# اجرای برنامه
-if __name__ == "__main__":
-    asyncio.run(main())
-    
-    async def test_analyze_symbol():
-    logging.info("تست تحلیل نمادها شروع شد")
-    exchange = ccxt.binance()  # یا صرافی خودت
-    symbols = ["CKB/USDT", "COMP/USDT", "CORE/USDT"]
-    tf = "1h"
+# اجرای برنامهif __name__ == "__main__":
+        asyncio.run(main())
+
+        async def test_analyze_symbol():
+                logging.info("تست تحلیل نمادها شروع شد")
+                exchange = ccxt.binance()  # یا صرافی خودت
+                symbols = ["CKB/USDT", "COMP/USDT", "CORE/USDT"]
+                tf = "1h"
     
     # تست دامیننس
     usdt_dominance_series = fetch_usdt_dominance()
