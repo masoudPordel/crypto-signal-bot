@@ -620,18 +620,18 @@ async def find_entry_point(
 
                 # تنظیم نقاط ورود، SL و TP
                 entry = live_price
-                volatility = df_15m["ATR"].iloc[-1] / last_15m["close"]
+                volatility = df_1h["ATR"].iloc[-1] / last_15m["close"]
                 dynamic_rr_factor = 1.7 + (volatility * 5)
 
                 # محاسبه سطوح فیبوناچی
-                fib_levels = calculate_fibonacci_levels(df_15m)
+                fib_levels = calculate_fibonacci_levels(df_1h)
 
                 if signal_type == "Long":
-                        sl = entry - atr_15m * 1.2
+                        sl = entry - atr_1h * 1.0
                         tp_options = [level for level in fib_levels.values() if level > entry]
                         tp = min(tp_options) if tp_options else entry + (entry - sl) * dynamic_rr_factor
                 elif signal_type == "Short":
-                        sl = entry + atr_15m * 1.2
+                        sl = entry + atr_1h * 1.0
                         tp_options = [level for level in fib_levels.values() if level < entry]
                         tp = max(tp_options) if tp_options else entry - (sl - entry) * dynamic_rr_factor
                 else:
