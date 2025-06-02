@@ -227,7 +227,7 @@ class PatternDetector:
                         logging.warning(f"حمایت پیش‌فرض برای {len(df)} کندل تنظیم شد: {recent_support}")
 
                 volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
-                vol_threshold = volume_profile.quantile(0.5)
+                vol_threshold = volume_profile.quantile(0.7)  # افزایش آستانه به 70% برای دقت بیشتر
                 high_vol_levels = volume_profile[volume_profile > vol_threshold].index.tolist()
 
                 return recent_support, recent_resistance, high_vol_levels
@@ -255,7 +255,7 @@ class PatternDetector:
                         prev_rsi_high = rsi.iloc[recent_highs_rsi[-2]]
                         bearish_divergence = (last_price_high > prev_price_high * 0.98) and (last_rsi_high < prev_rsi_high * 1.02)
                 return bullish_divergence, bearish_divergence
-
+                        
 # کلاس فیلتر سیگنال
 class SignalFilter:
     def __init__(self):
@@ -604,8 +604,8 @@ async def find_entry_point(
             log_rejection(f"قدرت روند خیلی ضعیف (ADX < 15)، سیگنال رد شد", {"adx_15m": adx})
             return None
 
-        # بررسی شکست مقاومت در تایم‌فریم 15 دقیقه
-        if signal_type == "Long" and last_15m["close"] > resistance and df_15m["close"].iloc[-2] <= resistance:
+        # بررسی شکست مقاومت در تایم‌فریم 15 دقیقه با سخت‌گیری بیشتر
+        if signal_type == "Long" and last_15m["close"] > resistance and df_15m["close"].iloc[-2] <= resistance and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.5:
             signal_score += 2
             score_details["Resistance_Breakout"] = 2
             log_debug("شکست مقاومت در تایم‌فریم 15 دقیقه شناسایی شد (+2 امتیاز)")
@@ -934,7 +934,9 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             "MFI_Oversold": last["MFI"] < 15,
             "ADX_Strong": last["ADX"] > 25,
             "Support_Confirmation": distance_to_support <= support_buffer and (last["PinBar"] or last["Engulfing"]),
-            "Resistance_Breakout": (last["close"] > resistance) and (df["close"].iloc[-2] <= resistance) and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2)
+            "Resistance_Breakout": (last["close"] > resistance) and (df["close"].iloc[-2] <= resistance) and 
+                                  (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5) and 
+                                  (last["ADX"] > 25)
         }
         conds_short = {
             "PinBar": last["PinBar"],
@@ -1025,13 +1027,13 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         if score_long >= THRESHOLD and (trend_1d_score >= 0 or conds_long["Resistance_Breakout"]):
             signal_type = "Long"
 
-            # --- فیلتر اشباع خرید/فروش ---
+            # فیلتر اشباع خرید/فروش با شرایط تأیید اضافی
             rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
-            if signal_type == "Long" and rsi > 80:  # تغییر آستانه به 80
-                logging.info(f"RSI در ناحیه اشباع خرید است، سیگنال Long برای {symbol} رد شد")
+            if signal_type == "Long" and rsi > 75 and not (last["close"] > last["BB_upper"] and df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2):
+                logging.info(f"RSI در ناحیه اشباع خرید است و شرایط تأیید حجم/باند بولینگر برقرار نیست، سیگنال Long برای {symbol} رد شد")
                 return None
 
-            # --- بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong ---
+            # بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong
             adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
             active_conditions = [k for k, v in conds_long.items() if v]
             if "EMA_Cross" in active_conditions or "ADX_Strong" in active_conditions:
@@ -1107,13 +1109,13 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         elif score_short >= THRESHOLD and trend_1d_score <= 0:  # شرط اجباری روند 1d
             signal_type = "Short"
 
-            # --- فیلتر اشباع خرید/فروش ---
+            # فیلتر اشباع خرید/فروش
             rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
             if signal_type == "Short" and rsi < 30:
                 logging.info(f"RSI در ناحیه اشباع فروش است، سیگنال Short برای {symbol} رد شد")
                 return None
 
-            # --- بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong ---
+            # بررسی ترند بودن بازار قبل از EMA_Cross و ADX_Strong
             adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx().iloc[-1]
             active_conditions = [k for k, v in conds_short.items() if v]
             if "EMA_Cross" in active_conditions or "ADX_Strong" in active_conditions:
@@ -1192,7 +1194,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
     except Exception as e:
         logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
         return None
-        
+                
 # تابع اسکن همه نمادها
 async def scan_all_crypto_symbols(on_signal=None) -> None:
     exchange = ccxt.mexc({
