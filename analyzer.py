@@ -506,158 +506,164 @@ async def find_entry_point(
         resistance: float,
         debug_mode: bool = True
 ) -> Optional[Dict]:
-        def log_debug(msg):
-                if debug_mode:
-                        logging.info(f"[دیباگ] {symbol}: {msg}")
+    def log_debug(msg):
+        if debug_mode:
+            logging.info(f"[دیباگ] {symbol}: {msg}")
 
-        def log_rejection(reason, details=None):
-                if debug_mode:
-                        logging.info(f"[رد شده] {symbol} | دلیل: {reason} | جزییات: {details or {}}")
+    def log_rejection(reason, details=None):
+        if debug_mode:
+            logging.info(f"[رد شده] {symbol} | دلیل: {reason} | جزییات: {details or {}}")
 
-        try:
-                log_debug("شروع بررسی روند کلی تایم‌فریم ۱۵ دقیقه")
+    try:
+        log_debug("شروع بررسی روند کلی تایم‌فریم ۱۵ دقیقه")
 
-                # دریافت داده‌های ۱ ساعته برای ADX (اختیاری)
-                df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
-                if df_1h is None or len(df_1h) < 30:
-                        log_rejection("داده‌های تایم‌فریم ۱ ساعته ناکافی")
-                        return None
-                df_1h = compute_indicators(df_1h)
+        # دریافت داده‌های ۱ ساعته برای ADX (اختیاری)
+        df_1h = await get_ohlcv_cached(exchange, symbol, "1h")
+        if df_1h is None or len(df_1h) < 30:
+            log_rejection("داده‌های تایم‌فریم ۱ ساعته ناکافی")
+            return None
+        df_1h = compute_indicators(df_1h)
 
-                # دریافت داده‌های ۱۵ دقیقه
-                df_15m = await get_ohlcv_cached(exchange, symbol, "15m")
-                if df_15m is None or len(df_15m) < 20:
-                        log_rejection("داده‌های تایم‌فریم ۱۵ دقیقه ناکافی")
-                        return None
+        # دریافت داده‌های ۱۵ دقیقه
+        df_15m = await get_ohlcv_cached(exchange, symbol, "15m")
+        if df_15m is None or len(df_15m) < 20:
+            log_rejection("داده‌های تایم‌فریم ۱۵ دقیقه ناکافی")
+            return None
 
-                df_15m = compute_indicators(df_15m)
-                last_15m = df_15m.iloc[-1].to_dict()
-                prev_15m = df_15m.iloc[-2].to_dict()
-                atr_15m = df_15m["ATR"].iloc[-1]
-                volume_mean_15m = df_15m["volume"].rolling(20).mean().iloc[-1]
+        df_15m = compute_indicators(df_15m)
+        last_15m = df_15m.iloc[-1].to_dict()
+        prev_15m = df_15m.iloc[-2].to_dict()
+        atr_15m = df_15m["ATR"].iloc[-1]
+        volume_mean_15m = df_15m["volume"].rolling(20).mean().iloc[-1]
 
-                # حذف بررسی نقدینگی
-                log_debug("بررسی نقدینگی در analyze_symbol انجام شده، صرف‌نظر از بررسی مجدد")
+        # حذف بررسی نقدینگی
+        log_debug("بررسی نقدینگی در analyze_symbol انجام شده، صرف‌نظر از بررسی مجدد")
 
-                # سیستم امتیازدهی سیگنال
-                signal_score = 0
-                score_details = {}
+        # سیستم امتیازدهی سیگنال
+        signal_score = 0
+        score_details = {}
 
-                # امتیاز واگرایی RSI
-                rsi_divergence = last_15m.get("RSI_Divergence", 0)
-                if signal_type == "Long" and rsi_divergence == 1:
-                        signal_score += 0.5
-                        score_details["RSI_Divergence"] = 0.5
-                        log_debug("واگرایی صعودی RSI شناسایی شد (+۰.۵ امتیاز)")
-                elif signal_type == "Short" and rsi_divergence == -1:
-                        signal_score += 0.5
-                        score_details["RSI_Divergence"] = 0.5
-                        log_debug("واگرایی نزولی RSI شناسایی شد (+۰.۵ امتیاز)")
+        # امتیاز واگرایی RSI
+        rsi_divergence = last_15m.get("RSI_Divergence", 0)
+        if signal_type == "Long" and rsi_divergence == 1:
+            signal_score += 0.5
+            score_details["RSI_Divergence"] = 0.5
+            log_debug("واگرایی صعودی RSI شناسایی شد (+۰.۵ امتیاز)")
+        elif signal_type == "Short" and rsi_divergence == -1:
+            signal_score += 0.5
+            score_details["RSI_Divergence"] = 0.5
+            log_debug("واگرایی نزولی RSI شناسایی شد (+۰.۵ امتیاز)")
 
-                # امتیاز واگرایی MACD
-                macd_divergence = last_15m.get("MACD_Divergence", 0)
-                if signal_type == "Long" and macd_divergence == 1:
-                        signal_score += 0.5
-                        score_details["MACD_Divergence"] = 0.5
-                        log_debug("واگرایی صعودی MACD شناسایی شد (+۰.۵ امتیاز)")
-                elif signal_type == "Short" and macd_divergence == -1:
-                        signal_score += 0.5
-                        score_details["MACD_Divergence"] = 0.5
-                        log_debug("واگرایی نزولی MACD شناسایی شد (+۰.۵ امتیاز)")
+        # امتیاز واگرایی MACD
+        macd_divergence = last_15m.get("MACD_Divergence", 0)
+        if signal_type == "Long" and macd_divergence == 1:
+            signal_score += 0.5
+            score_details["MACD_Divergence"] = 0.5
+            log_debug("واگرایی صعودی MACD شناسایی شد (+۰.۵ امتیاز)")
+        elif signal_type == "Short" and macd_divergence == -1:
+            signal_score += 0.5
+            score_details["MACD_Divergence"] = 0.5
+            log_debug("واگرایی نزولی MACD شناسایی شد (+۰.۵ امتیاز)")
 
-                # امتیاز الگوهای کندلی
-                pattern_score = 0
-                if last_15m.get("Engulfing") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.1:
-                        pattern_score += 2
-                        signal_score += 2
-                        score_details["Engulfing"] = 2
-                        log_debug("الگوی Engulfing با حجم بالا شناسایی شد (+۲ امتیاز)")
-                elif last_15m.get("PinBar") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.1:
-                        pattern_score += 1.5
-                        signal_score += 1.5
-                        score_details["PinBar"] = 1.5
-                        log_debug("الگوی PinBar با حجم بالا شناسایی شد (+۱.۵ امتیاز)")
-                elif last_15m.get("Hammer") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.1:
-                        pattern_score += 1.5
-                        signal_score += 1.5
-                        score_details["Hammer"] = 1.5
-                        log_debug("الگوی Hammer با حجم بالا شناسایی شد (+۱.۵ امتیاز)")
-                elif last_15m.get("Doji") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.1:
-                        pattern_score += 1
-                        signal_score += 1
-                        score_details["Doji"] = 1
-                        log_debug("الگوی Doji با حجم بالا شناسایی شد (+۱ امتیاز)")
+        # امتیاز الگوهای کندلی
+        pattern_score = 0
+        if last_15m.get("Engulfing") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.1:
+            pattern_score += 2
+            signal_score += 2
+            score_details["Engulfing"] = 2
+            log_debug("الگوی Engulfing با حجم بالا شناسایی شد (+۲ امتیاز)")
+        elif last_15m.get("PinBar") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.1:
+            pattern_score += 1.5
+            signal_score += 1.5
+            score_details["PinBar"] = 1.5
+            log_debug("الگوی PinBar با حجم بالا شناسایی شد (+۱.۵ امتیاز)")
+        elif last_15m.get("Hammer") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.1:
+            pattern_score += 1.5
+            signal_score += 1.5
+            score_details["Hammer"] = 1.5
+            log_debug("الگوی Hammer با حجم بالا شناسایی شد (+۱.۵ امتیاز)")
+        elif last_15m.get("Doji") and df_15m["volume"].iloc[-1] > volume_mean_15m * 1.1:
+            pattern_score += 1
+            signal_score += 1
+            score_details["Doji"] = 1
+            log_debug("الگوی Doji با حجم بالا شناسایی شد (+۱ امتیاز)")
 
-                # امتیاز حجم
-                if df_15m["volume"].iloc[-1] > volume_mean_15m:
-                        signal_score += 0.5
-                        score_details["Volume"] = 0.5
-                        log_debug("حجم بالاتر از میانگین (+۰.۵ امتیاز)")
+        # امتیاز حجم
+        if df_15m["volume"].iloc[-1] > volume_mean_15m:
+            signal_score += 0.5
+            score_details["Volume"] = 0.5
+            log_debug("حجم بالاتر از میانگین (+۰.۵ امتیاز)")
 
-                # امتیاز ADX
-                adx = df_15m["ADX"].iloc[-1]
-                if adx > 25:
-                        signal_score += 1
-                        score_details["ADX"] = 1
-                        log_debug("روند قوی با ADX > 25 (+۱ امتیاز)")
-                elif adx < 15:
-                        log_rejection(f"قدرت روند خیلی ضعیف (ADX < 15)، سیگنال رد شد", {"adx_15m": adx})
-                        return None
+        # امتیاز ADX
+        adx = df_15m["ADX"].iloc[-1]
+        if adx > 25:
+            signal_score += 1
+            score_details["ADX"] = 1
+            log_debug("روند قوی با ADX > 25 (+۱ امتیاز)")
+        elif adx < 15:
+            log_rejection(f"قدرت روند خیلی ضعیف (ADX < 15)، سیگنال رد شد", {"adx_15m": adx})
+            return None
 
-                # بررسی امتیاز کلی
-                min_signal_score = 1.5
-                if signal_score < min_signal_score:
-                        log_rejection(f"امتیاز سیگنال ({signal_score:.2f}) کمتر از حداقل مجاز ({min_signal_score})", score_details)
-                        return None
+        # بررسی شکست مقاومت در تایم‌فریم 15 دقیقه
+        if signal_type == "Long" and last_15m["close"] > resistance and df_15m["close"].iloc[-2] <= resistance:
+            signal_score += 2
+            score_details["Resistance_Breakout"] = 2
+            log_debug("شکست مقاومت در تایم‌فریم 15 دقیقه شناسایی شد (+2 امتیاز)")
 
-                log_debug(f"امتیاز سیگنال: {signal_score:.2f} | جزئیات: {score_details}")
+        # بررسی امتیاز کلی
+        min_signal_score = 1.5
+        if signal_score < min_signal_score:
+            log_rejection(f"امتیاز سیگنال ({signal_score:.2f}) کمتر از حداقل مجاز ({min_signal_score})", score_details)
+            return None
 
-                # دریافت قیمت زنده
-                live_price = await get_live_price(exchange, symbol)
-                if live_price is None:
-                        log_rejection("قیمت لحظه‌ای در دسترس نیست")
-                        return None
+        log_debug(f"امتیاز سیگنال: {signal_score:.2f} | جزئیات: {score_details}")
 
-                # تنظیم نقاط ورود، SL و TP
-                entry = live_price
-                volatility = df_1h["ATR"].iloc[-1] / last_15m["close"]
-                dynamic_rr_factor = 1.7 + (volatility * 5)
+        # دریافت قیمت زنده
+        live_price = await get_live_price(exchange, symbol)
+        if live_price is None:
+            log_rejection("قیمت لحظه‌ای در دسترس نیست")
+            return None
 
-                # محاسبه سطوح فیبوناچی
-                fib_levels = calculate_fibonacci_levels(df_1h)
+        # تنظیم نقاط ورود، SL و TP
+        entry = live_price
+        volatility = df_15m["ATR"].iloc[-1] / last_15m["close"]
+        dynamic_rr_factor = 1.7 + (volatility * 5)
 
-                if signal_type == "Long":
-                        sl = entry - atr_1h * 1.0
-                        tp_options = [level for level in fib_levels.values() if level > entry]
-                        tp = min(tp_options) if tp_options else entry + (entry - sl) * dynamic_rr_factor
-                elif signal_type == "Short":
-                        sl = entry + atr_1h * 1.0
-                        tp_options = [level for level in fib_levels.values() if level < entry]
-                        tp = max(tp_options) if tp_options else entry - (sl - entry) * dynamic_rr_factor
-                else:
-                        log_rejection("نوع سیگنال نامعتبر است", {"signal_type": signal_type})
-                        return None
+        # محاسبه سطوح فیبوناچی
+        fib_levels = calculate_fibonacci_levels(df_15m)
 
-                # محاسبه نسبت ریسک به ریوارد
-                risk = abs(entry - sl)
-                reward = abs(tp - entry)
-                rr = reward / risk if risk != 0 else 0
-                min_rr = 1.2 + (volatility * 5)
-                if rr < min_rr:
-                        log_rejection(f"نسبت ریسک به ریوارد {rr:.2f} کمتر از حداقل مجاز {min_rr:.2f} است")
-                        return None
+        if signal_type == "Long":
+            sl = entry - atr_15m * 0.9
+            tp_options = [level for level in fib_levels.values() if level > entry]
+            tp = min(tp_options) if tp_options else entry + (entry - sl) * dynamic_rr_factor
+        elif signal_type == "Short":
+            sl = entry + atr_15m * 0.9
+            tp_options = [level for level in fib_levels.values() if level < entry]
+            tp = max(tp_options) if tp_options else entry - (sl - entry) * dynamic_rr_factor
+        else:
+            log_rejection("نوع سیگنال نامعتبر است", {"signal_type": signal_type})
+            return None
 
-                log_debug(f"✅ سیگنال تأیید شد | Entry={entry} | SL={sl} | TP={tp} | RR={rr:.2f}")
+        # محاسبه نسبت ریسک به ریوارد
+        risk = abs(entry - sl)
+        reward = abs(tp - entry)
+        rr = reward / risk if risk != 0 else 0
+        min_rr = 1.2 + (volatility * 5)
+        if rr < min_rr:
+            log_rejection(f"نسبت ریسک به ریوارد {rr:.2f} کمتر از حداقل مجاز {min_rr:.2f} است")
+            return None
 
-                return {
-                        "entry_price": entry,
-                        "sl": sl,
-                        "tp": tp
-                }
+        log_debug(f"✅ سیگنال تأیید شد | Entry={entry} | SL={sl} | TP={tp} | RR={rr:.2f}")
 
-        except Exception as e:
-                logging.error(f"⚠️ خطای بحرانی در بررسی سیگنال {symbol}: {str(e)}")
-                return None
+        return {
+            "entry_price": entry,
+            "sl": sl,
+            "tp": tp
+        }
+
+    except Exception as e:
+        logging.error(f"⚠️ خطای بحرانی در بررسی سیگنال {symbol}: {str(e)}")
+        return None
                         
 # تابع مدیریت trailing stop
 async def manage_trailing_stop(exchange: ccxt.Exchange, symbol: str, entry_price: float, sl: float, signal_type: str, trail_percentage: float = 0.5):
@@ -927,7 +933,8 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             "BB_Breakout": last["close"] > last["BB_upper"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
             "MFI_Oversold": last["MFI"] < 15,
             "ADX_Strong": last["ADX"] > 25,
-            "Support_Confirmation": distance_to_support <= support_buffer and (last["PinBar"] or last["Engulfing"])
+            "Support_Confirmation": distance_to_support <= support_buffer and (last["PinBar"] or last["Engulfing"]),
+            "Resistance_Breakout": (last["close"] > resistance) and (df["close"].iloc[-2] <= resistance) and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2)
         }
         conds_short = {
             "PinBar": last["PinBar"],
@@ -952,7 +959,8 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                               (5 if conds_long["BB_Breakout"] else 0) + \
                               (3 if conds_long["MFI_Oversold"] else 0) + \
                               (5 if conds_long["ADX_Strong"] else 0) + \
-                              (10 if conds_long["Support_Confirmation"] else 0)
+                              (10 if conds_long["Support_Confirmation"] else 0) + \
+                              (15 if conds_long["Resistance_Breakout"] else 0)
         indicator_score_short = (10 if conds_short["PinBar"] else 0) + \
                                (10 if conds_short["Engulfing"] else 0) + \
                                (15 if conds_short["Elliott_Wave"] else 0) + \
@@ -1013,13 +1021,13 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 80
-        if score_long >= THRESHOLD and trend_1d_score >= 0:  # شرط اجباری روند 1d
+        THRESHOLD = 90
+        if score_long >= THRESHOLD and (trend_1d_score >= 0 or conds_long["Resistance_Breakout"]):
             signal_type = "Long"
 
             # --- فیلتر اشباع خرید/فروش ---
             rsi = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi().iloc[-1]
-            if signal_type == "Long" and rsi > 70:
+            if signal_type == "Long" and rsi > 80:  # تغییر آستانه به 80
                 logging.info(f"RSI در ناحیه اشباع خرید است، سیگنال Long برای {symbol} رد شد")
                 return None
 
@@ -1177,10 +1185,6 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
             asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
             logging.info(f"سیگنال Short تولید شد: {result}")
             return result
-            # اضافه کردن تسک trailing stop
-            asyncio.create_task(manage_trailing_stop(exchange, symbol, entry, sl, signal_type))
-            logging.info(f"سیگنال Short تولید شد: {result}")
-            return result
 
         logging.info(f"سیگنال برای {symbol} @ {tf} رد شد")
         return None
@@ -1188,7 +1192,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
     except Exception as e:
         logging.error(f"خطای کلی در تحلیل {symbol} @ {tf}: {str(e)}")
         return None
-
+        
 # تابع اسکن همه نمادها
 async def scan_all_crypto_symbols(on_signal=None) -> None:
     exchange = ccxt.mexc({
