@@ -939,21 +939,30 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                                   (last["ADX"] > 25)
         }
         conds_short = {
-                "PinBar": last["PinBar"],
-                "Engulfing": last["Engulfing"] and last["close"] < last["open"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
-                "Elliott_Wave": df["WaveTrend"].iloc[-1] == "Down",
-                "EMA_Cross": df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
-                "MACD_Cross": df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and df["MACD"].iloc[-1] < df["Signal"].iloc[-1] and (df["MACD"].iloc[-1] < 0),
-                "RSI_Overbought": last["RSI"] > 75,
-                "Stochastic_Overbought": last["Stochastic"] > 85 and last["ADX"] > 25 and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
-                "BB_Breakout": last["close"] < last["BB_lower"] and (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
-                "MFI_Overbought": last["MFI"] > 85,
-                "ADX_Strong": last["ADX"] > 25,
-                "Resistance_Confirmation": distance_to_resistance <= resistance_buffer and (last["PinBar"] or last["Engulfing"]),
-                "Support_Breakout": (last["close"] < support) and (df["close"].iloc[-2] >= support) and 
-                                  (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5) and 
-                                  (last["ADX"] > 25)
-        } ​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
+                "PinBar":                last["PinBar"],
+                "Engulfing":            last["Engulfing"] and last["close"] < last["open"] and (
+                                        df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
+                "Elliott_Wave":         df["WaveTrend"].iloc[-1] == "Down",
+                "EMA_Cross":            df["EMA12"].iloc[-1] < df["EMA26"].iloc[-1] and (
+                                        df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
+                "MACD_Cross":           df["MACD"].iloc[-2] > df["Signal"].iloc[-2] and
+                                        df["MACD"].iloc[-1] < df["Signal"].iloc[-1] and
+                                        (df["MACD"].iloc[-1] < 0),
+                "RSI_Overbought":       last["RSI"] > 75,
+                "Stochastic_Overbought":last["Stochastic"] > 85 and last["ADX"] > 25 and (
+                                        df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.2),
+                "BB_Breakout":          last["close"] < last["BB_lower"] and (
+                                        df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5),
+                "MFI_Overbought":       last["MFI"] > 85,
+                "ADX_Strong":           last["ADX"] > 25,
+                "Resistance_Confirmation":
+                                        distance_to_resistance <= resistance_buffer and
+                                        (last["PinBar"] or last["Engulfing"]),
+                "Support_Breakout":     (last["close"] < support) and
+                                        (df["close"].iloc[-2] >= support) and
+                                        (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5) and
+                                        (last["ADX"] > 25)
+        }
         if sum(1 for v in conds_long.values() if v) < min_conditions:
             indicator_score_long = 0
         if sum(1 for v in conds_short.values() if v) < min_conditions:
