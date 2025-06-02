@@ -227,7 +227,7 @@ class PatternDetector:
                         logging.warning(f"حمایت پیش‌فرض برای {len(df)} کندل تنظیم شد: {recent_support}")
 
                 volume_profile = df['volume'].groupby(df['close'].round(2)).sum()
-                vol_threshold = volume_profile.quantile(0.7)  # افزایش آستانه به 70% برای دقت بیشتر
+                vol_threshold = volume_profile.quantile(0.5)  # افزایش آستانه به 70% برای دقت بیشتر
                 high_vol_levels = volume_profile[volume_profile > vol_threshold].index.tolist()
 
                 return recent_support, recent_resistance, high_vol_levels
