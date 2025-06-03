@@ -963,21 +963,13 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
                                         (df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1] * 1.5) and
                                         (last["ADX"] > 25)
         }
-        if sum(1 for v in conds_long.values() if v) < min_conditions:
-                indicator_score_long = 0
-        else:
-                indicator_score_long = sum([
-                        weight for cond, weight in indicator_weights.items()
-                        if conds_long.get(cond)
-                ])
+        indicator_score_long = 0
+        indicator_score_short = 0
 
-        if sum(1 for v in conds_short.values() if v) < min_conditions:
-                indicator_score_short = 0
-        else:
-                indicator_score_short = sum([
-                        weight for cond, weight in indicator_weights.items()
-                        if conds_short.get(cond)
-                ])
+        if sum(1 for v in conds_long.values() if v) >= min_conditions:
+            indicator_score_long = 1
+        if sum(1 for v in conds_short.values() if v) >= min_conditions:
+            indicator_score_short = 1
 
         score_long += indicator_score_long
         score_short += indicator_score_short
@@ -990,7 +982,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         score_log["long"]["market_structure_4h"] = trend_score_4h
         score_log["short"]["market_structure_4h"] = -trend_score_4h
         logging.info(f"امتیاز ساختار بازار 4h برای {symbol}: Long={trend_score_4h}, Short={-trend_score_4h}")
-        logging.debug(f"شروع فیلتر Decision Tree برای {symbol} @ {tf}")
+        
         signal_filter = SignalFilter()
         X_train = np.array([
             [30, 25, 2, 0.01, 0.05, 0.05, 0.01, 10, -10],
