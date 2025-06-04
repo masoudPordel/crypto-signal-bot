@@ -66,7 +66,7 @@ def get_coin_id(symbol: str) -> Optional[int]:
 def get_top_500_symbols_from_cmc() -> List[str]:
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
     headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY}
-    params = {'start': '1', 'limit': '500', 'convert': 'USD'}
+    params = {'start': '1', 'limit': '1000', 'convert': 'USD'}
     try:
         logging.debug(f"شروع دریافت ۵۰۰ نماد برتر از CMC")
         resp = requests.get(url, headers=headers, params=params, timeout=10)
