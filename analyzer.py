@@ -956,7 +956,7 @@ async def analyze_symbol(exchange: ccxt.Exchange, symbol: str, tf: str) -> Optio
         logging.info(f"جزئیات امتیاز Long: {score_log['long']}")
         logging.info(f"جزئیات امتیاز Short: {score_log['short']}")
 
-        THRESHOLD = 60
+        THRESHOLD = 90
         if score_long >= THRESHOLD and (trend_1d_score >= 0 or conds_long["Resistance_Breakout"]):
             signal_type = "Long"
 
