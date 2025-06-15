@@ -27,7 +27,7 @@ logging.basicConfig(
 )
 
 # تنظیمات ثابت
-CMC_API_KEY = os.getenv("CMC_API_KEY", "96812b0f-b5f9-4959-8e57-3bbac412cb98")
+CMC_API_KEY = os.getenv("CMC_API_KEY", "fe51bf2f-3380-42f1-8244-1ee8fcf2e4df")
 COINMARKETCAL_API_KEY = os.getenv("COINMARKETCAL_API_KEY", "iFrSo3PUBJ36P8ZnEIBMvakO5JutSIU1XJvG7ALa")
 TIMEFRAMES = ["15m", "1h", "4h", "1d"]
 
